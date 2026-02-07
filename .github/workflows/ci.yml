@@ -63,4 +63,4 @@ jobs:
       - name: Install bpf-linker
         run: cargo install bpf-linker
       - name: Build eBPF
-        run: cargo xtask build-ebpf
+        run: cargo run --package xtask -- build-ebpf
