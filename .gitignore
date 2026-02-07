@@ -1,0 +1,48 @@
+# Rust / Cargo
+/target/
+**/*.rs.bk
+*.pdb
+Cargo.lock
+
+# eBPF build artifacts
+crates/ebpf-engine/ebpf/target/
+*.o
+*.bpf.o
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+._*
+
+# Environment / Secrets
+.env
+.env.*
+*.pem
+*.key
+credentials.json
+
+# Logs
+*.log
+
+# Coverage
+*.profraw
+*.profdata
+tarpaulin-report.html
+lcov.info
+coverage/
+
+# Profiling
+perf.data
+perf.data.old
+flamegraph.svg

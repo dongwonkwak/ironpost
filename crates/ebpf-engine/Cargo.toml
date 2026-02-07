@@ -1,0 +1,13 @@
+[package]
+name = "ironpost-ebpf-engine"
+version = "0.1.0"
+edition = "2024"
+description = "Ironpost eBPF 기반 네트워크 패킷 탐지 엔진"
+
+[dependencies]
+ironpost-core = { path = "../core" }
+aya = "0.13"
+tokio = { workspace = true }
+tracing = { workspace = true }
+clap = { workspace = true }
+bytes = { workspace = true }

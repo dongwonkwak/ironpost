@@ -1,0 +1,16 @@
+[package]
+name = "ironpost-daemon"
+version = "0.1.0"
+edition = "2024"
+description = "Ironpost 데몬 — 모듈 조립 및 이벤트 버스 관리"
+
+[dependencies]
+ironpost-core = { path = "../crates/core" }
+ironpost-ebpf-engine = { path = "../crates/ebpf-engine" }
+ironpost-log-pipeline = { path = "../crates/log-pipeline" }
+ironpost-container-guard = { path = "../crates/container-guard" }
+ironpost-sbom-scanner = { path = "../crates/sbom-scanner" }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }

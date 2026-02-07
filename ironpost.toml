@@ -1,0 +1,71 @@
+# Ironpost 통합 설정 파일
+
+[general]
+# 로그 레벨: trace, debug, info, warn, error
+log_level = "info"
+# 로그 형식: json, pretty
+log_format = "json"
+# 데이터 디렉토리
+data_dir = "/var/lib/ironpost"
+# PID 파일
+pid_file = "/var/run/ironpost.pid"
+
+[ebpf]
+# 활성화 여부
+enabled = true
+# 감시할 네트워크 인터페이스
+interface = "eth0"
+# XDP 모드: native, skb, hw
+xdp_mode = "skb"
+# 이벤트 링 버퍼 크기 (바이트)
+ring_buffer_size = 262144
+# 차단 목록 최대 엔트리 수
+blocklist_max_entries = 10000
+
+[log_pipeline]
+# 활성화 여부
+enabled = true
+# 수집 소스
+sources = ["syslog", "journald", "file"]
+# Syslog 수신 주소
+syslog_bind = "0.0.0.0:514"
+# 파일 감시 경로
+watch_paths = ["/var/log/auth.log", "/var/log/syslog"]
+# 배치 크기 (이벤트 수)
+batch_size = 1000
+# 배치 플러시 간격 (초)
+flush_interval_secs = 5
+
+[log_pipeline.storage]
+# PostgreSQL 연결 문자열
+postgres_url = "postgres://ironpost:password@localhost:5432/ironpost"
+# Redis 연결 문자열 (캐시/큐)
+redis_url = "redis://localhost:6379"
+# 로그 보존 기간 (일)
+retention_days = 90
+
+[container]
+# 활성화 여부
+enabled = true
+# Docker 소켓 경로
+docker_socket = "unix:///var/run/docker.sock"
+# 모니터링 주기 (초)
+poll_interval_secs = 10
+# 격리 정책 파일
+policy_path = "/etc/ironpost/container-policy.toml"
+# 자동 격리 활성화
+auto_isolate = false
+
+[sbom]
+# 활성화 여부
+enabled = true
+# 스캔 대상 디렉토리
+scan_dirs = ["/opt/apps"]
+# 취약점 DB 업데이트 주기 (시간)
+vuln_db_update_hours = 24
+# 취약점 DB 경로
+vuln_db_path = "/var/lib/ironpost/vuln.db"
+# 최소 심각도 알림 수준: low, medium, high, critical
+min_severity = "medium"
+# SBOM 출력 형식: spdx, cyclonedx
+output_format = "cyclonedx"

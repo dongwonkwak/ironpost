@@ -1,0 +1,60 @@
+services:
+  ironpost:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    ports:
+      - "514:514/udp"
+      - "8080:8080"
+    volumes:
+      - ironpost-data:/var/lib/ironpost
+      - ../ironpost.toml:/etc/ironpost/ironpost.toml:ro
+    depends_on:
+      - redis
+      - postgresql
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+
+  postgresql:
+    image: postgres:16-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: ironpost
+      POSTGRES_USER: ironpost
+      POSTGRES_PASSWORD: password  # TODO: 프로덕션에서는 시크릿 관리
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - prometheus-data:/prometheus
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+volumes:
+  ironpost-data:
+  redis-data:
+  pg-data:
+  prometheus-data:
+  grafana-data:

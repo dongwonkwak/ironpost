@@ -1,0 +1,12 @@
+[package]
+name = "ironpost-core"
+version = "0.1.0"
+edition = "2024"
+description = "Ironpost 공통 타입, trait, 에러, 설정"
+
+[dependencies]
+tokio = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+bytes = { workspace = true }

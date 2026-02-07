@@ -1,0 +1,17 @@
+[package]
+name = "ironpost-cli"
+version = "0.1.0"
+edition = "2024"
+description = "Ironpost CLI — 통합 보안 모니터링 명령줄 도구"
+
+[dependencies]
+ironpost-core = { path = "../crates/core" }
+ironpost-ebpf-engine = { path = "../crates/ebpf-engine" }
+ironpost-log-pipeline = { path = "../crates/log-pipeline" }
+ironpost-container-guard = { path = "../crates/container-guard" }
+ironpost-sbom-scanner = { path = "../crates/sbom-scanner" }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+clap = { workspace = true }
+anyhow = { workspace = true }

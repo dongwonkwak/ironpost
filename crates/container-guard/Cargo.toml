@@ -1,0 +1,13 @@
+[package]
+name = "ironpost-container-guard"
+version = "0.1.0"
+edition = "2024"
+description = "Ironpost 컨테이너 모니터링 및 정책 기반 격리"
+
+[dependencies]
+ironpost-core = { path = "../core" }
+tokio = { workspace = true }
+serde = { workspace = true }
+tracing = { workspace = true }
+bytes = { workspace = true }
+bollard = "0.18"

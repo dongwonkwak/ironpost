@@ -1,0 +1,8 @@
+[package]
+name = "xtask"
+version = "0.1.0"
+edition = "2024"
+description = "Ironpost 빌드 태스크 — eBPF 빌드 등"
+
+[dependencies]
+clap = { workspace = true }

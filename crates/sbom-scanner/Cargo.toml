@@ -1,0 +1,13 @@
+[package]
+name = "ironpost-sbom-scanner"
+version = "0.1.0"
+edition = "2024"
+description = "Ironpost SBOM 생성 및 취약점 스캔"
+
+[dependencies]
+ironpost-core = { path = "../core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+clap = { workspace = true }
+reqwest = { version = "0.12", features = ["json"] }
