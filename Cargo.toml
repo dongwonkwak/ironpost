@@ -11,6 +11,16 @@ members = [
     "ironpost-daemon",
     "xtask",
 ]
+default-members = [
+    "crates/core",
+    "crates/ebpf-engine",
+    "crates/log-pipeline",
+    "crates/container-guard",
+    "crates/sbom-scanner",
+    "ironpost-cli",
+    "ironpost-daemon",
+    "xtask",
+]
 
 [workspace.dependencies]
 tokio = { version = "1", features = ["full"] }
@@ -22,3 +32,9 @@ anyhow = "1"
 thiserror = "2"
 clap = { version = "4", features = ["derive"] }
 bytes = "1"
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"

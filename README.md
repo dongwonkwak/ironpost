@@ -49,8 +49,11 @@ graph TD
 ## 빠른 시작
 
 ```bash
-# 빌드
+# 메인 프로젝트 빌드
 cargo build --release
+
+# eBPF 커널 프로그램 빌드 (선택사항)
+cargo run -p xtask -- build-ebpf --release
 
 # 데몬 실행
 sudo ./target/release/ironpost-daemon --config ironpost.toml
