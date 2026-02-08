@@ -90,12 +90,18 @@ pub const TCP_ACK: u8 = 0x10;
 /// 유저스페이스에서 동적으로 엔트리를 추가/삭제할 수 있어 런타임 룰 업데이트가 가능합니다.
 #[repr(C)]
 #[derive(Clone, Copy)]
+#[cfg_attr(feature = "user", derive(Debug))]
 pub struct BlocklistValue {
     /// 적용할 액션 (ACTION_DROP 또는 ACTION_MONITOR)
     pub action: u8,
     /// 4바이트 정렬을 위한 패딩
     pub _pad: [u8; 3],
 }
+
+// SAFETY: BlocklistValue는 #[repr(C)]이며 모든 필드가 Plain Old Data입니다.
+// 메모리 정렬이 보장되고 패딩도 명시적으로 정의되어 있습니다.
+#[cfg(feature = "user")]
+unsafe impl aya::Pod for BlocklistValue {}
 
 /// 프로토콜별 통계 카운터
 ///
@@ -107,6 +113,7 @@ pub struct BlocklistValue {
 /// 유저스페이스에서 모든 CPU의 값을 합산하여 전체 통계를 계산합니다.
 #[repr(C)]
 #[derive(Clone, Copy)]
+#[cfg_attr(feature = "user", derive(Debug))]
 pub struct ProtoStats {
     /// 처리된 패킷 수
     pub packets: u64,
@@ -115,6 +122,10 @@ pub struct ProtoStats {
     /// 드롭된 패킷 수
     pub drops: u64,
 }
+
+// SAFETY: ProtoStats는 #[repr(C)]이며 모든 필드가 Plain Old Data입니다.
+#[cfg(feature = "user")]
+unsafe impl aya::Pod for ProtoStats {}
 
 /// 의심 패킷 이벤트 데이터
 ///
@@ -140,6 +151,7 @@ pub struct ProtoStats {
 /// ```
 #[repr(C)]
 #[derive(Clone, Copy)]
+#[cfg_attr(feature = "user", derive(Debug))]
 pub struct PacketEventData {
     /// 출발지 IPv4 주소 (네트워크 바이트 오더)
     pub src_ip: u32,
@@ -160,6 +172,10 @@ pub struct PacketEventData {
     /// 4바이트 정렬을 위한 패딩
     pub _pad: [u8; 3],
 }
+
+// SAFETY: PacketEventData는 #[repr(C)]이며 모든 필드가 Plain Old Data입니다.
+#[cfg(feature = "user")]
+unsafe impl aya::Pod for PacketEventData {}
 
 /// ProtoStats의 제로 초기화를 반환합니다.
 impl ProtoStats {

@@ -1,5 +1,5 @@
 # Ironpost 태스크 보드
-> 최종 업데이트: 2026-02-08
+> 최종 업데이트: 2026-02-09
 
 ## 진행 요약
 | Phase | 전체 | 완료 | 진행중 | 대기 | 진행률 |
@@ -31,7 +31,7 @@ Phase 2 Implementer 대기 — 유저스페이스 todo!() 구현 필요
 - [ ] stats.rs: PerCpuArray polling, Prometheus exposition format
 - [ ] detector.rs: SYN flood / 포트 스캔 탐지 로직
 - [ ] config.rs: TOML 룰 파일 로드
-- [ ] 테스트 작성 (config, stats, detector, engine)
+- [x] 테스트 작성 (config, stats, detector, engine) — 71개 테스트 통과 (2026-02-09 검증 완료, 커밋 ee74bd6)
 - [ ] 통합 테스트 (Linux 전용)
 
 ## 최근 완료

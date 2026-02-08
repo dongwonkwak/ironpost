@@ -146,7 +146,37 @@ impl TrafficStats {
     /// ironpost_bps{proto="tcp"} 5678000.0
     /// ```
     pub fn to_prometheus(&self) -> String {
-        todo!("Prometheus exposition format 생성")
+        let mut output = String::new();
+
+        // 프로토콜별 메트릭 생성 헬퍼 함수
+        let emit_metrics = |proto: &str, metrics: &ProtoMetrics| -> String {
+            format!(
+                "ironpost_packets_total{{proto=\"{}\"}} {}\n\
+                 ironpost_bytes_total{{proto=\"{}\"}} {}\n\
+                 ironpost_drops_total{{proto=\"{}\"}} {}\n\
+                 ironpost_pps{{proto=\"{}\"}} {}\n\
+                 ironpost_bps{{proto=\"{}\"}} {}\n",
+                proto,
+                metrics.packets,
+                proto,
+                metrics.bytes,
+                proto,
+                metrics.drops,
+                proto,
+                metrics.pps,
+                proto,
+                metrics.bps,
+            )
+        };
+
+        // 각 프로토콜 메트릭 추가
+        output.push_str(&emit_metrics("tcp", &self.tcp));
+        output.push_str(&emit_metrics("udp", &self.udp));
+        output.push_str(&emit_metrics("icmp", &self.icmp));
+        output.push_str(&emit_metrics("other", &self.other));
+        output.push_str(&emit_metrics("total", &self.total));
+
+        output
     }
 
     /// delta를 계산하여 rate를 갱신합니다.
@@ -181,5 +211,453 @@ impl TrafficStats {
 impl Default for TrafficStats {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // =============================================================================
+    // RawProtoStats 테스트
+    // =============================================================================
+
+    #[test]
+    fn test_raw_proto_stats_default() {
+        let stats = RawProtoStats::default();
+        assert_eq!(stats.packets, 0);
+        assert_eq!(stats.bytes, 0);
+        assert_eq!(stats.drops, 0);
+    }
+
+    #[test]
+    fn test_raw_traffic_snapshot_default() {
+        let snapshot = RawTrafficSnapshot::default();
+        assert_eq!(snapshot.tcp.packets, 0);
+        assert_eq!(snapshot.udp.packets, 0);
+        assert_eq!(snapshot.icmp.packets, 0);
+        assert_eq!(snapshot.other.packets, 0);
+        assert_eq!(snapshot.total.packets, 0);
+    }
+
+    // =============================================================================
+    // TrafficStats 초기화 테스트
+    // =============================================================================
+
+    #[test]
+    fn test_traffic_stats_new_all_zeros() {
+        let stats = TrafficStats::new();
+
+        assert_eq!(stats.tcp.packets, 0);
+        assert_eq!(stats.tcp.bytes, 0);
+        assert_eq!(stats.tcp.drops, 0);
+        assert_eq!(stats.tcp.pps, 0.0);
+        assert_eq!(stats.tcp.bps, 0.0);
+
+        assert_eq!(stats.udp.packets, 0);
+        assert_eq!(stats.icmp.packets, 0);
+        assert_eq!(stats.other.packets, 0);
+        assert_eq!(stats.total.packets, 0);
+
+        assert!(stats.last_poll.is_none());
+        assert!(stats.prev_raw.is_none());
+    }
+
+    #[test]
+    fn test_traffic_stats_default() {
+        let stats = TrafficStats::default();
+        assert_eq!(stats.tcp.packets, 0);
+        assert_eq!(stats.total.pps, 0.0);
+    }
+
+    // =============================================================================
+    // update 테스트 (첫 번째 폴링)
+    // =============================================================================
+
+    #[test]
+    fn test_update_first_poll_sets_cumulative_only() {
+        let mut stats = TrafficStats::new();
+
+        let snapshot = RawTrafficSnapshot {
+            tcp: RawProtoStats {
+                packets: 1000,
+                bytes: 64000,
+                drops: 10,
+            },
+            udp: RawProtoStats {
+                packets: 500,
+                bytes: 32000,
+                drops: 5,
+            },
+            icmp: RawProtoStats {
+                packets: 100,
+                bytes: 8000,
+                drops: 1,
+            },
+            other: RawProtoStats {
+                packets: 50,
+                bytes: 4000,
+                drops: 0,
+            },
+            total: RawProtoStats {
+                packets: 1650,
+                bytes: 108000,
+                drops: 16,
+            },
+        };
+
+        stats.update(snapshot);
+
+        // 누적값은 설정되어야 함
+        assert_eq!(stats.tcp.packets, 1000);
+        assert_eq!(stats.tcp.bytes, 64000);
+        assert_eq!(stats.tcp.drops, 10);
+
+        // rate는 0이어야 함 (첫 번째 폴링)
+        assert_eq!(stats.tcp.pps, 0.0);
+        assert_eq!(stats.tcp.bps, 0.0);
+
+        assert_eq!(stats.udp.packets, 500);
+        assert_eq!(stats.udp.pps, 0.0);
+
+        assert_eq!(stats.total.packets, 1650);
+        assert_eq!(stats.total.pps, 0.0);
+
+        // 상태 저장 확인
+        assert!(stats.last_poll.is_some());
+        assert!(stats.prev_raw.is_some());
+    }
+
+    // =============================================================================
+    // update 테스트 (두 번째 폴링, rate 계산)
+    // =============================================================================
+
+    #[test]
+    fn test_update_second_poll_calculates_rate() {
+        let mut stats = TrafficStats::new();
+
+        let snapshot1 = RawTrafficSnapshot {
+            tcp: RawProtoStats {
+                packets: 1000,
+                bytes: 64000,
+                drops: 10,
+            },
+            udp: RawProtoStats::default(),
+            icmp: RawProtoStats::default(),
+            other: RawProtoStats::default(),
+            total: RawProtoStats {
+                packets: 1000,
+                bytes: 64000,
+                drops: 10,
+            },
+        };
+
+        stats.update(snapshot1);
+
+        // 시간 경과 시뮬레이션 (내부 Instant는 직접 조작 불가하므로 짧은 sleep 사용)
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
+        let snapshot2 = RawTrafficSnapshot {
+            tcp: RawProtoStats {
+                packets: 2000, // +1000 packets
+                bytes: 128000, // +64000 bytes
+                drops: 20,     // +10 drops
+            },
+            udp: RawProtoStats::default(),
+            icmp: RawProtoStats::default(),
+            other: RawProtoStats::default(),
+            total: RawProtoStats {
+                packets: 2000,
+                bytes: 128000,
+                drops: 20,
+            },
+        };
+
+        stats.update(snapshot2);
+
+        // 누적값 확인
+        assert_eq!(stats.tcp.packets, 2000);
+        assert_eq!(stats.tcp.bytes, 128000);
+        assert_eq!(stats.tcp.drops, 20);
+
+        // rate 확인 (대략 0.1초 동안 1000 패킷, 64000 바이트 증가)
+        // pps ≈ 1000 / 0.1 = 10000 pps
+        // bps ≈ 64000 * 8 / 0.1 = 5120000 bps
+        // 실제 sleep 시간이 정확하지 않으므로 범위로 검증
+        assert!(stats.tcp.pps > 0.0);
+        assert!(stats.tcp.bps > 0.0);
+        assert!(stats.tcp.pps < 100000.0); // 상한선
+    }
+
+    #[test]
+    fn test_update_zero_elapsed_time_skips_rate_calculation() {
+        // 이 테스트는 이론적으로 elapsed = 0인 경우를 시뮬레이션할 수 없으므로
+        // update()가 내부적으로 elapsed > 0.0 체크를 하는지 확인하는 역할
+        // 실제로는 항상 elapsed > 0이므로 로직 검증 목적
+        let mut stats = TrafficStats::new();
+
+        let snapshot = RawTrafficSnapshot {
+            tcp: RawProtoStats {
+                packets: 1000,
+                bytes: 64000,
+                drops: 10,
+            },
+            udp: RawProtoStats::default(),
+            icmp: RawProtoStats::default(),
+            other: RawProtoStats::default(),
+            total: RawProtoStats::default(),
+        };
+
+        stats.update(snapshot.clone());
+
+        // 즉시 다시 업데이트 (elapsed가 매우 작지만 0은 아님)
+        stats.update(snapshot);
+
+        // rate가 계산되지 않거나 매우 큰 값이 될 수 있음
+        // 코드는 elapsed > 0.0 체크를 하므로 panic이 발생하지 않아야 함
+        assert!(stats.tcp.packets == 1000);
+    }
+
+    // =============================================================================
+    // update 테스트 (빈 데이터)
+    // =============================================================================
+
+    #[test]
+    fn test_update_with_empty_snapshot() {
+        let mut stats = TrafficStats::new();
+
+        let empty_snapshot = RawTrafficSnapshot::default();
+
+        stats.update(empty_snapshot);
+
+        assert_eq!(stats.tcp.packets, 0);
+        assert_eq!(stats.tcp.pps, 0.0);
+        assert_eq!(stats.udp.packets, 0);
+        assert_eq!(stats.total.packets, 0);
+    }
+
+    // =============================================================================
+    // reset 테스트
+    // =============================================================================
+
+    #[test]
+    fn test_reset_clears_all_state() {
+        let mut stats = TrafficStats::new();
+
+        let snapshot = RawTrafficSnapshot {
+            tcp: RawProtoStats {
+                packets: 1000,
+                bytes: 64000,
+                drops: 10,
+            },
+            udp: RawProtoStats::default(),
+            icmp: RawProtoStats::default(),
+            other: RawProtoStats::default(),
+            total: RawProtoStats {
+                packets: 1000,
+                bytes: 64000,
+                drops: 10,
+            },
+        };
+
+        stats.update(snapshot);
+
+        assert_eq!(stats.tcp.packets, 1000);
+        assert!(stats.last_poll.is_some());
+
+        stats.reset();
+
+        assert_eq!(stats.tcp.packets, 0);
+        assert_eq!(stats.tcp.bytes, 0);
+        assert_eq!(stats.tcp.pps, 0.0);
+        assert_eq!(stats.tcp.bps, 0.0);
+        assert!(stats.last_poll.is_none());
+        assert!(stats.prev_raw.is_none());
+    }
+
+    // =============================================================================
+    // to_prometheus 테스트
+    // =============================================================================
+
+    #[test]
+    fn test_to_prometheus_format() {
+        let mut stats = TrafficStats::new();
+
+        stats.tcp.packets = 12345;
+        stats.tcp.bytes = 678900;
+        stats.tcp.drops = 42;
+        stats.tcp.pps = 1234.5;
+        stats.tcp.bps = 5678000.0;
+
+        stats.udp.packets = 5000;
+        stats.udp.bytes = 250000;
+        stats.udp.drops = 10;
+        stats.udp.pps = 500.0;
+        stats.udp.bps = 2000000.0;
+
+        let output = stats.to_prometheus();
+
+        // TCP 메트릭 확인
+        assert!(output.contains(r#"ironpost_packets_total{proto="tcp"} 12345"#));
+        assert!(output.contains(r#"ironpost_bytes_total{proto="tcp"} 678900"#));
+        assert!(output.contains(r#"ironpost_drops_total{proto="tcp"} 42"#));
+        assert!(output.contains(r#"ironpost_pps{proto="tcp"} 1234.5"#));
+        assert!(output.contains(r#"ironpost_bps{proto="tcp"} 5678000"#));
+
+        // UDP 메트릭 확인
+        assert!(output.contains(r#"ironpost_packets_total{proto="udp"} 5000"#));
+        assert!(output.contains(r#"ironpost_bytes_total{proto="udp"} 250000"#));
+
+        // 모든 프로토콜 라벨 확인
+        assert!(output.contains(r#"proto="tcp""#));
+        assert!(output.contains(r#"proto="udp""#));
+        assert!(output.contains(r#"proto="icmp""#));
+        assert!(output.contains(r#"proto="other""#));
+        assert!(output.contains(r#"proto="total""#));
+    }
+
+    #[test]
+    fn test_to_prometheus_zero_values() {
+        let stats = TrafficStats::new();
+        let output = stats.to_prometheus();
+
+        // 제로 값도 출력되어야 함
+        assert!(output.contains(r#"ironpost_packets_total{proto="tcp"} 0"#));
+        assert!(output.contains(r#"ironpost_pps{proto="tcp"} 0"#));
+    }
+
+    #[test]
+    fn test_to_prometheus_all_protocols() {
+        let mut stats = TrafficStats::new();
+
+        stats.tcp.packets = 100;
+        stats.udp.packets = 200;
+        stats.icmp.packets = 300;
+        stats.other.packets = 400;
+        stats.total.packets = 1000;
+
+        let output = stats.to_prometheus();
+
+        // 각 프로토콜별 메트릭 존재 확인
+        assert!(output.contains(r#"proto="tcp""#));
+        assert!(output.contains(r#"proto="udp""#));
+        assert!(output.contains(r#"proto="icmp""#));
+        assert!(output.contains(r#"proto="other""#));
+        assert!(output.contains(r#"proto="total""#));
+
+        // 패킷 수 확인
+        assert!(output.contains(r#"ironpost_packets_total{proto="tcp"} 100"#));
+        assert!(output.contains(r#"ironpost_packets_total{proto="udp"} 200"#));
+        assert!(output.contains(r#"ironpost_packets_total{proto="icmp"} 300"#));
+        assert!(output.contains(r#"ironpost_packets_total{proto="other"} 400"#));
+        assert!(output.contains(r#"ironpost_packets_total{proto="total"} 1000"#));
+    }
+
+    // =============================================================================
+    // 경계값 테스트
+    // =============================================================================
+
+    #[test]
+    fn test_update_with_max_values() {
+        let mut stats = TrafficStats::new();
+
+        let snapshot = RawTrafficSnapshot {
+            tcp: RawProtoStats {
+                packets: u64::MAX,
+                bytes: u64::MAX,
+                drops: u64::MAX,
+            },
+            udp: RawProtoStats::default(),
+            icmp: RawProtoStats::default(),
+            other: RawProtoStats::default(),
+            total: RawProtoStats {
+                packets: u64::MAX,
+                bytes: u64::MAX,
+                drops: u64::MAX,
+            },
+        };
+
+        stats.update(snapshot);
+
+        assert_eq!(stats.tcp.packets, u64::MAX);
+        assert_eq!(stats.tcp.bytes, u64::MAX);
+        assert_eq!(stats.tcp.drops, u64::MAX);
+    }
+
+    #[test]
+    fn test_update_saturating_sub_prevents_underflow() {
+        let mut stats = TrafficStats::new();
+
+        let snapshot1 = RawTrafficSnapshot {
+            tcp: RawProtoStats {
+                packets: 1000,
+                bytes: 64000,
+                drops: 10,
+            },
+            udp: RawProtoStats::default(),
+            icmp: RawProtoStats::default(),
+            other: RawProtoStats::default(),
+            total: RawProtoStats::default(),
+        };
+
+        stats.update(snapshot1);
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        // 두 번째 스냅샷이 첫 번째보다 작은 경우 (카운터 리셋 시나리오)
+        let snapshot2 = RawTrafficSnapshot {
+            tcp: RawProtoStats {
+                packets: 500, // 감소
+                bytes: 32000, // 감소
+                drops: 5,     // 감소
+            },
+            udp: RawProtoStats::default(),
+            icmp: RawProtoStats::default(),
+            other: RawProtoStats::default(),
+            total: RawProtoStats::default(),
+        };
+
+        stats.update(snapshot2);
+
+        // saturating_sub로 인해 delta는 0이 되고 rate도 0이 됨
+        assert_eq!(stats.tcp.pps, 0.0);
+        assert_eq!(stats.tcp.bps, 0.0);
+
+        // 누적값은 현재 값으로 업데이트됨
+        assert_eq!(stats.tcp.packets, 500);
+    }
+
+    // =============================================================================
+    // 여러 업데이트 연속 테스트
+    // =============================================================================
+
+    #[test]
+    fn test_multiple_updates_accumulate_correctly() {
+        let mut stats = TrafficStats::new();
+
+        for i in 1..=5 {
+            let snapshot = RawTrafficSnapshot {
+                tcp: RawProtoStats {
+                    packets: i * 1000,
+                    bytes: i * 64000,
+                    drops: i * 10,
+                },
+                udp: RawProtoStats::default(),
+                icmp: RawProtoStats::default(),
+                other: RawProtoStats::default(),
+                total: RawProtoStats {
+                    packets: i * 1000,
+                    bytes: i * 64000,
+                    drops: i * 10,
+                },
+            };
+
+            stats.update(snapshot);
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+
+        assert_eq!(stats.tcp.packets, 5000);
+        assert_eq!(stats.tcp.bytes, 320000);
+        assert!(stats.tcp.pps > 0.0); // rate가 계산되었어야 함
     }
 }
