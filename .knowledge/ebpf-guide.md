@@ -43,10 +43,74 @@ components = ["rust-src"]
 [dependencies]
 aya-ebpf = "0.1"
 aya-log-ebpf = "0.1"
+network-types = "0.1.0"
 
 [[bin]]
 name = "ironpost-ebpf"
 path = "src/main.rs"
+```
+
+## network-types 크레이트
+
+커널 XDP 프로그램에서 네트워크 헤더 파싱에 [`network-types`](https://crates.io/crates/network-types) 크레이트를 사용합니다.
+
+### 왜 network-types인가?
+- `#![no_std]` 호환 — eBPF 커널 코드에서 사용 가능
+- Aya 에코시스템 표준 크레이트 — 직접 헤더 구조체를 정의할 필요 없음
+- 타입 안전 프로토콜 enum (`EtherType`, `IpProto`) — 매직 넘버 제거
+- `#[repr(C)]` 네트워크 헤더 구조체 — 패킷 버퍼에서 직접 캐스팅 가능
+
+### 주요 타입
+```rust
+use network_types::eth::{EthHdr, EtherType};
+use network_types::ip::{Ipv4Hdr, IpProto};
+use network_types::tcp::TcpHdr;
+use network_types::udp::UdpHdr;
+```
+
+### 필드 접근 방식 (수동 정의 대비)
+
+| 구분 | 수동 정의 구조체 | network-types |
+|------|-----------------|---------------|
+| IP 주소 | `src_addr: u32` | `src_addr: [u8; 4]` → `u32::from_ne_bytes()` |
+| 포트 (TCP) | `source: u16` → `u16::from_be()` | `source: [u8; 2]` → `u16::from_be_bytes()` |
+| 포트 (UDP) | `source: u16` → `u16::from_be()` | `src: [u8; 2]` → `u16::from_be_bytes()` |
+| TCP 플래그 | `flags: u8` 직접 읽기 | 비트필드 접근자 `.syn()`, `.ack()` 등 |
+| EtherType | `h_proto: u16` → `from_be()` 후 비교 | `ether_type: u16` → `EtherType` enum 비교 (BE 내장) |
+| IHL | `version_ihl & 0x0F` | `vihl & 0x0F` |
+| 헤더 크기 | `const ETH_HDR_LEN: usize = 14` | `EthHdr::LEN` |
+
+### EtherType 비교 패턴
+```rust
+// EtherType enum은 네트워크 바이트 오더로 미리 인코딩되어 있어
+// from_be() 변환 없이 바로 비교 가능
+if unsafe { (*eth).ether_type } != EtherType::Ipv4 as u16 {
+    return Ok(xdp_action::XDP_PASS);
+}
+```
+
+### TCP 플래그 재구성 패턴
+```rust
+// network-types TcpHdr는 비트필드로 플래그를 관리
+// 개별 접근자에서 flags 바이트를 재구성
+tcp_flags = 0;
+if (*tcp).syn() != 0 { tcp_flags |= TCP_SYN; }
+if (*tcp).ack() != 0 { tcp_flags |= TCP_ACK; }
+if (*tcp).fin() != 0 { tcp_flags |= TCP_FIN; }
+if (*tcp).rst() != 0 { tcp_flags |= TCP_RST; }
+if (*tcp).psh() != 0 { tcp_flags |= TCP_PSH; }
+```
+
+### 프로토콜 매칭 패턴
+```rust
+let proto = unsafe { (*ipv4).proto };
+match proto {
+    IpProto::Tcp => { /* TCP 처리 */ },
+    IpProto::Udp => { /* UDP 처리 */ },
+    IpProto::Icmp => { /* ICMP 처리 */ },
+    _ => { /* 기타 */ },
+}
+// PacketEventData에 저장할 때: proto as u8
 ```
 
 ## eBPF 프로그래밍 제약사항

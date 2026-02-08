@@ -1,0 +1,8 @@
+[package]
+name = "ironpost-ebpf-common"
+version = "0.1.0"
+edition = "2024"
+description = "Ironpost eBPF 커널/유저스페이스 공유 타입 (#![no_std])"
+
+[dependencies]
+# no_std — 외부 의존성 없음

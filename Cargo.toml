@@ -4,6 +4,7 @@ members = [
     "crates/core",
     "crates/ebpf-engine",
     "crates/ebpf-engine/ebpf",
+    "crates/ebpf-engine/ebpf-common",
     "crates/log-pipeline",
     "crates/container-guard",
     "crates/sbom-scanner",
@@ -14,6 +15,7 @@ members = [
 default-members = [
     "crates/core",
     "crates/ebpf-engine",
+    "crates/ebpf-engine/ebpf-common",
     "crates/log-pipeline",
     "crates/container-guard",
     "crates/sbom-scanner",
