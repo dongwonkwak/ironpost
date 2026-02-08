@@ -61,6 +61,7 @@ impl IronpostConfig {
     pub async fn load(path: impl AsRef<Path>) -> Result<Self, IronpostError> {
         let mut config = Self::from_file(path).await?;
         config.apply_env_overrides();
+        config.validate()?;
         Ok(config)
     }
 
@@ -76,7 +77,9 @@ impl IronpostConfig {
                 IronpostError::Io(e)
             }
         })?;
-        Self::parse(&content)
+        let config = Self::parse(&content)?;
+        config.validate()?;
+        Ok(config)
     }
 
     /// TOML 문자열에서 설정을 파싱합니다.

@@ -12,6 +12,26 @@ use serde::{Deserialize, Serialize};
 
 use crate::types::{Alert, LogEntry, PacketInfo, Severity};
 
+// --- 모듈명 상수 ---
+
+/// eBPF 엔진 모듈명
+pub const MODULE_EBPF: &str = "ebpf-engine";
+/// 로그 파이프라인 모듈명
+pub const MODULE_LOG_PIPELINE: &str = "log-pipeline";
+/// 컨테이너 가드 모듈명
+pub const MODULE_CONTAINER_GUARD: &str = "container-guard";
+
+// --- 이벤트 타입 상수 ---
+
+/// 패킷 이벤트 타입
+pub const EVENT_TYPE_PACKET: &str = "packet";
+/// 로그 이벤트 타입
+pub const EVENT_TYPE_LOG: &str = "log";
+/// 알림 이벤트 타입
+pub const EVENT_TYPE_ALERT: &str = "alert";
+/// 액션 이벤트 타입
+pub const EVENT_TYPE_ACTION: &str = "action";
+
 /// 이벤트 메타데이터 — 모든 이벤트에 공통으로 포함되는 추적 정보
 ///
 /// 각 이벤트의 발생 시각, 생성 모듈, 분산 추적 ID를 담고 있어
@@ -55,7 +75,7 @@ impl fmt::Display for EventMetadata {
         write!(
             f,
             "[{}] source={} trace={}",
-            humanize_system_time(self.timestamp),
+            unix_timestamp_str(self.timestamp),
             self.source_module,
             self.trace_id,
         )
@@ -99,7 +119,7 @@ impl PacketEvent {
     pub fn new(packet_info: PacketInfo, raw_data: Bytes) -> Self {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
-            metadata: EventMetadata::with_new_trace("ebpf-engine"),
+            metadata: EventMetadata::with_new_trace(MODULE_EBPF),
             packet_info,
             raw_data,
         }
@@ -113,7 +133,7 @@ impl PacketEvent {
     ) -> Self {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
-            metadata: EventMetadata::new("ebpf-engine", trace_id),
+            metadata: EventMetadata::new(MODULE_EBPF, trace_id),
             packet_info,
             raw_data,
         }
@@ -130,7 +150,7 @@ impl Event for PacketEvent {
     }
 
     fn event_type(&self) -> &str {
-        "packet"
+        EVENT_TYPE_PACKET
     }
 }
 
@@ -139,7 +159,7 @@ impl fmt::Display for PacketEvent {
         write!(
             f,
             "PacketEvent[{}] {}:{} -> {}:{} proto={} size={}",
-            &self.id[..8],
+            &self.id[..8.min(self.id.len())],
             self.packet_info.src_ip,
             self.packet_info.src_port,
             self.packet_info.dst_ip,
@@ -168,7 +188,7 @@ impl LogEvent {
     pub fn new(entry: LogEntry) -> Self {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
-            metadata: EventMetadata::with_new_trace("log-pipeline"),
+            metadata: EventMetadata::with_new_trace(MODULE_LOG_PIPELINE),
             entry,
         }
     }
@@ -177,7 +197,7 @@ impl LogEvent {
     pub fn with_trace(entry: LogEntry, trace_id: impl Into<String>) -> Self {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
-            metadata: EventMetadata::new("log-pipeline", trace_id),
+            metadata: EventMetadata::new(MODULE_LOG_PIPELINE, trace_id),
             entry,
         }
     }
@@ -193,7 +213,7 @@ impl Event for LogEvent {
     }
 
     fn event_type(&self) -> &str {
-        "log"
+        EVENT_TYPE_LOG
     }
 }
 
@@ -202,7 +222,7 @@ impl fmt::Display for LogEvent {
         write!(
             f,
             "LogEvent[{}] source={} host={} severity={}",
-            &self.id[..8],
+            &self.id[..8.min(self.id.len())],
             self.entry.source,
             self.entry.hostname,
             self.entry.severity,
@@ -230,7 +250,7 @@ impl AlertEvent {
     pub fn new(alert: Alert, severity: Severity) -> Self {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
-            metadata: EventMetadata::with_new_trace("log-pipeline"),
+            metadata: EventMetadata::with_new_trace(MODULE_LOG_PIPELINE),
             alert,
             severity,
         }
@@ -240,7 +260,7 @@ impl AlertEvent {
     pub fn with_trace(alert: Alert, severity: Severity, trace_id: impl Into<String>) -> Self {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
-            metadata: EventMetadata::new("log-pipeline", trace_id),
+            metadata: EventMetadata::new(MODULE_LOG_PIPELINE, trace_id),
             alert,
             severity,
         }
@@ -257,7 +277,7 @@ impl Event for AlertEvent {
     }
 
     fn event_type(&self) -> &str {
-        "alert"
+        EVENT_TYPE_ALERT
     }
 }
 
@@ -266,7 +286,7 @@ impl fmt::Display for AlertEvent {
         write!(
             f,
             "AlertEvent[{}] rule={} severity={} title={}",
-            &self.id[..8],
+            &self.id[..8.min(self.id.len())],
             self.alert.rule_name,
             self.severity,
             self.alert.title,
@@ -296,7 +316,7 @@ impl ActionEvent {
     pub fn new(action_type: impl Into<String>, target: impl Into<String>, success: bool) -> Self {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
-            metadata: EventMetadata::with_new_trace("container-guard"),
+            metadata: EventMetadata::with_new_trace(MODULE_CONTAINER_GUARD),
             action_type: action_type.into(),
             target: target.into(),
             success,
@@ -312,7 +332,7 @@ impl ActionEvent {
     ) -> Self {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
-            metadata: EventMetadata::new("container-guard", trace_id),
+            metadata: EventMetadata::new(MODULE_CONTAINER_GUARD, trace_id),
             action_type: action_type.into(),
             target: target.into(),
             success,
@@ -330,7 +350,7 @@ impl Event for ActionEvent {
     }
 
     fn event_type(&self) -> &str {
-        "action"
+        EVENT_TYPE_ACTION
     }
 }
 
@@ -340,7 +360,7 @@ impl fmt::Display for ActionEvent {
         write!(
             f,
             "ActionEvent[{}] type={} target={} status={}",
-            &self.id[..8],
+            &self.id[..8.min(self.id.len())],
             self.action_type,
             self.target,
             status,
@@ -349,7 +369,7 @@ impl fmt::Display for ActionEvent {
 }
 
 /// SystemTime을 사람이 읽을 수 있는 형태로 변환합니다.
-fn humanize_system_time(time: SystemTime) -> String {
+fn unix_timestamp_str(time: SystemTime) -> String {
     match time.duration_since(SystemTime::UNIX_EPOCH) {
         Ok(duration) => {
             let secs = duration.as_secs();

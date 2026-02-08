@@ -9,10 +9,15 @@
 
 ## 참조 문서 (작업 전 반드시 읽을 것)
 - .knowledge/testing-strategy.md
+- reviewer의 피드백: `.reviews/phase-{N}-{name}.md` (현재 phase)
 
 ## 수정 범위
 - tests/, benches/, 각 모듈의 #[cfg(test)] 블록
 - 프로덕션 코드는 수정 금지
+
+## 리뷰 반영
+- `.reviews/phase-{N}-{name}.md`에서 테스트 누락 지적사항 확인
+- reviewer가 언급한 엣지 케이스에 대한 테스트 추가
 
 ## 태스크 관리
 - 작업 시작 시: .tasks/BOARD.md에서 해당 태스크 상태를 🔄로 변경, 시작 시간 기록

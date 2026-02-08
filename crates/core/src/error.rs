@@ -67,15 +67,6 @@ pub enum ConfigError {
         /// 유효하지 않은 사유
         reason: String,
     },
-
-    /// 환경변수 파싱 실패
-    #[error("failed to parse env var '{key}': {reason}")]
-    EnvVarParseFailed {
-        /// 환경변수 키
-        key: String,
-        /// 파싱 실패 사유
-        reason: String,
-    },
 }
 
 /// 파이프라인 처리 에러

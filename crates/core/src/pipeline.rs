@@ -4,10 +4,15 @@
 //! [`Detector`], [`LogParser`], [`PolicyEnforcer`] trait은 플러그인 확장 포인트입니다.
 
 use std::fmt;
+use std::future::Future;
+use std::pin::Pin;
 
 use serde::{Deserialize, Serialize};
 
 use crate::error::IronpostError;
+
+/// dyn-compatible Future 타입 별칭
+pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 use crate::types::{Alert, LogEntry};
 
 /// 모든 파이프라인 모듈이 구현하는 생명주기 trait
@@ -51,6 +56,45 @@ pub trait Pipeline: Send + Sync {
     ///
     /// 주기적으로 호출되어 모듈의 건강 상태를 모니터링합니다.
     fn health_check(&self) -> impl std::future::Future<Output = HealthStatus> + Send;
+}
+
+/// dyn-compatible 파이프라인 trait
+///
+/// `Pipeline` trait은 RPITIT를 사용하므로 `dyn Pipeline`이 불가합니다.
+/// `DynPipeline`은 `BoxFuture`를 반환하여 `Vec<Box<dyn DynPipeline>>`으로
+/// 모듈을 동적 관리할 수 있게 합니다.
+///
+/// # 구현 예시
+/// ```ignore
+/// // Pipeline을 구현한 타입은 blanket impl으로 자동으로 DynPipeline도 구현됩니다.
+/// let modules: Vec<Box<dyn DynPipeline>> = vec![
+///     Box::new(ebpf_pipeline),
+///     Box::new(log_pipeline),
+/// ];
+/// ```
+pub trait DynPipeline: Send + Sync {
+    /// 모듈을 시작합니다.
+    fn start(&mut self) -> BoxFuture<'_, Result<(), IronpostError>>;
+
+    /// 모듈을 정지합니다.
+    fn stop(&mut self) -> BoxFuture<'_, Result<(), IronpostError>>;
+
+    /// 모듈의 현재 상태를 확인합니다.
+    fn health_check(&self) -> BoxFuture<'_, HealthStatus>;
+}
+
+impl<T: Pipeline> DynPipeline for T {
+    fn start(&mut self) -> BoxFuture<'_, Result<(), IronpostError>> {
+        Box::pin(Pipeline::start(self))
+    }
+
+    fn stop(&mut self) -> BoxFuture<'_, Result<(), IronpostError>> {
+        Box::pin(Pipeline::stop(self))
+    }
+
+    fn health_check(&self) -> BoxFuture<'_, HealthStatus> {
+        Box::pin(Pipeline::health_check(self))
+    }
 }
 
 /// 모듈 헬스 상태
@@ -247,23 +291,34 @@ mod tests {
         let mut pipeline = MockPipeline::new();
 
         // 시작 전 상태 확인
-        assert!(pipeline.health_check().await.is_unhealthy());
+        assert!(Pipeline::health_check(&pipeline).await.is_unhealthy());
 
         // 시작
-        pipeline.start().await.unwrap();
-        assert!(pipeline.health_check().await.is_healthy());
+        Pipeline::start(&mut pipeline).await.unwrap();
+        assert!(Pipeline::health_check(&pipeline).await.is_healthy());
 
         // 중복 시작 시 에러
-        let err = pipeline.start().await;
+        let err = Pipeline::start(&mut pipeline).await;
         assert!(err.is_err());
 
         // 정지
-        pipeline.stop().await.unwrap();
-        assert!(pipeline.health_check().await.is_unhealthy());
+        Pipeline::stop(&mut pipeline).await.unwrap();
+        assert!(Pipeline::health_check(&pipeline).await.is_unhealthy());
 
         // 중복 정지 시 에러
-        let err = pipeline.stop().await;
+        let err = Pipeline::stop(&mut pipeline).await;
         assert!(err.is_err());
+    }
+
+    #[tokio::test]
+    async fn dyn_pipeline_can_be_boxed() {
+        let mut pipeline: Box<dyn DynPipeline> = Box::new(MockPipeline::new());
+
+        assert!(pipeline.health_check().await.is_unhealthy());
+        pipeline.start().await.unwrap();
+        assert!(pipeline.health_check().await.is_healthy());
+        pipeline.stop().await.unwrap();
+        assert!(pipeline.health_check().await.is_unhealthy());
     }
 
     // Detector trait mock 테스트
