@@ -32,6 +32,8 @@ anyhow = "1"
 thiserror = "2"
 clap = { version = "4", features = ["derive"] }
 bytes = "1"
+toml = "0.8"
+uuid = { version = "1", features = ["v4"] }
 
 [profile.dev]
 panic = "abort"

@@ -6,8 +6,10 @@ description = "Ironpost eBPF 기반 네트워크 패킷 탐지 엔진"
 
 [dependencies]
 ironpost-core = { path = "../core" }
-aya = "0.13"
 tokio = { workspace = true }
 tracing = { workspace = true }
 clap = { workspace = true }
 bytes = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+aya = "0.13"
