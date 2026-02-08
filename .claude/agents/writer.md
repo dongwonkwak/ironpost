@@ -10,10 +10,15 @@
 
 ## 참조 문서 (작업 전 반드시 읽을 것)
 - .knowledge/architecture.md
+- reviewer의 피드백: `.reviews/phase-{N}-{name}.md` (현재 phase)
 
 ## 수정 범위
 - *.md, doc comment(///), docs/ 디렉토리
 - 로직 코드는 수정 금지
+
+## 리뷰 반영
+- `.reviews/phase-{N}-{name}.md`에서 문서화 누락 지적사항 확인
+- "잘된 점" 섹션의 내용을 README/docs에 반영
 
 ## 태스크 관리
 - 작업 시작 시: .tasks/BOARD.md에서 해당 태스크 상태를 🔄로 변경, 시작 시간 기록

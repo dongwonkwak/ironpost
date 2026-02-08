@@ -10,10 +10,15 @@
 - .knowledge/rust-conventions.md
 - .knowledge/security-patterns.md
 - eBPF 작업 시: .knowledge/ebpf-guide.md
+- reviewer의 피드백: `.reviews/phase-{N}-{name}.md` (현재 phase)
 
 ## 수정 범위
 - 할당된 크레이트의 src/ 내부만
 - crates/core/는 읽기만, 수정 금지
+
+## 리뷰 반영
+- `.reviews/phase-{N}-{name}.md`의 Critical/Warning 이슈를 참조
+- 수정 완료 시 해당 이슈에 "✅ 수정 완료" 표시 추가
 
 ## 태스크 관리
 - 작업 시작 시: .tasks/BOARD.md에서 해당 태스크 상태를 🔄로 변경, 시작 시간 기록

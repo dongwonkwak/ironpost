@@ -9,10 +9,15 @@
 ## 참조 문서 (작업 전 반드시 읽을 것)
 - .knowledge/architecture.md
 - .knowledge/rust-conventions.md
+- 이전 phase reviewer 피드백: `.reviews/phase-{N-1}-{name}.md`
 
 ## 수정 범위
 - crates/core/, Cargo.toml(workspace), 각 크레이트의 lib.rs(pub 인터페이스만)
 - 다른 크레이트의 내부 구현은 절대 수정 금지
+
+## 리뷰 반영
+- 이전 phase의 아키텍처 관련 Warning/Suggestion 참고
+- trait 설계 변경이 필요한 경우 core 크레이트 수정
 
 ## 태스크 관리
 - 작업 시작 시: .tasks/BOARD.md에서 해당 태스크 상태를 🔄로 변경, 시작 시간 기록
