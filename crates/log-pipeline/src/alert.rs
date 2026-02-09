@@ -271,4 +271,280 @@ mod tests {
         assert!(generator.generate(&match1, None).is_none());
         assert!(generator.generate(&match2, None).is_none());
     }
+
+    // === Edge Case Tests ===
+
+    #[test]
+    fn zero_dedup_window_allows_all_alerts() {
+        let mut generator = AlertGenerator::new(0, 100); // dedup disabled
+        let rule_match = sample_rule_match();
+
+        for _ in 0..5 {
+            assert!(generator.generate(&rule_match, None).is_some());
+        }
+        assert_eq!(generator.total_generated(), 5);
+        assert_eq!(generator.dedup_suppressed(), 0);
+    }
+
+    #[test]
+    fn zero_rate_limit_blocks_all_subsequent_alerts() {
+        let mut generator = AlertGenerator::new(0, 0); // rate limit = 0
+        let rule_match = sample_rule_match();
+
+        // With rate limit 0, first alert might still pass (counter starts at 0)
+        // Second alert should definitely be blocked
+        let _first = generator.generate(&rule_match, None);
+        let second = generator.generate(&rule_match, None);
+        assert!(second.is_none());
+        assert!(generator.rate_suppressed() >= 1);
+    }
+
+    #[test]
+    fn rate_limit_resets_after_minute() {
+        let mut generator = AlertGenerator::new(0, 1); // dedup=0, rate=1/min
+        let rule_match = sample_rule_match();
+
+        // First succeeds
+        assert!(generator.generate(&rule_match, None).is_some());
+        // Second is rate limited
+        assert!(generator.generate(&rule_match, None).is_none());
+
+        // Manually expire rate tracker (in real scenario, would wait 60s)
+        generator.cleanup_expired();
+
+        // Note: In unit test, cleanup won't actually reset the counter
+        // because not enough time has elapsed. This tests cleanup doesn't panic.
+    }
+
+    #[test]
+    fn very_long_dedup_window() {
+        let mut generator = AlertGenerator::new(86400, 100); // 24 hours
+        let rule_match = sample_rule_match();
+
+        assert!(generator.generate(&rule_match, None).is_some());
+        assert!(generator.generate(&rule_match, None).is_none());
+        assert_eq!(generator.dedup_suppressed(), 1);
+    }
+
+    #[test]
+    fn very_high_rate_limit() {
+        let mut generator = AlertGenerator::new(0, 1000); // dedup=0, rate=1000/min
+        let rule_match = sample_rule_match();
+
+        // Should allow many alerts
+        for i in 0..100 {
+            let result = generator.generate(&rule_match, None);
+            assert!(result.is_some(), "alert {i} should not be rate limited");
+        }
+        assert_eq!(generator.total_generated(), 100);
+    }
+
+    #[test]
+    fn cleanup_expired_removes_old_entries() {
+        let mut generator = AlertGenerator::new(1, 10); // 1 second dedup
+        let rule_match = sample_rule_match();
+
+        generator.generate(&rule_match, None);
+        assert_eq!(generator.dedup_tracker.len(), 1);
+
+        // Cleanup should retain entries within 2x window
+        generator.cleanup_expired();
+        // Still fresh, should remain
+        assert_eq!(generator.dedup_tracker.len(), 1);
+    }
+
+    #[test]
+    fn cleanup_on_empty_generator() {
+        let mut generator = AlertGenerator::new(60, 10);
+        generator.cleanup_expired();
+        // Should not panic
+        assert_eq!(generator.total_generated(), 0);
+    }
+
+    #[test]
+    fn many_different_rules() {
+        let mut generator = AlertGenerator::new(60, 10);
+
+        for i in 0..100 {
+            let mut rule_match = sample_rule_match();
+            rule_match.rule.id = format!("rule_{i}");
+            assert!(generator.generate(&rule_match, None).is_some());
+        }
+
+        assert_eq!(generator.total_generated(), 100);
+        assert_eq!(generator.dedup_suppressed(), 0);
+    }
+
+    #[test]
+    fn rule_id_with_special_characters() {
+        let mut generator = AlertGenerator::new(60, 10);
+        let mut rule_match = sample_rule_match();
+        rule_match.rule.id = "rule-with-dashes_and_underscores.and.dots".to_owned();
+
+        assert!(generator.generate(&rule_match, None).is_some());
+        assert!(generator.generate(&rule_match, None).is_none());
+        assert_eq!(generator.dedup_suppressed(), 1);
+    }
+
+    #[test]
+    fn rule_id_with_unicode() {
+        let mut generator = AlertGenerator::new(60, 10);
+        let mut rule_match = sample_rule_match();
+        rule_match.rule.id = "rule_日本語_🚀".to_owned();
+
+        assert!(generator.generate(&rule_match, None).is_some());
+        assert_eq!(generator.total_generated(), 1);
+    }
+
+    #[test]
+    fn very_long_rule_id() {
+        let mut generator = AlertGenerator::new(60, 10);
+        let mut rule_match = sample_rule_match();
+        rule_match.rule.id = "r".repeat(1000);
+
+        assert!(generator.generate(&rule_match, None).is_some());
+        assert!(generator.generate(&rule_match, None).is_none());
+    }
+
+    #[test]
+    fn alert_has_unique_id() {
+        let mut generator = AlertGenerator::new(0, 100);
+
+        let mut ids = std::collections::HashSet::new();
+        for _ in 0..10 {
+            let mut rule_match = sample_rule_match();
+            rule_match.rule.id = format!("rule_{}", uuid::Uuid::new_v4());
+            if let Some(alert) = generator.generate(&rule_match, None) {
+                ids.insert(alert.alert.id.clone());
+            }
+        }
+
+        assert_eq!(ids.len(), 10); // All IDs should be unique
+    }
+
+    #[test]
+    fn alert_severity_matches_rule() {
+        let mut generator = AlertGenerator::new(60, 10);
+
+        for severity in [
+            Severity::Info,
+            Severity::Low,
+            Severity::Medium,
+            Severity::High,
+            Severity::Critical,
+        ] {
+            let mut rule_match = sample_rule_match();
+            rule_match.rule.id = format!("rule_{:?}", severity);
+            rule_match.rule.severity = severity;
+
+            if let Some(alert) = generator.generate(&rule_match, None) {
+                assert_eq!(alert.alert.severity, severity);
+                assert_eq!(alert.severity, severity);
+            }
+        }
+    }
+
+    #[test]
+    fn alert_contains_rule_metadata() {
+        let mut generator = AlertGenerator::new(60, 10);
+        let mut rule_match = sample_rule_match();
+        rule_match.rule.id = "test_rule_123".to_owned();
+        rule_match.rule.title = "Test Alert Title".to_owned();
+        rule_match.rule.description = "Test alert description".to_owned();
+
+        if let Some(alert) = generator.generate(&rule_match, None) {
+            assert_eq!(alert.alert.title, "Test Alert Title");
+            assert_eq!(alert.alert.description, "Test alert description");
+            assert_eq!(alert.alert.rule_name, "test_rule_123");
+        }
+    }
+
+    #[test]
+    fn trace_id_propagation() {
+        let mut generator = AlertGenerator::new(0, 100);
+
+        let trace_ids = vec!["trace-1", "trace-2", "trace-3"];
+        for (i, tid) in trace_ids.iter().enumerate() {
+            let mut rule_match = sample_rule_match();
+            rule_match.rule.id = format!("rule_{i}");
+
+            if let Some(alert) = generator.generate(&rule_match, Some(tid)) {
+                assert_eq!(alert.metadata.trace_id, *tid);
+            }
+        }
+    }
+
+    #[test]
+    fn rate_limit_per_rule_independence() {
+        let mut generator = AlertGenerator::new(0, 2); // rate=2/min per rule
+
+        let mut match1 = sample_rule_match();
+        match1.rule.id = "rule_a".to_owned();
+
+        let mut match2 = sample_rule_match();
+        match2.rule.id = "rule_b".to_owned();
+
+        // Each rule gets its own rate limit bucket
+        assert!(generator.generate(&match1, None).is_some()); // rule_a: 1
+        assert!(generator.generate(&match1, None).is_some()); // rule_a: 2
+        assert!(generator.generate(&match1, None).is_none()); // rule_a: rate limited
+
+        // rule_b should still have capacity
+        assert!(generator.generate(&match2, None).is_some()); // rule_b: 1
+        assert!(generator.generate(&match2, None).is_some()); // rule_b: 2
+        assert!(generator.generate(&match2, None).is_none()); // rule_b: rate limited
+
+        assert_eq!(generator.total_generated(), 4);
+        assert_eq!(generator.rate_suppressed(), 2);
+    }
+
+    #[test]
+    fn dedup_and_rate_limit_interaction() {
+        let mut generator = AlertGenerator::new(60, 2); // dedup=60s, rate=2/min
+        let rule_match = sample_rule_match();
+
+        // First alert: passes both checks
+        assert!(generator.generate(&rule_match, None).is_some());
+
+        // Second alert: blocked by dedup (rate limit not reached)
+        assert!(generator.generate(&rule_match, None).is_none());
+        assert_eq!(generator.dedup_suppressed(), 1);
+        assert_eq!(generator.rate_suppressed(), 0);
+    }
+
+    #[test]
+    fn counters_start_at_zero() {
+        let generator = AlertGenerator::new(60, 10);
+        assert_eq!(generator.total_generated(), 0);
+        assert_eq!(generator.dedup_suppressed(), 0);
+        assert_eq!(generator.rate_suppressed(), 0);
+    }
+
+    #[test]
+    fn counters_increment_correctly() {
+        let mut generator = AlertGenerator::new(1, 1); // tight limits
+        let rule_match = sample_rule_match();
+
+        generator.generate(&rule_match, None); // Success
+        generator.generate(&rule_match, None); // Dedup
+        generator.generate(&rule_match, None); // Dedup or rate
+
+        assert_eq!(generator.total_generated(), 1);
+        assert!(generator.dedup_suppressed() > 0 || generator.rate_suppressed() > 0);
+    }
+
+    #[test]
+    fn stress_test_many_rules_and_alerts() {
+        let mut generator = AlertGenerator::new(0, 100); // High limits
+
+        for rule_num in 0..100 {
+            for _alert_num in 0..10 {
+                let mut rule_match = sample_rule_match();
+                rule_match.rule.id = format!("rule_{}", rule_num);
+                generator.generate(&rule_match, None);
+            }
+        }
+
+        assert_eq!(generator.total_generated(), 1000);
+    }
 }

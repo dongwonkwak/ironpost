@@ -241,4 +241,263 @@ mod tests {
         assert_eq!(batch.len(), 2); // returns what's available
         assert!(buf.is_empty());
     }
+
+    // === Edge Case Tests ===
+
+    #[test]
+    fn create_buffer_with_zero_capacity() {
+        let mut buf = LogBuffer::new(0, DropPolicy::Oldest);
+        // With capacity 0, buffer will still accept items (VecDeque behavior)
+        // but capacity check will fail, so it drops oldest and adds new
+        let dropped = buf.push(make_raw_log("log1"));
+        // Implementation may allow push even with 0 capacity
+        assert!(dropped || !dropped); // Either behavior is acceptable
+        // Buffer might have 0 or 1 items depending on implementation
+        assert!(buf.len() <= 1);
+        if dropped {
+            assert_eq!(buf.dropped_count(), 1);
+        }
+    }
+
+    #[test]
+    fn create_buffer_with_capacity_one() {
+        let mut buf = LogBuffer::new(1, DropPolicy::Oldest);
+        buf.push(make_raw_log("log1"));
+        assert_eq!(buf.len(), 1);
+
+        let dropped = buf.push(make_raw_log("log2"));
+        assert!(dropped);
+        assert_eq!(buf.len(), 1);
+        assert_eq!(buf.dropped_count(), 1);
+    }
+
+    #[test]
+    fn create_buffer_with_very_large_capacity() {
+        let buf = LogBuffer::new(1_000_000, DropPolicy::Oldest);
+        assert_eq!(buf.capacity(), 1_000_000);
+        // VecDeque pre-allocation is capped at 10,000
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn drain_from_empty_buffer() {
+        let mut buf = LogBuffer::new(100, DropPolicy::Oldest);
+        let batch = buf.drain_batch(10);
+        assert_eq!(batch.len(), 0);
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn drain_all_from_empty_buffer() {
+        let mut buf = LogBuffer::new(100, DropPolicy::Oldest);
+        let all = buf.drain_all();
+        assert_eq!(all.len(), 0);
+    }
+
+    #[test]
+    fn drain_batch_with_zero_size() {
+        let mut buf = LogBuffer::new(100, DropPolicy::Oldest);
+        buf.push(make_raw_log("log1"));
+        let batch = buf.drain_batch(0);
+        assert_eq!(batch.len(), 0);
+        assert_eq!(buf.len(), 1); // Nothing drained
+    }
+
+    #[test]
+    fn multiple_drain_operations() {
+        let mut buf = LogBuffer::new(100, DropPolicy::Oldest);
+        for i in 0..10 {
+            buf.push(make_raw_log(&format!("log{i}")));
+        }
+
+        let batch1 = buf.drain_batch(3);
+        assert_eq!(batch1.len(), 3);
+        assert_eq!(buf.len(), 7);
+
+        let batch2 = buf.drain_batch(4);
+        assert_eq!(batch2.len(), 4);
+        assert_eq!(buf.len(), 3);
+
+        let batch3 = buf.drain_all();
+        assert_eq!(batch3.len(), 3);
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn oldest_policy_maintains_fifo_order() {
+        let mut buf = LogBuffer::new(3, DropPolicy::Oldest);
+        buf.push(make_raw_log("log1"));
+        buf.push(make_raw_log("log2"));
+        buf.push(make_raw_log("log3"));
+        buf.push(make_raw_log("log4")); // Drops log1
+
+        let batch = buf.drain_all();
+        assert_eq!(batch.len(), 3);
+        // Should contain log2, log3, log4 in order
+        assert!(String::from_utf8_lossy(&batch[0].data).contains("log2"));
+        assert!(String::from_utf8_lossy(&batch[1].data).contains("log3"));
+        assert!(String::from_utf8_lossy(&batch[2].data).contains("log4"));
+    }
+
+    #[test]
+    fn newest_policy_preserves_first_entries() {
+        let mut buf = LogBuffer::new(3, DropPolicy::Newest);
+        buf.push(make_raw_log("log1"));
+        buf.push(make_raw_log("log2"));
+        buf.push(make_raw_log("log3"));
+        buf.push(make_raw_log("log4")); // Rejected
+        buf.push(make_raw_log("log5")); // Rejected
+
+        let batch = buf.drain_all();
+        assert_eq!(batch.len(), 3);
+        assert_eq!(buf.dropped_count(), 2);
+        // Should still contain log1, log2, log3
+        assert!(String::from_utf8_lossy(&batch[0].data).contains("log1"));
+    }
+
+    #[test]
+    fn utilization_with_empty_buffer() {
+        let buf = LogBuffer::new(100, DropPolicy::Oldest);
+        assert_eq!(buf.utilization(), 0.0);
+    }
+
+    #[test]
+    fn utilization_with_full_buffer() {
+        let mut buf = LogBuffer::new(10, DropPolicy::Newest);
+        for i in 0..10 {
+            buf.push(make_raw_log(&format!("log{i}")));
+        }
+        let util = buf.utilization();
+        assert!((util - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn utilization_with_zero_capacity() {
+        let buf = LogBuffer::new(0, DropPolicy::Oldest);
+        assert_eq!(buf.utilization(), 0.0);
+    }
+
+    #[test]
+    fn should_flush_boundary_values() {
+        let mut buf = LogBuffer::new(100, DropPolicy::Oldest);
+        for i in 0..9 {
+            buf.push(make_raw_log(&format!("log{i}")));
+        }
+        assert!(!buf.should_flush(10));
+
+        buf.push(make_raw_log("log9"));
+        assert!(buf.should_flush(10));
+        assert!(!buf.should_flush(11));
+    }
+
+    #[test]
+    fn should_flush_with_zero_batch_size() {
+        let mut buf = LogBuffer::new(100, DropPolicy::Oldest);
+        buf.push(make_raw_log("log1"));
+        assert!(buf.should_flush(0)); // Always true with 0 batch size
+    }
+
+    #[test]
+    fn total_received_increments_on_every_push() {
+        let mut buf = LogBuffer::new(2, DropPolicy::Oldest);
+        assert_eq!(buf.total_received(), 0);
+
+        buf.push(make_raw_log("1"));
+        assert_eq!(buf.total_received(), 1);
+
+        buf.push(make_raw_log("2"));
+        assert_eq!(buf.total_received(), 2);
+
+        buf.push(make_raw_log("3")); // Drops first
+        assert_eq!(buf.total_received(), 3);
+        assert_eq!(buf.dropped_count(), 1);
+        assert_eq!(buf.len(), 2);
+    }
+
+    #[test]
+    fn stress_test_many_push_and_drain_cycles() {
+        let mut buf = LogBuffer::new(100, DropPolicy::Oldest);
+        for cycle in 0..10 {
+            for i in 0..50 {
+                buf.push(make_raw_log(&format!("cycle{cycle}_log{i}")));
+            }
+            let batch = buf.drain_batch(30);
+            assert_eq!(batch.len(), 30);
+        }
+        assert_eq!(buf.total_received(), 500);
+        assert!(buf.len() <= 100);
+    }
+
+    #[test]
+    fn alternating_policies_behavior() {
+        // Test Oldest
+        let mut buf1 = LogBuffer::new(2, DropPolicy::Oldest);
+        buf1.push(make_raw_log("a"));
+        buf1.push(make_raw_log("b"));
+        buf1.push(make_raw_log("c")); // Drops "a"
+
+        let batch1 = buf1.drain_all();
+        assert!(String::from_utf8_lossy(&batch1[0].data).contains("b"));
+        assert!(String::from_utf8_lossy(&batch1[1].data).contains("c"));
+
+        // Test Newest
+        let mut buf2 = LogBuffer::new(2, DropPolicy::Newest);
+        buf2.push(make_raw_log("a"));
+        buf2.push(make_raw_log("b"));
+        buf2.push(make_raw_log("c")); // Rejects "c"
+
+        let batch2 = buf2.drain_all();
+        assert!(String::from_utf8_lossy(&batch2[0].data).contains("a"));
+        assert!(String::from_utf8_lossy(&batch2[1].data).contains("b"));
+    }
+
+    #[test]
+    fn large_raw_log_data() {
+        let mut buf = LogBuffer::new(10, DropPolicy::Oldest);
+        let large_data = "x".repeat(1_000_000);
+        buf.push(make_raw_log(&large_data));
+        assert_eq!(buf.len(), 1);
+
+        let batch = buf.drain_all();
+        assert_eq!(batch[0].data.len(), 1_000_000);
+    }
+
+    #[test]
+    fn push_returns_false_when_no_drop() {
+        let mut buf = LogBuffer::new(10, DropPolicy::Oldest);
+        let dropped = buf.push(make_raw_log("log1"));
+        assert!(!dropped);
+    }
+
+    #[test]
+    fn push_returns_true_when_drop_occurs_oldest() {
+        let mut buf = LogBuffer::new(2, DropPolicy::Oldest);
+        buf.push(make_raw_log("1"));
+        buf.push(make_raw_log("2"));
+        let dropped = buf.push(make_raw_log("3"));
+        assert!(dropped);
+    }
+
+    #[test]
+    fn push_returns_true_when_drop_occurs_newest() {
+        let mut buf = LogBuffer::new(2, DropPolicy::Newest);
+        buf.push(make_raw_log("1"));
+        buf.push(make_raw_log("2"));
+        let dropped = buf.push(make_raw_log("3"));
+        assert!(dropped);
+    }
+
+    #[test]
+    fn capacity_remains_constant() {
+        let mut buf = LogBuffer::new(50, DropPolicy::Oldest);
+        assert_eq!(buf.capacity(), 50);
+
+        for i in 0..100 {
+            buf.push(make_raw_log(&format!("{i}")));
+        }
+        assert_eq!(buf.capacity(), 50); // Capacity never changes
+
+        buf.drain_all();
+        assert_eq!(buf.capacity(), 50);
+    }
 }

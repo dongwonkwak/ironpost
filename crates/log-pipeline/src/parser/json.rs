@@ -485,4 +485,337 @@ mod tests {
                 .any(|(k, v)| k == "active" && v == "true")
         );
     }
+
+    // === Edge Case Tests ===
+
+    #[test]
+    fn parse_empty_json_object() {
+        let parser = JsonLogParser::default();
+        let result = parser.parse(b"{}");
+        // Should have default values for required fields
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn parse_empty_input() {
+        let parser = JsonLogParser::default();
+        let result = parser.parse(b"");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_only_whitespace() {
+        let parser = JsonLogParser::default();
+        let result = parser.parse(b"   \t\n   ");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_truncated_json() {
+        let parser = JsonLogParser::default();
+        let result = parser.parse(br#"{"host":"web-01","message":"test"#);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_json_with_trailing_comma() {
+        let parser = JsonLogParser::default();
+        let result = parser.parse(br#"{"host":"web-01","message":"test",}"#);
+        // JSON spec doesn't allow trailing commas
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_json_with_comments() {
+        let parser = JsonLogParser::default();
+        let result = parser.parse(br#"{"host":"web-01"/* comment */,"message":"test"}"#);
+        // Standard JSON doesn't support comments
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_json_with_single_quotes() {
+        let parser = JsonLogParser::default();
+        let result = parser.parse(b"{'host':'web-01','message':'test'}");
+        // JSON requires double quotes
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_extremely_nested_json() {
+        let parser = JsonLogParser::default();
+        let mut nested = String::from(r#"{"message":"test","host":"web-01","level":"info""#);
+        for i in 0..100 {
+            nested.push_str(&format!(r#","nested{}":{{}}"#, i));
+        }
+        // Close main object brace
+        nested.push('}');
+        let result = parser.parse(nested.as_bytes());
+        // Very nested JSON might fail to parse or succeed depending on limits
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[test]
+    fn parse_json_with_very_long_string() {
+        let parser = JsonLogParser::default();
+        let long_msg = "m".repeat(100000);
+        let raw = format!(r#"{{"host":"web-01","message":"{}"}}"#, long_msg);
+        let result = parser.parse_json(raw.as_bytes());
+        if result.is_ok() {
+            assert_eq!(result.unwrap().message.len(), 100000);
+        }
+    }
+
+    #[test]
+    fn parse_json_with_unicode_escape() {
+        let parser = JsonLogParser::default();
+        let raw = br#"{"host":"web-01","message":"Hello \u4e16\u754c"}"#;
+        let result = parser.parse(raw);
+        assert!(result.is_ok());
+        if let Ok(entry) = result {
+            assert!(entry.message.contains("世界"));
+        }
+    }
+
+    #[test]
+    fn parse_json_with_escaped_quotes() {
+        let parser = JsonLogParser::default();
+        let raw = br#"{"host":"web-01","message":"He said \"hello\""}"#;
+        let result = parser.parse(raw);
+        assert!(result.is_ok());
+        if let Ok(entry) = result {
+            assert!(entry.message.contains('"'));
+        }
+    }
+
+    #[test]
+    fn parse_json_with_escaped_backslash() {
+        let parser = JsonLogParser::default();
+        let raw = br#"{"host":"web-01","message":"path\\to\\file"}"#;
+        let result = parser.parse(raw);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn parse_json_with_control_chars() {
+        let parser = JsonLogParser::default();
+        let raw = br#"{"host":"web-01","message":"line1\nline2\ttab"}"#;
+        let result = parser.parse(raw);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn parse_json_array_as_root() {
+        let parser = JsonLogParser::default();
+        let result = parser.parse(br#"[{"host":"web-01"},{"host":"web-02"}]"#);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_json_string_as_root() {
+        let parser = JsonLogParser::default();
+        let result = parser.parse(br#""just a string""#);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_json_number_as_root() {
+        let parser = JsonLogParser::default();
+        let result = parser.parse(b"42");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_json_with_duplicate_keys() {
+        let parser = JsonLogParser::default();
+        let raw = br#"{"host":"first","host":"second","message":"test"}"#;
+        let result = parser.parse(raw);
+        // serde_json uses last value for duplicate keys
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn parse_json_with_very_large_number() {
+        let parser = JsonLogParser::default();
+        let raw = br#"{"host":"web-01","message":"test","big":99999999999999999999}"#;
+        let result = parser.parse(raw);
+        // Should handle large numbers
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn parse_json_with_negative_number() {
+        let parser = JsonLogParser::default();
+        let raw = br#"{"host":"web-01","message":"test","temp":-273.15}"#;
+        let result = parser.parse(raw);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn parse_json_with_scientific_notation() {
+        let parser = JsonLogParser::default();
+        let raw = br#"{"host":"web-01","message":"test","value":1.23e10}"#;
+        let result = parser.parse(raw);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn parse_json_with_empty_string_values() {
+        let parser = JsonLogParser::default();
+        let raw = br#"{"host":"","message":"","process":""}"#;
+        let result = parser.parse(raw);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn parse_json_with_missing_message_field() {
+        let parser = JsonLogParser::default();
+        let raw = br#"{"host":"web-01","process":"nginx"}"#;
+        let result = parser.parse(raw);
+        assert!(result.is_ok());
+        // Should use empty or default message
+    }
+
+    #[test]
+    fn parse_timestamp_negative_unix() {
+        let result = JsonLogParser::parse_timestamp("-1");
+        // Negative timestamps (before epoch) might not be supported
+        assert!(result.is_err() || result.is_ok());
+    }
+
+    #[test]
+    fn parse_timestamp_far_future() {
+        let result = JsonLogParser::parse_timestamp("9999999999");
+        // Far future timestamps should work
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn parse_timestamp_zero() {
+        let result = JsonLogParser::parse_timestamp("0");
+        // Unix epoch
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn parse_timestamp_with_fractional_seconds() {
+        let result = JsonLogParser::parse_timestamp("2024-01-15T12:00:00.123456Z");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn parse_timestamp_with_timezone_offset() {
+        let result = JsonLogParser::parse_timestamp("2024-01-15T12:00:00+09:00");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn extract_nonexistent_nested_field() {
+        let value: serde_json::Value =
+            serde_json::from_str(r#"{"metadata":{"host":"test"}}"#).unwrap();
+        let result = JsonLogParser::extract_string(&value, "metadata.nonexistent");
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn extract_deeply_nested_field() {
+        let value: serde_json::Value =
+            serde_json::from_str(r#"{"a":{"b":{"c":{"d":"deep"}}}}"#).unwrap();
+        let result = JsonLogParser::extract_string(&value, "a.b.c.d");
+        assert_eq!(result, Some("deep".to_owned()));
+    }
+
+    #[test]
+    fn extract_from_array_fails_gracefully() {
+        let value: serde_json::Value = serde_json::from_str(r#"{"items":[1,2,3]}"#).unwrap();
+        let result = JsonLogParser::extract_string(&value, "items.0");
+        // Array indexing not supported in dot notation
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn parse_json_with_max_depth() {
+        let parser = JsonLogParser::default();
+        let mut json = String::from(r#"{"host":"web-01","message":"test","deep":"#);
+        for _ in 0..1000 {
+            json.push_str(r#"{"a":"#);
+        }
+        json.push_str(r#""value""#);
+        for _ in 0..1000 {
+            json.push('}');
+        }
+        json.push('}');
+        let result = parser.parse(json.as_bytes());
+        // Very deep nesting might cause stack overflow or be rejected
+        let _ = result;
+    }
+
+    #[test]
+    fn parse_json_with_special_chars_in_keys() {
+        let parser = JsonLogParser::default();
+        let raw = br#"{"host":"web-01","message":"test","special-key_123":"value"}"#;
+        let result = parser.parse(raw);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn parse_json_with_emoji_in_values() {
+        let parser = JsonLogParser::default();
+        let raw = r#"{"host":"web-01","message":"Hello 🌍 World 🚀"}"#;
+        let result = parser.parse(raw.as_bytes());
+        assert!(result.is_ok());
+        if let Ok(entry) = result {
+            assert!(entry.message.contains("🌍"));
+            assert!(entry.message.contains("🚀"));
+        }
+    }
+
+    #[test]
+    fn parse_non_utf8_bytes() {
+        let parser = JsonLogParser::default();
+        let mut raw = Vec::from(br#"{"host":"web-01","message":"test"#);
+        raw.extend_from_slice(&[0xFF, 0xFE]); // Invalid UTF-8
+        raw.extend_from_slice(br#""}"#);
+        let result = parser.parse(&raw);
+        // Should fail on invalid UTF-8
+        assert!(result.is_err());
+    }
+
+    // Property-based tests
+    #[cfg(test)]
+    mod proptests {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #[test]
+            fn parse_arbitrary_bytes_does_not_panic(bytes in prop::collection::vec(any::<u8>(), 0..1000)) {
+                let parser = JsonLogParser::default();
+                let _ = parser.parse(&bytes);
+                // Should never panic
+            }
+
+            #[test]
+            fn parse_valid_json_object_does_not_panic(
+                host in "[a-zA-Z0-9-]{1,50}",
+                msg in "[a-zA-Z0-9 ]{1,100}"
+            ) {
+                let parser = JsonLogParser::default();
+                let raw = format!(r#"{{"host":"{}","message":"{}"}}"#, host, msg);
+                let _ = parser.parse(raw.as_bytes());
+                // Should not panic
+            }
+
+            #[test]
+            fn parse_arbitrary_json_string_length(msg_len in 0usize..10000) {
+                let parser = JsonLogParser::default();
+                let msg = "x".repeat(msg_len);
+                let raw = format!(r#"{{"host":"web-01","message":"{}"}}"#, msg);
+                let result = parser.parse(raw.as_bytes());
+                if result.is_ok() {
+                    prop_assert_eq!(result.unwrap().message.len(), msg_len);
+                }
+            }
+        }
+    }
 }

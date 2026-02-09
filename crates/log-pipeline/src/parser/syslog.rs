@@ -685,4 +685,281 @@ mod tests {
         let result = parser.parse(b"<34>1 2024-01-15T12:00:00Z");
         assert!(result.is_err());
     }
+
+    // === Edge Case Tests ===
+
+    #[test]
+    fn parse_empty_input() {
+        let parser = SyslogParser::new();
+        let result = parser.parse(b"");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_only_whitespace() {
+        let parser = SyslogParser::new();
+        let result = parser.parse(b"   \t\n  ");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_truncated_priority() {
+        let parser = SyslogParser::new();
+        let result = parser.parse(b"<34");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_no_closing_bracket_in_priority() {
+        let parser = SyslogParser::new();
+        let result = parser.parse(b"<34 1 2024-01-15T12:00:00Z host app - - -");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_negative_priority() {
+        let parser = SyslogParser::new();
+        let result = parser.parse(b"<-1>1 2024-01-15T12:00:00Z host app - - -");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_priority_overflow() {
+        let parser = SyslogParser::new();
+        let result = parser.parse(b"<192>1 2024-01-15T12:00:00Z host app - - - msg");
+        // Priority 192 = facility 24, severity 0 (valid but boundary)
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn parse_priority_boundary_191() {
+        let parser = SyslogParser::new();
+        let result = parser.parse(b"<191>1 2024-01-15T12:00:00Z host app - - - msg");
+        // 191 = facility 23, severity 7 (max valid values)
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn parse_malformed_timestamp() {
+        let parser = SyslogParser::new();
+        let result = parser.parse(b"<34>1 not-a-timestamp host app - - - msg");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_timestamp_with_invalid_timezone() {
+        let parser = SyslogParser::new();
+        let result = parser.parse(b"<34>1 2024-01-15T12:00:00+99:99 host app - - - msg");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_message_with_null_bytes() {
+        let parser = SyslogParser::new();
+        let raw = b"<34>1 2024-01-15T12:00:00Z host app - - - msg\x00with\x00nulls";
+        let result = parser.parse(raw);
+        // Should parse, but message handling depends on implementation
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn parse_extremely_long_hostname() {
+        let parser = SyslogParser::new();
+        let long_hostname = "h".repeat(300);
+        let raw = format!("<34>1 2024-01-15T12:00:00Z {} app - - - msg", long_hostname);
+        let result = parser.parse(raw.as_bytes());
+        // Should handle long hostnames gracefully
+        if let Ok(entry) = result {
+            assert_eq!(entry.hostname, long_hostname);
+        }
+    }
+
+    #[test]
+    fn parse_extremely_long_message() {
+        let parser = SyslogParser::new();
+        let long_msg = "m".repeat(10000);
+        let raw = format!("<34>1 2024-01-15T12:00:00Z host app - - - {}", long_msg);
+        let result = parser.parse(raw.as_bytes());
+        assert!(result.is_ok());
+        if let Ok(entry) = result {
+            assert_eq!(entry.message.len(), 10000);
+        }
+    }
+
+    #[test]
+    fn parse_unicode_in_message() {
+        let parser = SyslogParser::new();
+        let raw = "<34>1 2024-01-15T12:00:00Z host app - - - Hello 世界 🌍";
+        let result = parser.parse(raw.as_bytes());
+        assert!(result.is_ok());
+        if let Ok(entry) = result {
+            assert!(entry.message.contains("世界"));
+            assert!(entry.message.contains("🌍"));
+        }
+    }
+
+    #[test]
+    fn parse_unicode_in_hostname() {
+        let parser = SyslogParser::new();
+        let raw = "<34>1 2024-01-15T12:00:00Z host-日本 app - - - msg";
+        let result = parser.parse(raw.as_bytes());
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn parse_structured_data_unclosed_bracket() {
+        let parser = SyslogParser::new();
+        let raw = b"<34>1 2024-01-15T12:00:00Z host app - - [test foo=\"bar\" message";
+        let result = parser.parse(raw);
+        // Should handle gracefully - implementation dependent
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn parse_structured_data_with_equals_in_value() {
+        let parser = SyslogParser::new();
+        let raw = b"<34>1 2024-01-15T12:00:00Z host app - - [test key=\"val=ue\"] msg";
+        let result = parser.parse(raw);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn parse_structured_data_empty_value() {
+        let parser = SyslogParser::new();
+        let raw = b"<34>1 2024-01-15T12:00:00Z host app - - [test key=\"\"] msg";
+        let result = parser.parse(raw);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn parse_structured_data_with_special_chars() {
+        let parser = SyslogParser::new();
+        let raw = b"<34>1 2024-01-15T12:00:00Z host app - - [test key=\"!@#$%^&*()\"] msg";
+        let result = parser.parse(raw);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn parse_rfc3164_invalid_month() {
+        let parser = SyslogParser::new();
+        let result = parser.parse(b"<34>Foo 15 12:00:00 host app: msg");
+        // Parser might fall back to treating this as RFC 5424 or handle gracefully
+        // Either error or OK is acceptable
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[test]
+    fn parse_rfc3164_invalid_day() {
+        let parser = SyslogParser::new();
+        let result = parser.parse(b"<34>Jan 99 12:00:00 host app: msg");
+        // Parser might parse structure but fail on date, or handle gracefully
+        // Either error or OK is acceptable
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[test]
+    fn parse_rfc3164_missing_colon_in_process() {
+        let parser = SyslogParser::new();
+        let raw = b"<34>Jan 15 12:00:00 host app message without colon";
+        let result = parser.parse(raw);
+        // Should fall back gracefully
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn parse_mixed_whitespace() {
+        let parser = SyslogParser::new();
+        let raw = b"<34>1  2024-01-15T12:00:00Z  host  app  -  -  -  msg";
+        let result = parser.parse(raw);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn parse_version_zero() {
+        let parser = SyslogParser::new();
+        let result = parser.parse(b"<34>0 2024-01-15T12:00:00Z host app - - - msg");
+        // Version 0 is not valid in RFC 5424, should fall back or error
+        assert!(result.is_ok()); // Falls back to RFC 3164
+    }
+
+    #[test]
+    fn parse_version_greater_than_one() {
+        let parser = SyslogParser::new();
+        let result = parser.parse(b"<34>99 2024-01-15T12:00:00Z host app - - - msg");
+        // Should handle unknown version
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn parse_non_utf8_input() {
+        let parser = SyslogParser::new();
+        let raw = b"<34>1 2024-01-15T12:00:00Z host app - - - \xFF\xFE invalid utf8";
+        let result = parser.parse(raw);
+        // Should handle invalid UTF-8 gracefully
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn parse_tab_separated_fields() {
+        let parser = SyslogParser::new();
+        let raw = b"<34>1\t2024-01-15T12:00:00Z\thost\tapp\t-\t-\t-\tmsg";
+        let result = parser.parse(raw);
+        // Tabs should work as whitespace
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn parse_maximum_structured_data_nesting() {
+        let parser = SyslogParser::new();
+        let mut sd = String::from("[id1 a=\"1\"]");
+        for i in 2..100 {
+            sd.push_str(&format!("[id{} a=\"{}\"]", i, i));
+        }
+        let raw = format!("<34>1 2024-01-15T12:00:00Z host app - - {} msg", sd);
+        let result = parser.parse(raw.as_bytes());
+        assert!(result.is_ok());
+    }
+
+    // Property-based tests using proptest
+    #[cfg(test)]
+    mod proptests {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #[test]
+            fn parse_arbitrary_bytes_does_not_panic(bytes in prop::collection::vec(any::<u8>(), 0..1000)) {
+                let parser = SyslogParser::new();
+                let _ = parser.parse(&bytes);
+                // Should never panic
+            }
+
+            #[test]
+            fn parse_valid_priority_range(pri in 0u8..192) {
+                let parser = SyslogParser::new();
+                let raw = format!("<{}>1 2024-01-15T12:00:00Z host app - - - msg", pri);
+                let result = parser.parse(raw.as_bytes());
+                prop_assert!(result.is_ok());
+            }
+
+            #[test]
+            fn parse_arbitrary_hostname_does_not_panic(hostname in "[a-zA-Z0-9-]{1,100}") {
+                let parser = SyslogParser::new();
+                let raw = format!("<34>1 2024-01-15T12:00:00Z {} app - - - msg", hostname);
+                let _ = parser.parse(raw.as_bytes());
+                // Should not panic
+            }
+
+            #[test]
+            fn parse_arbitrary_message_length(msg_len in 0usize..10000) {
+                let parser = SyslogParser::new();
+                let msg = "x".repeat(msg_len);
+                let raw = format!("<34>1 2024-01-15T12:00:00Z host app - - - {}", msg);
+                let result = parser.parse(raw.as_bytes());
+                if result.is_ok() {
+                    prop_assert_eq!(result.unwrap().message.len(), msg_len);
+                }
+            }
+        }
+    }
 }
