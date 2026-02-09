@@ -1043,7 +1043,10 @@ mod tests {
 
         assert!(result.is_err());
         if let Err(err) = result {
-            assert!(err.to_string().contains("channel_capacity must be greater than 0"));
+            assert!(
+                err.to_string()
+                    .contains("channel_capacity must be greater than 0")
+            );
         }
     }
 
