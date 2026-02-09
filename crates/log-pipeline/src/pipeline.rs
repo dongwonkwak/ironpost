@@ -8,7 +8,11 @@
 //! Collectors -> mpsc -> Buffer -> Parser -> RuleEngine -> AlertGenerator -> mpsc -> downstream
 //! ```
 
-use tokio::sync::mpsc;
+use std::sync::Arc;
+use std::time::Duration;
+
+use tokio::sync::{Mutex, mpsc};
+use tokio::time::{Instant, interval};
 
 use ironpost_core::error::IronpostError;
 use ironpost_core::event::{AlertEvent, PacketEvent};
@@ -55,37 +59,33 @@ pub struct LogPipeline {
     config: PipelineConfig,
     /// 현재 상태
     state: PipelineState,
-    /// 파서 라우터
-    #[allow(dead_code)]
-    parser: ParserRouter,
-    /// 규칙 엔진
-    rule_engine: RuleEngine,
-    /// 알림 생성기
-    #[allow(dead_code)]
-    alert_generator: AlertGenerator,
+    /// 파서 라우터 (공유)
+    parser: Arc<ParserRouter>,
+    /// 규칙 엔진 (공유)
+    rule_engine: Arc<Mutex<RuleEngine>>,
+    /// 알림 생성기 (공유)
+    alert_generator: Arc<Mutex<AlertGenerator>>,
     /// 로그 버퍼
-    buffer: LogBuffer,
+    buffer: Arc<Mutex<LogBuffer>>,
     /// 수집기 세트
     #[allow(dead_code)]
     collectors: CollectorSet,
     /// 내부 RawLog 채널 (수집기 -> 파이프라인)
-    #[allow(dead_code)]
     raw_log_rx: Option<mpsc::Receiver<RawLog>>,
     /// 내부 RawLog 채널 송신측 (수집기에 전달)
     #[allow(dead_code)]
     raw_log_tx: mpsc::Sender<RawLog>,
     /// 알림 전송 채널 (파이프라인 -> downstream)
-    #[allow(dead_code)]
     alert_tx: mpsc::Sender<AlertEvent>,
     /// PacketEvent 수신 채널 (ebpf-engine -> 파이프라인, daemon에서 연결)
     #[allow(dead_code)]
     packet_rx: Option<mpsc::Receiver<PacketEvent>>,
     /// 백그라운드 태스크 핸들
     tasks: Vec<tokio::task::JoinHandle<()>>,
-    /// 파싱 에러 카운터
-    parse_error_count: u64,
-    /// 처리된 로그 카운터
-    processed_count: u64,
+    /// 파싱 에러 카운터 (공유)
+    parse_error_count: Arc<Mutex<u64>>,
+    /// 처리된 로그 카운터 (공유)
+    processed_count: Arc<Mutex<u64>>,
 }
 
 impl LogPipeline {
@@ -99,33 +99,70 @@ impl LogPipeline {
     }
 
     /// 처리된 로그 수를 반환합니다.
-    pub fn processed_count(&self) -> u64 {
-        self.processed_count
+    pub async fn processed_count(&self) -> u64 {
+        *self.processed_count.lock().await
     }
 
     /// 파싱 에러 수를 반환합니다.
-    pub fn parse_error_count(&self) -> u64 {
-        self.parse_error_count
+    pub async fn parse_error_count(&self) -> u64 {
+        *self.parse_error_count.lock().await
     }
 
     /// 로드된 규칙 수를 반환합니다.
-    pub fn rule_count(&self) -> usize {
-        self.rule_engine.rule_count()
+    pub async fn rule_count(&self) -> usize {
+        self.rule_engine.lock().await.rule_count()
     }
 
     /// 버퍼 사용률을 반환합니다.
-    pub fn buffer_utilization(&self) -> f64 {
-        self.buffer.utilization()
+    pub async fn buffer_utilization(&self) -> f64 {
+        self.buffer.lock().await.utilization()
     }
 
-    /// 규칙 엔진에 대한 불변 참조를 반환합니다.
-    pub fn rule_engine(&self) -> &RuleEngine {
-        &self.rule_engine
+    /// 규칙 엔진에 대한 Arc 참조를 반환합니다.
+    pub fn rule_engine_arc(&self) -> Arc<Mutex<RuleEngine>> {
+        Arc::clone(&self.rule_engine)
     }
 
-    /// 규칙 엔진에 대한 가변 참조를 반환합니다.
-    pub fn rule_engine_mut(&mut self) -> &mut RuleEngine {
-        &mut self.rule_engine
+    /// 배치를 처리합니다: 파싱 -> 규칙 매칭 -> 알림 생성
+    async fn process_batch(&self, batch: Vec<RawLog>) {
+        for raw_log in batch {
+            // 1. 파싱
+            let log_entry = match self.parser.parse(&raw_log.data) {
+                Ok(entry) => {
+                    *self.processed_count.lock().await += 1;
+                    entry
+                }
+                Err(e) => {
+                    *self.parse_error_count.lock().await += 1;
+                    tracing::debug!(
+                        source = %raw_log.source,
+                        error = %e,
+                        "failed to parse log entry"
+                    );
+                    continue;
+                }
+            };
+
+            // 2. 규칙 매칭
+            match self.rule_engine.lock().await.evaluate(&log_entry) {
+                Ok(matches) => {
+                    // 3. 알림 생성
+                    for rule_match in matches {
+                        let mut alert_gen = self.alert_generator.lock().await;
+                        if let Some(alert_event) = alert_gen.generate(&rule_match, None) {
+                            drop(alert_gen); // unlock before send
+                            // 4. 알림 전송
+                            if let Err(e) = self.alert_tx.send(alert_event).await {
+                                tracing::error!(error = %e, "failed to send alert event");
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "rule evaluation failed");
+                }
+            }
+        }
     }
 }
 
@@ -140,6 +177,8 @@ impl Pipeline for LogPipeline {
         // 1. 규칙 로드
         let rule_count = self
             .rule_engine
+            .lock()
+            .await
             .load_rules_from_dir(&self.config.rule_dir)
             .await
             .map_err(IronpostError::from)?;
@@ -148,13 +187,145 @@ impl Pipeline for LogPipeline {
         // 2. 수집기 태스크 스폰
         // TODO: spawn collector tasks based on config.sources
         // Each collector gets a clone of raw_log_tx
+        // This will be implemented when integrating with actual data sources
 
         // 3. 메인 처리 루프 스폰
-        // TODO: spawn main processing loop:
-        //   - recv from raw_log_rx
-        //   - buffer.push()
-        //   - when should_flush: drain_batch -> parse -> rule_engine.evaluate -> alert_generator.generate
-        //   - send AlertEvent to alert_tx
+        let mut raw_log_rx = self.raw_log_rx.take().ok_or(IronpostError::Pipeline(
+            ironpost_core::error::PipelineError::AlreadyRunning,
+        ))?;
+
+        let batch_size = self.config.batch_size;
+        let flush_interval_ms = self.config.flush_interval_secs * 1000;
+
+        let parser = Arc::clone(&self.parser);
+        let rule_engine = Arc::clone(&self.rule_engine);
+        let alert_generator = Arc::clone(&self.alert_generator);
+        let buffer = Arc::clone(&self.buffer);
+        let alert_tx = self.alert_tx.clone();
+        let parse_error_count = Arc::clone(&self.parse_error_count);
+        let processed_count = Arc::clone(&self.processed_count);
+
+        let processing_task = tokio::spawn(async move {
+            let mut flush_timer = interval(Duration::from_millis(flush_interval_ms));
+            flush_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+            let mut last_flush = Instant::now();
+            let mut cleanup_counter: u64 = 0;
+
+            loop {
+                tokio::select! {
+                    // RawLog 수신
+                    Some(raw_log) = raw_log_rx.recv() => {
+                        let mut buf = buffer.lock().await;
+                        buf.push(raw_log);
+
+                        // 배치 크기 도달 시 즉시 플러시
+                        if buf.should_flush(batch_size) {
+                            let batch = buf.drain_batch(batch_size);
+                            drop(buf); // unlock buffer before processing
+
+                            tracing::debug!(batch_size = batch.len(), "flushing batch (size trigger)");
+
+                            // 배치 처리
+                            for raw_log in batch {
+                                match parser.parse(&raw_log.data) {
+                                    Ok(log_entry) => {
+                                        *processed_count.lock().await += 1;
+
+                                        match rule_engine.lock().await.evaluate(&log_entry) {
+                                            Ok(matches) => {
+                                                for rule_match in matches {
+                                                    let mut alert_gen = alert_generator.lock().await;
+                                                    if let Some(alert_event) = alert_gen.generate(
+                                                        &rule_match,
+                                                        None,
+                                                    ) {
+                                                        drop(alert_gen); // unlock before send
+                                                        if let Err(e) = alert_tx.send(alert_event).await {
+                                                            tracing::error!(error = %e, "failed to send alert event");
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            Err(e) => {
+                                                tracing::warn!(error = %e, "rule evaluation failed");
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        *parse_error_count.lock().await += 1;
+                                        tracing::debug!(
+                                            source = %raw_log.source,
+                                            error = %e,
+                                            "failed to parse log entry"
+                                        );
+                                    }
+                                }
+                            }
+
+                            last_flush = Instant::now();
+                        }
+                    }
+
+                    // 타이머 기반 플러시
+                    _ = flush_timer.tick() => {
+                        let mut buf = buffer.lock().await;
+                        if !buf.is_empty() && last_flush.elapsed() >= Duration::from_millis(flush_interval_ms) {
+                            let batch = buf.drain_all();
+                            drop(buf);
+
+                            tracing::debug!(batch_size = batch.len(), "flushing batch (timer trigger)");
+
+                            for raw_log in batch {
+                                match parser.parse(&raw_log.data) {
+                                    Ok(log_entry) => {
+                                        *processed_count.lock().await += 1;
+
+                                        match rule_engine.lock().await.evaluate(&log_entry) {
+                                            Ok(matches) => {
+                                                for rule_match in matches {
+                                                    let mut alert_gen = alert_generator.lock().await;
+                                                    if let Some(alert_event) = alert_gen.generate(
+                                                        &rule_match,
+                                                        None,
+                                                    ) {
+                                                        drop(alert_gen);
+                                                        if let Err(e) = alert_tx.send(alert_event).await {
+                                                            tracing::error!(error = %e, "failed to send alert event");
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            Err(e) => {
+                                                tracing::warn!(error = %e, "rule evaluation failed");
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        *parse_error_count.lock().await += 1;
+                                        tracing::debug!(
+                                            source = %raw_log.source,
+                                            error = %e,
+                                            "failed to parse log entry"
+                                        );
+                                    }
+                                }
+                            }
+
+                            last_flush = Instant::now();
+                        }
+
+                        // 주기적으로 정리
+                        cleanup_counter += 1;
+                        if cleanup_counter.is_multiple_of(10) {
+                            alert_generator.lock().await.cleanup_expired();
+                        }
+                    }
+                }
+            }
+        });
+
+        self.tasks.push(processing_task);
 
         self.state = PipelineState::Running;
         tracing::info!("log pipeline started");
@@ -174,10 +345,10 @@ impl Pipeline for LogPipeline {
         }
 
         // 2. 버퍼에 남은 로그 처리 (graceful drain)
-        let remaining = self.buffer.drain_all();
+        let remaining = self.buffer.lock().await.drain_all();
         if !remaining.is_empty() {
             tracing::info!(count = remaining.len(), "draining remaining buffered logs");
-            // TODO: process remaining logs
+            self.process_batch(remaining).await;
         }
 
         self.state = PipelineState::Stopped;
@@ -188,7 +359,7 @@ impl Pipeline for LogPipeline {
     async fn health_check(&self) -> HealthStatus {
         match self.state {
             PipelineState::Running => {
-                let utilization = self.buffer.utilization();
+                let utilization = self.buffer.lock().await.utilization();
                 if utilization > 0.9 {
                     HealthStatus::Degraded(format!(
                         "buffer utilization high: {:.1}%",
@@ -273,18 +444,21 @@ impl LogPipelineBuilder {
             (tx, Some(rx))
         };
 
-        let buffer = LogBuffer::new(self.config.buffer_capacity, self.config.drop_policy.clone());
+        let buffer = Arc::new(Mutex::new(LogBuffer::new(
+            self.config.buffer_capacity,
+            self.config.drop_policy.clone(),
+        )));
 
-        let alert_generator = AlertGenerator::new(
+        let alert_generator = Arc::new(Mutex::new(AlertGenerator::new(
             self.config.alert_dedup_window_secs,
             self.config.alert_rate_limit_per_rule,
-        );
+        )));
 
         let pipeline = LogPipeline {
             config: self.config,
             state: PipelineState::Initialized,
-            parser: ParserRouter::with_defaults(),
-            rule_engine: RuleEngine::new(),
+            parser: Arc::new(ParserRouter::with_defaults()),
+            rule_engine: Arc::new(Mutex::new(RuleEngine::new())),
             alert_generator,
             buffer,
             collectors: CollectorSet::default(),
@@ -293,8 +467,8 @@ impl LogPipelineBuilder {
             alert_tx,
             packet_rx: self.packet_rx,
             tasks: Vec::new(),
-            parse_error_count: 0,
-            processed_count: 0,
+            parse_error_count: Arc::new(Mutex::new(0)),
+            processed_count: Arc::new(Mutex::new(0)),
         };
 
         Ok((pipeline, alert_rx))
@@ -348,12 +522,12 @@ mod tests {
         assert!(err.is_err());
     }
 
-    #[test]
-    fn pipeline_accessors() {
+    #[tokio::test]
+    async fn pipeline_accessors() {
         let (pipeline, _) = LogPipelineBuilder::new().build().unwrap();
-        assert_eq!(pipeline.processed_count(), 0);
-        assert_eq!(pipeline.parse_error_count(), 0);
-        assert_eq!(pipeline.rule_count(), 0);
-        assert_eq!(pipeline.buffer_utilization(), 0.0);
+        assert_eq!(pipeline.processed_count().await, 0);
+        assert_eq!(pipeline.parse_error_count().await, 0);
+        assert_eq!(pipeline.rule_count().await, 0);
+        assert_eq!(pipeline.buffer_utilization().await, 0.0);
     }
 }

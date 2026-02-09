@@ -1,0 +1,20 @@
+# Suspicious Command Execution Rule
+# Detects execution of potentially dangerous commands
+
+id: suspicious_command
+title: Suspicious Command Execution
+description: Detected execution of commands commonly used in attacks or system compromise
+severity: High
+status: enabled
+
+detection:
+  conditions:
+    - field: message
+      modifier: contains
+      value: "nc -l"  # netcat listener
+
+tags:
+  - command_execution
+  - backdoor
+  - malware
+  - attack

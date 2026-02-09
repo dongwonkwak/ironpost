@@ -1,0 +1,27 @@
+# SSH Brute Force Detection Rule
+# Detects multiple failed SSH login attempts from the same source IP within a time window
+
+id: ssh_brute_force
+title: SSH Brute Force Attempt Detected
+description: Detected multiple failed SSH login attempts from the same source IP address, indicating a potential brute force attack
+severity: High
+status: enabled
+
+detection:
+  conditions:
+    - field: process
+      value: sshd
+    - field: message
+      modifier: contains
+      value: "Failed password"
+
+  threshold:
+    field: source_ip
+    count: 5
+    timeframe: 300  # 5 minutes
+
+tags:
+  - authentication
+  - brute_force
+  - ssh
+  - attack

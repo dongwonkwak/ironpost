@@ -40,14 +40,15 @@
 - [x] `lib.rs`: pub API re-export
 
 ## Phase 3 구현 완료 항목
-- [x] T3-1: 파서 구현 (2026-02-09, 48 tests passing)
+- [x] T3-1: 파서 구현 (2026-02-09, 48 tests)
+- [x] T3-2: 수집기 구현 (2026-02-09, 24 tests - file/UDP/TCP/event)
+- [x] T3-3: 규칙 엔진 완성 (2026-02-09, 9 tests + 5 example rules)
+- [x] T3-4: 버퍼/알림 검증 (2026-02-09, 완료 - 이미 구현됨)
+- [x] T3-5: 파이프라인 오케스트레이션 (2026-02-09, timer-based flush + full processing loop)
 
 ## Phase 3 구현 대기 항목
-- [ ] T3-2: 수집기 구현 (파일, syslog UDP/TCP, eBPF 이벤트)
-- [ ] T3-3: 규칙 엔진 구현 (YAML 예시 파일, 통합 테스트)
-- [ ] T3-4: 파이프라인 오케스트레이션 (메인 처리 루프, graceful shutdown)
-- [ ] T3-5: 리뷰 지적사항 반영
-- [ ] T3-6: 테스트 강화
+- [ ] T3-6: 테스트 강화 (통합 테스트)
+- [ ] T3-7: 리뷰 지적사항 반영
 
 ## Phase 2 설계 완료 항목
 - [x] ebpf-common: 공유 `#[repr(C)]` 타입 (BlocklistValue, ProtoStats, PacketEventData)
@@ -66,7 +67,10 @@
   - ✅ Medium 1건 수정 완료 (M3)
 
 ## 최근 완료
-- [P3] T3-1: 파서 구현 완료 (RFC 5424/3164 syslog + JSON, 48 tests, commit e80e91d)
+- [P3] T3-5: 파이프라인 오케스트레이션 완료 (timer-based flush, Arc/Mutex 공유, 2026-02-09)
+- [P3] T3-3: 규칙 엔진 완성 (5 example YAML rules + integration tests, 2026-02-09)
+- [P3] T3-2: 수집기 구현 완료 (file/syslog UDP/TCP/event, 24 tests, commit 37b4031, 2026-02-09)
+- [P3] T3-1: 파서 구현 완료 (RFC 5424/3164 syslog + JSON, 48 tests, commit e80e91d, 2026-02-09)
 - [P3] 설계: log-pipeline 스캐폴딩 완료 (설계 문서 + 12개 소스 파일 + 타입/trait 스켈레톤)
 - [P2] 구현: phase-2-ebpf 리뷰 지적사항 수정 완료 (Critical 5건, High 4건, Medium 1건)
 - [P2] 리뷰: phase-2-ebpf 코드 리뷰 완료 (28건 발견)

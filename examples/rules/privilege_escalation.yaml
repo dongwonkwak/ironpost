@@ -1,0 +1,23 @@
+# Privilege Escalation Detection Rule
+# Detects attempts to gain elevated privileges via sudo or su commands
+
+id: privilege_escalation
+title: Privilege Escalation Attempt
+description: Detected use of privilege escalation commands (sudo/su) with potential malicious patterns
+severity: Critical
+status: enabled
+
+detection:
+  conditions:
+    - field: message
+      modifier: regex
+      value: "(sudo|su)\\s+(root|admin|wheel)"
+    - field: process
+      modifier: regex
+      value: "(bash|sh|zsh|ksh)"
+
+tags:
+  - privilege_escalation
+  - security
+  - critical
+  - attack
