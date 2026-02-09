@@ -59,6 +59,7 @@
 ## Phase 3 구현 완료 항목 (추가)
 - [x] T3-7: 리뷰 지적사항 반영 (2026-02-09, Critical 10건 + High 3건 수정 완료)
 - [x] T3-8: 추가 수정 사항 (2026-02-09, H-NEW-1/2, M-NEW-1 - 로그 주입/재시작/IP 추출, 25분 소요)
+- [x] T3-9: 통합 테스트 추가 (2026-02-09, 6개 통합 테스트 추가 - collector→pipeline flow/restart/JSON, 총 280 tests)
 
 ## Phase 2 설계 완료 항목
 - [x] ebpf-common: 공유 `#[repr(C)]` 타입 (BlocklistValue, ProtoStats, PacketEventData)
@@ -77,6 +78,7 @@
   - ✅ Medium 1건 수정 완료 (M3)
 
 ## 최근 완료
+- [P3] T3-9: 통합 테스트 추가 완료 (6개 통합 시나리오, 280 total tests, 2026-02-09 14:10)
 - [P3] T3-8: 추가 수정 사항 완료 (로그 주입 경로 + 재시작 지원 + IP 추출, 2026-02-09 23:55)
 - [P3] T3-7: 리뷰 지적사항 반영 완료 (Critical 10건 + High 3건 수정, 2026-02-09)
 - [P3] 리뷰: phase-3-log-pipeline 코드 리뷰 완료 (38건 발견, 2026-02-09 22:45)
