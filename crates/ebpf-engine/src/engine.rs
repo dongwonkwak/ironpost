@@ -322,10 +322,7 @@ impl EbpfEngine {
                 .collect();
 
             // 기존 맵의 키를 수집하여 삭제 대상 확인
-            let existing_keys: Vec<u32> = map
-                .keys()
-                .filter_map(|k| k.ok())
-                .collect();
+            let existing_keys: Vec<u32> = map.keys().filter_map(|k| k.ok()).collect();
 
             // 현재 룰에 없는 키 삭제
             for key in existing_keys {
@@ -442,8 +439,9 @@ impl EbpfEngine {
                             // SAFETY: PacketEventData는 #[repr(C)]이며 크기 검증을 완료했습니다.
                             // RingBuf에서 반환된 데이터의 정렬이 보장되지 않을 수 있으므로
                             // read_unaligned를 사용하여 UB를 방지합니다.
-                            let event_data =
-                                unsafe { std::ptr::read_unaligned(data.as_ptr() as *const PacketEventData) };
+                            let event_data = unsafe {
+                                std::ptr::read_unaligned(data.as_ptr() as *const PacketEventData)
+                            };
 
                             // PacketInfo로 변환
                             let src_ip = IpAddr::V4(std::net::Ipv4Addr::from(u32::from_be(

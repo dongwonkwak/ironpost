@@ -37,7 +37,7 @@ use network_types::tcp::TcpHdr;
 use network_types::udp::UdpHdr;
 
 use ironpost_ebpf_common::{
-    BlocklistValue, PacketEventData, ProtoStats, ACTION_DROP, ACTION_MONITOR, ACTION_PASS,
+    ACTION_DROP, ACTION_MONITOR, ACTION_PASS, BlocklistValue, PacketEventData, ProtoStats,
     STATS_IDX_ICMP, STATS_IDX_OTHER, STATS_IDX_TCP, STATS_IDX_TOTAL, STATS_IDX_UDP,
     STATS_MAX_ENTRIES, TCP_ACK, TCP_FIN, TCP_PSH, TCP_RST, TCP_SYN,
 };

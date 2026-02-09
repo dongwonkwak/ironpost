@@ -1,7 +1,7 @@
 //! 탐지 로직 — 패킷 기반 위협 탐지
 //!
 //! SYN flood, 포트 스캔 등 네트워크 레벨 이상 탐지를 수행합니다.
-//! [`core::Detector`] trait을 구현하여 통합 탐지 파이프라인에 참여합니다.
+//! [`Detector`] trait을 구현하여 통합 탐지 파이프라인에 참여합니다.
 //!
 //! # 탐지 전략
 //! - **SYN Flood**: SYN 패킷 비율이 임계값을 초과하면 알림
@@ -207,7 +207,9 @@ impl Detector for SynFloodDetector {
 
             // 정리 후에도 초과하면 새 엔트리 거부
             if state.len() >= MAX_TRACKED_IPS {
-                tracing::warn!("SynFloodDetector: MAX_TRACKED_IPS reached, dropping new IP tracking");
+                tracing::warn!(
+                    "SynFloodDetector: MAX_TRACKED_IPS reached, dropping new IP tracking"
+                );
                 return Ok(None);
             }
         }
@@ -354,7 +356,9 @@ impl Detector for PortScanDetector {
 
             // 정리 후에도 초과하면 새 엔트리 거부
             if state.len() >= MAX_TRACKED_IPS {
-                tracing::warn!("PortScanDetector: MAX_TRACKED_IPS reached, dropping new IP tracking");
+                tracing::warn!(
+                    "PortScanDetector: MAX_TRACKED_IPS reached, dropping new IP tracking"
+                );
                 return Ok(None);
             }
         }
