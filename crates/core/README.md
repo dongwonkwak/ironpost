@@ -15,7 +15,7 @@ Ironpost의 공통 타입, 에러 정의, trait 인터페이스를 제공하는 
 
 ## 모듈 구조
 
-```
+```text
 ironpost-core/
 ├── config.rs      # IronpostConfig — TOML 파싱 및 환경변수 오버라이드
 ├── error.rs       # 도메인별 에러 타입 (ConfigError, PipelineError, ...)
@@ -50,7 +50,7 @@ ebpf-engine ──PacketEvent──> log-pipeline ──LogEvent──> rule-eng
 
 ### 에러 계층
 
-```rust
+```text
 IronpostError
   ├── ConfigError
   ├── PipelineError
@@ -69,7 +69,9 @@ IronpostError
 
 모든 모듈이 구현하는 생명주기 인터페이스:
 
-```rust
+```rust,no_run
+use ironpost_core::{IronpostError, HealthStatus};
+
 pub trait Pipeline: Send + Sync {
     async fn start(&mut self) -> Result<(), IronpostError>;
     async fn stop(&mut self) -> Result<(), IronpostError>;
@@ -81,7 +83,9 @@ pub trait Pipeline: Send + Sync {
 
 새로운 탐지 로직 추가를 위한 trait:
 
-```rust
+```rust,no_run
+use ironpost_core::{LogEntry, Alert, IronpostError};
+
 pub trait Detector: Send + Sync {
     fn name(&self) -> &str;
     fn detect(&self, entry: &LogEntry) -> Result<Option<Alert>, IronpostError>;
@@ -92,7 +96,9 @@ pub trait Detector: Send + Sync {
 
 새로운 로그 형식 파서 추가를 위한 trait:
 
-```rust
+```rust,no_run
+use ironpost_core::{LogEntry, IronpostError};
+
 pub trait LogParser: Send + Sync {
     fn format_name(&self) -> &str;
     fn parse(&self, raw: &[u8]) -> Result<LogEntry, IronpostError>;
@@ -103,11 +109,11 @@ pub trait LogParser: Send + Sync {
 
 ### 설정 로드
 
-```rust
+```rust,ignore
 use ironpost_core::IronpostConfig;
 
-// 파일 + 환경변수 오버라이드
-let config = IronpostConfig::load("ironpost.toml").await?;
+// 파일에서 로드 (async)
+let config = IronpostConfig::from_file("ironpost.toml").await?;
 
 // TOML 문자열에서 직접 파싱
 let config = IronpostConfig::parse(r#"
@@ -118,9 +124,10 @@ log_level = "info"
 
 ### 이벤트 생성 및 전송
 
-```rust
+```rust,ignore
 use ironpost_core::{PacketEvent, PacketInfo};
 use std::net::IpAddr;
+use std::time::SystemTime;
 use bytes::Bytes;
 
 let packet_info = PacketInfo {
@@ -139,8 +146,9 @@ tx.send(event).await?;
 
 ### 탐지기 구현
 
-```rust
+```rust,ignore
 use ironpost_core::{Detector, LogEntry, Alert, Severity, IronpostError};
+use std::time::SystemTime;
 
 struct BruteForceDetector;
 
@@ -260,7 +268,7 @@ export IRONPOST_LOG_PIPELINE_BATCH_SIZE=2000
 기본적으로 `dyn Pipeline`이 불가합니다. 동적 관리가 필요한 경우
 `DynPipeline` trait을 사용하세요:
 
-```rust
+```rust,ignore
 use ironpost_core::{DynPipeline, Pipeline};
 
 let modules: Vec<Box<dyn DynPipeline>> = vec![
@@ -284,7 +292,7 @@ for module in &mut modules {
 
 라이브러리 크레이트는 `Result<T, ModuleError>` 반환, 바이너리는 `anyhow::Result<T>` 사용:
 
-```rust
+```rust,ignore
 // 라이브러리 (ironpost-log-pipeline)
 pub fn parse_syslog(raw: &[u8]) -> Result<LogEntry, LogPipelineError> { ... }
 

@@ -61,7 +61,7 @@ YAML 기반 탐지 규칙을 적용하여 보안 이벤트를 감지하는 완�
 
 ## 프로젝트 구조
 
-```
+```text
 ironpost-log-pipeline/
 ├── src/
 │   ├── collector/          # 로그 수집기
@@ -91,14 +91,14 @@ ironpost-log-pipeline/
 
 ### 기본 파이프라인 시작
 
-```rust
-use ironpost_log_pipeline::{LogPipeline, LogPipelineBuilder, PipelineConfig};
+```rust,no_run
+use ironpost_log_pipeline::{LogPipeline, LogPipelineBuilder, PipelineConfigBuilder};
 use ironpost_core::pipeline::Pipeline;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 설정 생성
-    let config = PipelineConfig::builder()
+    let config = PipelineConfigBuilder::new()
         .watch_paths(vec!["/var/log/auth.log".to_string()])
         .syslog_bind("0.0.0.0:514".to_string())
         .rule_dir("./rules".to_string())
@@ -107,17 +107,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build()?;
 
     // 파이프라인 빌드
-    let (mut pipeline, mut alert_rx) = LogPipelineBuilder::new()
+    let (mut pipeline, alert_rx) = LogPipelineBuilder::new()
         .config(config)
-        .build()
-        .await?;
+        .build()?;
 
     // 시작
     pipeline.start().await?;
 
     // 알림 수신
-    while let Some(alert_event) = alert_rx.recv().await {
-        println!("Alert: {}", alert_event);
+    if let Some(mut alert_rx) = alert_rx {
+        while let Some(alert_event) = alert_rx.recv().await {
+            println!("Alert: {}", alert_event);
+        }
     }
 
     Ok(())
@@ -126,8 +127,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ### 로그 주입 (외부 소스)
 
-```rust
+```rust,ignore
 use ironpost_log_pipeline::RawLog;
+use std::time::SystemTime;
 
 // 외부에서 로그 주입 (예: Docker 컨테이너 로그)
 let raw_log = RawLog {
@@ -176,7 +178,7 @@ tags:
 
 파일 시스템 감시 기반 tail 구현:
 
-```rust
+```rust,ignore
 use ironpost_log_pipeline::collector::FileCollector;
 
 let collector = FileCollector::new(
@@ -196,7 +198,7 @@ collector.start().await?;
 
 RFC 5424 Syslog over UDP:
 
-```rust
+```rust,ignore
 use ironpost_log_pipeline::collector::SyslogUdpCollector;
 
 let collector = SyslogUdpCollector::new(
@@ -215,7 +217,7 @@ collector.start().await?;
 
 RFC 5424 Syslog over TCP + Octet Framing (RFC 6587):
 
-```rust
+```rust,ignore
 use ironpost_log_pipeline::collector::SyslogTcpCollector;
 
 let collector = SyslogTcpCollector::new(
@@ -235,7 +237,7 @@ collector.start().await?;
 
 ### ParserRouter (자동 감지)
 
-```rust
+```rust,ignore
 use ironpost_log_pipeline::parser::{ParserRouter, SyslogParser, JsonLogParser};
 
 let router = ParserRouter::new(vec![
@@ -319,7 +321,7 @@ detection:
 
 ### ReDoS 방어
 
-```rust
+```rust,ignore
 // loader.rs에서 자동 검증
 const MAX_REGEX_LENGTH: usize = 1000;
 const FORBIDDEN_PATTERNS: &[&str] = &[
@@ -334,7 +336,7 @@ const FORBIDDEN_PATTERNS: &[&str] = &[
 
 ### 중복 제거 (Dedup)
 
-```rust
+```rust,ignore
 use ironpost_log_pipeline::alert::AlertGenerator;
 use std::time::Duration;
 
@@ -356,7 +358,7 @@ let generator = AlertGenerator::new(
 
 ### IP 추출
 
-```rust
+```rust,ignore
 // 자동 추출 패턴
 const SRC_IP_PATTERNS: &[&str] = &[
     "src_ip", "source_ip", "client_ip", "srcip", "srcaddr",
@@ -373,7 +375,7 @@ LogEntry.fields에서 자동 추출하여 Alert.source_ip / target_ip에 저장.
 
 ### 드롭 정책
 
-```rust
+```rust,ignore
 use ironpost_log_pipeline::{LogBuffer, DropPolicy};
 
 let buffer = LogBuffer::new(10_000, DropPolicy::DropOldest);
@@ -386,7 +388,7 @@ let buffer = LogBuffer::new(10_000, DropPolicy::DropOldest);
 
 ### 배치 플러시
 
-```rust
+```rust,ignore
 let batch = buffer.drain(1000);  // 최대 1000개 드레인
 ```
 
@@ -394,7 +396,7 @@ let batch = buffer.drain(1000);  // 최대 1000개 드레인
 
 ### PipelineConfig
 
-```rust
+```rust,ignore
 pub struct PipelineConfig {
     pub watch_paths: Vec<String>,
     pub syslog_bind: String,
@@ -471,7 +473,7 @@ symlink 순회 검증은 향후 구현 예정 (Phase 3 리뷰 H6).
 
 ### 버퍼 오버플로우
 
-```
+```text
 WARN: buffer full, applying drop policy
 ```
 
@@ -485,7 +487,7 @@ flush_interval_secs = 3   # 5 → 3
 
 ### 정규식 컴파일 실패
 
-```
+```text
 Error: rule validation failed: regex compilation error
 ```
 

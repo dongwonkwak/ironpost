@@ -12,3 +12,4 @@ network-types = "0.1.0"
 [[bin]]
 name = "ironpost-ebpf"
 path = "src/main.rs"
+test = false

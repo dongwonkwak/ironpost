@@ -43,7 +43,7 @@ Ironpost eBPF 기반 네트워크 패킷 탐지 엔진 — XDP 프로그램을 �
 
 ## 프로젝트 구조
 
-```
+```text
 ironpost-ebpf-engine/
 ├── ebpf/               # eBPF 커널 코드
 │   └── src/main.rs     # XDP 프로그램 (ironpost_xdp)
@@ -98,19 +98,19 @@ cargo build -p ironpost-ebpf-engine
 
 ### 기본 사용
 
-```rust
+```rust,no_run
 use ironpost_ebpf_engine::{EbpfEngine, EngineConfig};
 use ironpost_core::pipeline::Pipeline;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 설정 생성
-    let config = EngineConfig::default()
-        .with_interface("eth0".to_string())
-        .with_xdp_mode("native".to_string());
+    let mut config = EngineConfig::default();
+    config.base.interface = "eth0".to_string();
+    config.base.xdp_mode = "native".to_string();
 
     // 엔진 빌드 (패킷 이벤트 수신 채널 반환)
-    let (mut engine, mut event_rx) = EbpfEngine::builder()
+    let (mut engine, event_rx) = EbpfEngine::builder()
         .config(config)
         .channel_capacity(1024)
         .build()?;
@@ -119,8 +119,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     engine.start().await?;
 
     // 패킷 이벤트 수신
-    while let Some(event) = event_rx.recv().await {
-        println!("Packet: {}", event);
+    if let Some(mut event_rx) = event_rx {
+        while let Some(event) = event_rx.recv().await {
+            println!("Packet: {}", event);
+        }
     }
 
     // 정지
@@ -131,18 +133,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ### 필터 룰 추가
 
-```rust
+```rust,ignore
 use ironpost_ebpf_engine::{FilterRule, RuleAction};
+use std::net::IpAddr;
 
 // IP 차단 룰 추가
 engine.add_rule(FilterRule {
     id: "block_attacker".to_string(),
-    description: "Block known attacker IP".to_string(),
-    src_ip: Some("192.168.1.100".to_string()),
+    src_ip: Some("192.168.1.100".parse::<IpAddr>()?),
     dst_ip: None,
     dst_port: None,
     protocol: None,
-    action: RuleAction::Drop,
+    action: RuleAction::Block,
 })?;
 
 // 룰 제거
@@ -151,7 +153,7 @@ engine.remove_rule("block_attacker")?;
 
 ### 통계 조회
 
-```rust
+```rust,ignore
 let stats = engine.get_stats().await;
 println!("TCP packets: {}", stats.tcp.packets);
 println!("UDP bytes: {}", stats.udp.bytes);
@@ -160,7 +162,7 @@ println!("TCP PPS: {:.2}", stats.tcp.pps);
 
 ### Prometheus 메트릭
 
-```rust
+```rust,ignore
 let prometheus_text = engine.get_stats().await.to_prometheus();
 // Prometheus scrape 엔드포인트에서 반환
 // GET /metrics
@@ -170,27 +172,27 @@ let prometheus_text = engine.get_stats().await.to_prometheus();
 
 ### EngineConfig
 
-```rust
+```rust,ignore
+use ironpost_ebpf_engine::FilterRule;
+
 pub struct EngineConfig {
-    pub interface: String,              // "eth0"
-    pub xdp_mode: String,                // "native" | "skb" | "offload"
-    pub ring_buffer_size: usize,         // KiB, default: 256
-    pub blocklist_max_entries: usize,    // default: 10000
+    pub base: EbpfConfig,  // interface, xdp_mode, ring_buffer_size, blocklist_max_entries
     pub rules: Vec<FilterRule>,
 }
 ```
 
 ### FilterRule
 
-```rust
+```rust,ignore
+use std::net::IpAddr;
+
 pub struct FilterRule {
     pub id: String,
-    pub description: String,
-    pub src_ip: Option<String>,          // "192.168.1.100"
-    pub dst_ip: Option<String>,
-    pub dst_port: Option<u16>,
+    pub src_ip: Option<IpAddr>,          // 출발지 IP
+    pub dst_ip: Option<IpAddr>,          // 목적지 IP
+    pub dst_port: Option<u16>,           // 목적지 포트
     pub protocol: Option<u8>,            // 6=TCP, 17=UDP
-    pub action: RuleAction,              // Drop | Monitor
+    pub action: RuleAction,              // Block | Monitor
 }
 ```
 
@@ -263,7 +265,7 @@ action = "monitor"
 
 ### SYN Flood 탐지
 
-```rust
+```rust,ignore
 use ironpost_ebpf_engine::{SynFloodDetector, SynFloodConfig};
 
 let detector = SynFloodDetector::new(SynFloodConfig {
@@ -275,7 +277,7 @@ let detector = SynFloodDetector::new(SynFloodConfig {
 
 ### 포트 스캔 탐지
 
-```rust
+```rust,ignore
 use ironpost_ebpf_engine::{PortScanDetector, PortScanConfig};
 
 let detector = PortScanDetector::new(PortScanConfig {
@@ -324,7 +326,7 @@ let detector = PortScanDetector::new(PortScanConfig {
 
 ### XDP 로드 실패
 
-```
+```text
 Error: ebpf load failed: permission denied
 ```
 
@@ -338,7 +340,7 @@ sudo setcap cap_net_admin+ep ./ironpost-daemon
 
 ### NIC가 XDP Native 미지원
 
-```
+```text
 Error: XDP native mode not supported on eth0
 ```
 
@@ -351,7 +353,7 @@ xdp_mode = "skb"
 
 ### RingBuf 오버플로우
 
-```
+```text
 WARN: ringbuf full, dropping events
 ```
 
