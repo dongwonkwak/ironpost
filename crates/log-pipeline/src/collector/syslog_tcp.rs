@@ -196,13 +196,14 @@ impl SyslogTcpCollector {
                     debug!("Connection closed by peer: {}", peer_addr);
                     break;
                 }
-                Ok(Ok(bytes_read)) => {
-                    if bytes_read > config.max_message_size {
+                Ok(Ok(_bytes_read)) => {
+                    // 메시지가 최대 크기를 초과하는지 확인
+                    if line_buffer.len() > config.max_message_size {
                         warn!(
-                            "Message too large from {}: {} bytes (max: {})",
-                            peer_addr, bytes_read, config.max_message_size
+                            "Message exceeds max size from {} ({} bytes, max: {}), closing connection",
+                            peer_addr, line_buffer.len(), config.max_message_size
                         );
-                        continue;
+                        break;
                     }
 
                     // 빈 라인 스킵

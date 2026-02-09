@@ -8,6 +8,7 @@
 //! Collectors -> mpsc -> Buffer -> Parser -> RuleEngine -> AlertGenerator -> mpsc -> downstream
 //! ```
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -83,9 +84,9 @@ pub struct LogPipeline {
     /// 백그라운드 태스크 핸들
     tasks: Vec<tokio::task::JoinHandle<()>>,
     /// 파싱 에러 카운터 (공유)
-    parse_error_count: Arc<Mutex<u64>>,
+    parse_error_count: Arc<AtomicU64>,
     /// 처리된 로그 카운터 (공유)
-    processed_count: Arc<Mutex<u64>>,
+    processed_count: Arc<AtomicU64>,
 }
 
 impl LogPipeline {
@@ -100,12 +101,12 @@ impl LogPipeline {
 
     /// 처리된 로그 수를 반환합니다.
     pub async fn processed_count(&self) -> u64 {
-        *self.processed_count.lock().await
+        self.processed_count.load(Ordering::Relaxed)
     }
 
     /// 파싱 에러 수를 반환합니다.
     pub async fn parse_error_count(&self) -> u64 {
-        *self.parse_error_count.lock().await
+        self.parse_error_count.load(Ordering::Relaxed)
     }
 
     /// 로드된 규칙 수를 반환합니다.
@@ -129,11 +130,11 @@ impl LogPipeline {
             // 1. 파싱
             let log_entry = match self.parser.parse(&raw_log.data) {
                 Ok(entry) => {
-                    *self.processed_count.lock().await += 1;
+                    self.processed_count.fetch_add(1, Ordering::Relaxed);
                     entry
                 }
                 Err(e) => {
-                    *self.parse_error_count.lock().await += 1;
+                    self.parse_error_count.fetch_add(1, Ordering::Relaxed);
                     tracing::debug!(
                         source = %raw_log.source,
                         error = %e,
@@ -195,7 +196,15 @@ impl Pipeline for LogPipeline {
         ))?;
 
         let batch_size = self.config.batch_size;
-        let flush_interval_ms = self.config.flush_interval_secs * 1000;
+        let flush_interval_ms = self
+            .config
+            .flush_interval_secs
+            .checked_mul(1000)
+            .ok_or_else(|| {
+                IronpostError::Pipeline(ironpost_core::error::PipelineError::InitFailed(
+                    "flush_interval_secs too large (overflow)".to_owned(),
+                ))
+            })?;
 
         let parser = Arc::clone(&self.parser);
         let rule_engine = Arc::clone(&self.rule_engine);
@@ -226,60 +235,11 @@ impl Pipeline for LogPipeline {
 
                             tracing::debug!(batch_size = batch.len(), "flushing batch (size trigger)");
 
-                            // 배치 처리
+                            // 공유 process_batch 로직 호출
                             for raw_log in batch {
                                 match parser.parse(&raw_log.data) {
                                     Ok(log_entry) => {
-                                        *processed_count.lock().await += 1;
-
-                                        match rule_engine.lock().await.evaluate(&log_entry) {
-                                            Ok(matches) => {
-                                                for rule_match in matches {
-                                                    let mut alert_gen = alert_generator.lock().await;
-                                                    if let Some(alert_event) = alert_gen.generate(
-                                                        &rule_match,
-                                                        None,
-                                                    ) {
-                                                        drop(alert_gen); // unlock before send
-                                                        if let Err(e) = alert_tx.send(alert_event).await {
-                                                            tracing::error!(error = %e, "failed to send alert event");
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                            Err(e) => {
-                                                tracing::warn!(error = %e, "rule evaluation failed");
-                                            }
-                                        }
-                                    }
-                                    Err(e) => {
-                                        *parse_error_count.lock().await += 1;
-                                        tracing::debug!(
-                                            source = %raw_log.source,
-                                            error = %e,
-                                            "failed to parse log entry"
-                                        );
-                                    }
-                                }
-                            }
-
-                            last_flush = Instant::now();
-                        }
-                    }
-
-                    // 타이머 기반 플러시
-                    _ = flush_timer.tick() => {
-                        let mut buf = buffer.lock().await;
-                        if !buf.is_empty() && last_flush.elapsed() >= Duration::from_millis(flush_interval_ms) {
-                            let batch = buf.drain_all();
-                            drop(buf);
-
-                            tracing::debug!(batch_size = batch.len(), "flushing batch (timer trigger)");
-
-                            for raw_log in batch {
-                                match parser.parse(&raw_log.data) {
-                                    Ok(log_entry) => {
-                                        *processed_count.lock().await += 1;
+                                        processed_count.fetch_add(1, Ordering::Relaxed);
 
                                         match rule_engine.lock().await.evaluate(&log_entry) {
                                             Ok(matches) => {
@@ -302,7 +262,57 @@ impl Pipeline for LogPipeline {
                                         }
                                     }
                                     Err(e) => {
-                                        *parse_error_count.lock().await += 1;
+                                        parse_error_count.fetch_add(1, Ordering::Relaxed);
+                                        tracing::debug!(
+                                            source = %raw_log.source,
+                                            error = %e,
+                                            "failed to parse log entry"
+                                        );
+                                    }
+                                }
+                            }
+
+                            last_flush = Instant::now();
+                        }
+                    }
+
+                    // 타이머 기반 플러시
+                    _ = flush_timer.tick() => {
+                        let mut buf = buffer.lock().await;
+                        if !buf.is_empty() && last_flush.elapsed() >= Duration::from_millis(flush_interval_ms) {
+                            let batch = buf.drain_all();
+                            drop(buf);
+
+                            tracing::debug!(batch_size = batch.len(), "flushing batch (timer trigger)");
+
+                            // 공유 process_batch 로직 호출
+                            for raw_log in batch {
+                                match parser.parse(&raw_log.data) {
+                                    Ok(log_entry) => {
+                                        processed_count.fetch_add(1, Ordering::Relaxed);
+
+                                        match rule_engine.lock().await.evaluate(&log_entry) {
+                                            Ok(matches) => {
+                                                for rule_match in matches {
+                                                    let mut alert_gen = alert_generator.lock().await;
+                                                    if let Some(alert_event) = alert_gen.generate(
+                                                        &rule_match,
+                                                        None,
+                                                    ) {
+                                                        drop(alert_gen);
+                                                        if let Err(e) = alert_tx.send(alert_event).await {
+                                                            tracing::error!(error = %e, "failed to send alert event");
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            Err(e) => {
+                                                tracing::warn!(error = %e, "rule evaluation failed");
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        parse_error_count.fetch_add(1, Ordering::Relaxed);
                                         tracing::debug!(
                                             source = %raw_log.source,
                                             error = %e,
@@ -339,15 +349,19 @@ impl Pipeline for LogPipeline {
 
         tracing::info!("stopping log pipeline");
 
-        // 1. 백그라운드 태스크 중단
+        // 1. 먼저 버퍼 드레인 (태스크가 아직 실행 중일 때)
+        let remaining = self.buffer.lock().await.drain_all();
+
+        // 2. 그 다음 태스크 중단 및 대기
         for task in self.tasks.drain(..) {
             task.abort();
+            // JoinHandle이 abort된 후에도 안전하게 await 가능
+            let _ = task.await;
         }
 
-        // 2. 버퍼에 남은 로그 처리 (graceful drain)
-        let remaining = self.buffer.lock().await.drain_all();
+        // 3. 드레인된 로그 처리
         if !remaining.is_empty() {
-            tracing::info!(count = remaining.len(), "draining remaining buffered logs");
+            tracing::info!(count = remaining.len(), "processing remaining buffered logs");
             self.process_batch(remaining).await;
         }
 
@@ -467,8 +481,8 @@ impl LogPipelineBuilder {
             alert_tx,
             packet_rx: self.packet_rx,
             tasks: Vec::new(),
-            parse_error_count: Arc::new(Mutex::new(0)),
-            processed_count: Arc::new(Mutex::new(0)),
+            parse_error_count: Arc::new(AtomicU64::new(0)),
+            processed_count: Arc::new(AtomicU64::new(0)),
         };
 
         Ok((pipeline, alert_rx))

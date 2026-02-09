@@ -212,9 +212,12 @@ impl FileCollector {
         let mut lines = Vec::new();
         let mut current_offset = offset;
         let mut line_buffer = String::new();
+        const MAX_LINE_LENGTH: usize = 64 * 1024; // 64KB default
 
         loop {
             line_buffer.clear();
+
+            // 라인 길이 제한을 적용하며 읽기
             let bytes_read = reader.read_line(&mut line_buffer).await.map_err(|e| {
                 LogPipelineError::Collector {
                     source_type: "file".to_owned(),
@@ -222,12 +225,30 @@ impl FileCollector {
                 }
             })?;
 
+            // 라인이 최대 길이를 초과하는지 확인
+            if line_buffer.len() > MAX_LINE_LENGTH {
+                return Err(LogPipelineError::Collector {
+                    source_type: "file".to_owned(),
+                    reason: format!("line exceeds max length: {} (max: {})", line_buffer.len(), MAX_LINE_LENGTH),
+                });
+            }
+
             if bytes_read == 0 {
                 // EOF 도달
                 break;
             }
 
-            current_offset += bytes_read as u64;
+            current_offset = current_offset
+                .checked_add(
+                    u64::try_from(bytes_read).map_err(|_| LogPipelineError::Collector {
+                        source_type: "file".to_owned(),
+                        reason: format!("offset overflow: {}", bytes_read),
+                    })?,
+                )
+                .ok_or_else(|| LogPipelineError::Collector {
+                    source_type: "file".to_owned(),
+                    reason: "offset overflow".to_owned(),
+                })?;
 
             // 빈 라인이 아니면 추가
             if !line_buffer.trim().is_empty() {

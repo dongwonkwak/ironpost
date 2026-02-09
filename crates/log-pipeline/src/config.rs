@@ -97,23 +97,41 @@ impl PipelineConfig {
 
     /// 설정값의 유효성을 검증합니다.
     pub fn validate(&self) -> Result<(), LogPipelineError> {
-        if self.batch_size == 0 {
+        const MAX_BATCH_SIZE: usize = 100_000;
+        const MAX_BUFFER_CAPACITY: usize = 10_000_000;
+        const MAX_FLUSH_INTERVAL_SECS: u64 = 3600; // 1 hour
+
+        if self.batch_size == 0 || self.batch_size > MAX_BATCH_SIZE {
             return Err(LogPipelineError::Config {
                 field: "batch_size".to_owned(),
-                reason: "must be greater than 0".to_owned(),
+                reason: format!("must be 1-{}", MAX_BATCH_SIZE),
             });
         }
 
-        if self.flush_interval_secs == 0 {
+        if self.flush_interval_secs == 0 || self.flush_interval_secs > MAX_FLUSH_INTERVAL_SECS {
             return Err(LogPipelineError::Config {
                 field: "flush_interval_secs".to_owned(),
+                reason: format!("must be 1-{}", MAX_FLUSH_INTERVAL_SECS),
+            });
+        }
+
+        if self.buffer_capacity == 0 || self.buffer_capacity > MAX_BUFFER_CAPACITY {
+            return Err(LogPipelineError::Config {
+                field: "buffer_capacity".to_owned(),
+                reason: format!("must be 1-{}", MAX_BUFFER_CAPACITY),
+            });
+        }
+
+        if self.alert_dedup_window_secs == 0 {
+            return Err(LogPipelineError::Config {
+                field: "alert_dedup_window_secs".to_owned(),
                 reason: "must be greater than 0".to_owned(),
             });
         }
 
-        if self.buffer_capacity == 0 {
+        if self.alert_rate_limit_per_rule == 0 {
             return Err(LogPipelineError::Config {
-                field: "buffer_capacity".to_owned(),
+                field: "alert_rate_limit_per_rule".to_owned(),
                 reason: "must be greater than 0".to_owned(),
             });
         }

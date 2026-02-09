@@ -12,6 +12,16 @@ use ironpost_core::types::LogEntry;
 use super::types::{ConditionModifier, DetectionRule, FieldCondition};
 use crate::error::LogPipelineError;
 
+/// 정규식 최대 길이 (ReDoS 방어)
+const MAX_REGEX_LENGTH: usize = 1000;
+
+/// 위험한 정규식 패턴 (재귀적 quantifier 등)
+const FORBIDDEN_PATTERNS: &[&str] = &[
+    r"\(\.\*\)\+",   // (.*)+ 형태
+    r"\(\.\+\)\+",   // (.+)+ 형태
+    r"\([^)]*\)\+\+", // (...)++ 형태
+];
+
 /// 규칙 매처 -- 조건 평가 및 정규식 캐싱
 ///
 /// 규칙 로딩 시 정규식을 미리 컴파일하여 매칭 시 재컴파일 오버헤드를 제거합니다.
@@ -31,11 +41,35 @@ impl RuleMatcher {
     /// 규칙의 정규식 조건을 미리 컴파일합니다.
     ///
     /// 규칙 추가 시 호출하여 정규식 패턴의 유효성을 검증하고 캐싱합니다.
+    /// ReDoS 공격을 방지하기 위해 패턴 길이와 위험한 패턴을 체크합니다.
     pub fn compile_rule(&mut self, rule: &DetectionRule) -> Result<(), LogPipelineError> {
         for (idx, condition) in rule.detection.conditions.iter().enumerate() {
             if condition.modifier == ConditionModifier::Regex {
+                let pattern = &condition.value;
+
+                // 길이 체크
+                if pattern.len() > MAX_REGEX_LENGTH {
+                    return Err(LogPipelineError::RuleValidation {
+                        rule_id: rule.id.clone(),
+                        reason: format!("regex pattern too long: {} chars (max: {})", pattern.len(), MAX_REGEX_LENGTH),
+                    });
+                }
+
+                // 위험한 패턴 체크
+                for forbidden in FORBIDDEN_PATTERNS {
+                    if let Ok(forbidden_regex) = Regex::new(forbidden)
+                        && forbidden_regex.is_match(pattern)
+                    {
+                        return Err(LogPipelineError::RuleValidation {
+                            rule_id: rule.id.clone(),
+                            reason: "regex contains potentially catastrophic backtracking pattern".to_owned(),
+                        });
+                    }
+                }
+
+                // 컴파일 시간 제한 (비동기 컨텍스트가 아니므로 단순 시도)
                 let regex =
-                    Regex::new(&condition.value).map_err(|e| LogPipelineError::RuleValidation {
+                    Regex::new(pattern).map_err(|e| LogPipelineError::RuleValidation {
                         rule_id: rule.id.clone(),
                         reason: format!(
                             "invalid regex in condition[{idx}] for field '{}': {e}",
@@ -114,9 +148,12 @@ impl RuleMatcher {
             ConditionModifier::EndsWith => Ok(field_value.ends_with(&condition.value)),
 
             ConditionModifier::Regex => {
+                // HashMap lookup을 allocation 없이 수행
                 let regex = self
                     .regex_cache
-                    .get(&(rule_id.to_owned(), condition_idx))
+                    .iter()
+                    .find(|((id, idx), _)| id.as_str() == rule_id && *idx == condition_idx)
+                    .map(|(_, r)| r)
                     .ok_or_else(|| {
                         LogPipelineError::RuleMatch(format!(
                             "regex not compiled for rule '{rule_id}' condition[{condition_idx}]"

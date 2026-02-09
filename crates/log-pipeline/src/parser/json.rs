@@ -191,6 +191,23 @@ impl JsonLogParser {
         prefix: &str,
         exclude: &[&String],
     ) -> Vec<(String, String)> {
+        Self::flatten_object_impl(value, prefix, exclude, 0)
+    }
+
+    /// JSON 객체 평탄화 내부 구현 (재귀 깊이 제한 포함)
+    fn flatten_object_impl(
+        value: &serde_json::Value,
+        prefix: &str,
+        exclude: &[&String],
+        depth: usize,
+    ) -> Vec<(String, String)> {
+        const MAX_NESTING_DEPTH: usize = 32;
+
+        if depth > MAX_NESTING_DEPTH {
+            tracing::warn!("JSON nesting depth exceeds limit ({}), truncating", MAX_NESTING_DEPTH);
+            return vec![];
+        }
+
         let mut fields = Vec::new();
 
         if let Some(obj) = value.as_object() {
@@ -208,8 +225,8 @@ impl JsonLogParser {
 
                 match val {
                     serde_json::Value::Object(_) => {
-                        // 재귀적으로 중첩 객체 평탄화
-                        fields.extend(Self::flatten_object(val, &field_name, &[]));
+                        // 재귀적으로 중첩 객체 평탄화 (깊이 제한)
+                        fields.extend(Self::flatten_object_impl(val, &field_name, &[], depth + 1));
                     }
                     serde_json::Value::Array(arr) => {
                         // 배열은 JSON 문자열로 직렬화

@@ -33,9 +33,17 @@ pub struct LogBuffer {
 impl LogBuffer {
     /// 새 로그 버퍼를 생성합니다.
     pub fn new(capacity: usize, drop_policy: DropPolicy) -> Self {
+        // capacity가 0이면 최소 1로 설정
+        let actual_capacity = if capacity == 0 {
+            tracing::warn!("buffer capacity is 0, setting to minimum 1");
+            1
+        } else {
+            capacity
+        };
+
         Self {
-            buffer: VecDeque::with_capacity(capacity.min(10_000)),
-            capacity,
+            buffer: VecDeque::with_capacity(actual_capacity.min(10_000)),
+            capacity: actual_capacity,
             drop_policy,
             dropped_count: 0,
             total_received: 0,

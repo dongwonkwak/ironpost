@@ -54,7 +54,35 @@ impl AlertGenerator {
         rule_match: &RuleMatch,
         trace_id: Option<&str>,
     ) -> Option<AlertEvent> {
+        const MAX_TRACKED_RULES: usize = 100_000;
+
         let rule_id = &rule_match.rule.id;
+
+        // 추적 항목 수 체크 및 자동 정리
+        if self.dedup_tracker.len() + self.rate_tracker.len() > MAX_TRACKED_RULES {
+            self.cleanup_expired();
+
+            // cleanup 후에도 초과하면 가장 오래된 항목 제거
+            if self.dedup_tracker.len() > MAX_TRACKED_RULES / 2
+                && let Some((oldest_key, _)) = self
+                    .dedup_tracker
+                    .iter()
+                    .min_by_key(|(_, time)| *time)
+                    .map(|(k, t)| (k.clone(), *t))
+            {
+                self.dedup_tracker.remove(&oldest_key);
+            }
+
+            if self.rate_tracker.len() > MAX_TRACKED_RULES / 2
+                && let Some((oldest_key, _)) = self
+                    .rate_tracker
+                    .iter()
+                    .min_by_key(|(_, (_, time))| *time)
+                    .map(|(k, (c, t))| (k.clone(), (*c, *t)))
+            {
+                self.rate_tracker.remove(&oldest_key);
+            }
+        }
 
         // 중복 제거 체크
         if self.is_duplicate(rule_id) {
