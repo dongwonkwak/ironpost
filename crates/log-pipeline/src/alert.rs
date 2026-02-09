@@ -463,7 +463,7 @@ mod tests {
     fn trace_id_propagation() {
         let mut generator = AlertGenerator::new(0, 100);
 
-        let trace_ids = vec!["trace-1", "trace-2", "trace-3"];
+        let trace_ids = ["trace-1", "trace-2", "trace-3"];
         for (i, tid) in trace_ids.iter().enumerate() {
             let mut rule_match = sample_rule_match();
             rule_match.rule.id = format!("rule_{i}");

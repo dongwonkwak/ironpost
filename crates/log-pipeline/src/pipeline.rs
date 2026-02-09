@@ -504,8 +504,10 @@ mod tests {
 
     #[test]
     fn builder_with_invalid_config_fails() {
-        let mut config = PipelineConfig::default();
-        config.batch_size = 0;
+        let config = PipelineConfig {
+            batch_size: 0, // invalid
+            ..Default::default()
+        };
         let result: Result<(LogPipeline, _), _> = LogPipelineBuilder::new().config(config).build();
         assert!(result.is_err());
     }

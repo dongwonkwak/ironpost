@@ -234,8 +234,10 @@ mod tests {
 
     #[test]
     fn validate_rejects_zero_batch_size() {
-        let mut config = PipelineConfig::default();
-        config.batch_size = 0;
+        let config = PipelineConfig {
+            batch_size: 0,
+            ..Default::default()
+        };
         assert!(config.validate().is_err());
     }
 

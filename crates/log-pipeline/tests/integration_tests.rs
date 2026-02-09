@@ -3,13 +3,12 @@
 //! 이 파일은 로그 수집부터 알림 생성까지의 전체 파이프라인을 검증합니다.
 
 use std::path::PathBuf;
-use std::time::Duration;
 
 use tokio::sync::mpsc;
 
 use ironpost_core::event::{AlertEvent, PacketEvent};
 use ironpost_core::pipeline::{LogParser, Pipeline};
-use ironpost_core::types::{PacketInfo, Severity};
+use ironpost_core::types::PacketInfo;
 use ironpost_log_pipeline::{
     LogPipelineBuilder, PipelineConfig, RuleEngine, SyslogParser,
 };
@@ -38,8 +37,8 @@ async fn test_parse_and_match_flow() {
     // 4. 규칙 매칭
     let matches = rule_engine.evaluate(&log_entry).expect("failed to evaluate");
 
-    // 5. 검증 - 규칙 엔진이 정상 동작하는지 확인
-    assert!(matches.len() >= 0); // 패닉 없이 완료
+    // 5. 검증 - 규칙 엔진이 정상 동작하는지 확인 (패닉 없이 완료)
+    let _count = matches.len();
 }
 
 /// 여러 형식의 로그를 파싱하고 규칙 매칭하는 테스트
@@ -84,8 +83,10 @@ async fn test_pipeline_builder() {
 async fn test_empty_rules_directory() {
     let temp_dir = tempfile::tempdir().expect("failed to create temp dir");
 
-    let mut config = PipelineConfig::default();
-    config.rule_dir = temp_dir.path().to_str().unwrap().to_owned();
+    let config = PipelineConfig {
+        rule_dir: temp_dir.path().to_str().unwrap().to_owned(),
+        ..Default::default()
+    };
 
     let (alert_tx, _alert_rx) = mpsc::channel::<AlertEvent>(100);
 
@@ -158,12 +159,11 @@ async fn test_rule_engine_basic_matching() {
     // 예제 규칙 디렉토리가 있으면 로드
     let rules_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/rules");
     if rules_dir.exists() {
-        let _ = rule_engine.load_rules_from_dir(&rules_dir);
+        let _result = rule_engine.load_rules_from_dir(&rules_dir).await;
     }
 
-    // 규칙 카운트 확인
-    let rule_count = rule_engine.rule_count();
-    assert!(rule_count >= 0);
+    // 규칙 카운트 확인 (패닉 없이 완료)
+    let _rule_count = rule_engine.rule_count();
 }
 
 /// 파서 에러 처리 테스트
@@ -183,22 +183,31 @@ async fn test_parser_error_handling() {
 /// 파이프라인 설정 검증 테스트
 #[tokio::test]
 async fn test_config_validation() {
-    let mut config = PipelineConfig::default();
+    let config = PipelineConfig::default();
 
     // 기본 설정은 유효해야 함
     assert!(config.validate().is_ok());
 
-    // 잘못된 설정
-    config.batch_size = 0;
-    assert!(config.validate().is_err());
+    // 잘못된 설정 - batch_size = 0
+    let invalid_config1 = PipelineConfig {
+        batch_size: 0,
+        ..Default::default()
+    };
+    assert!(invalid_config1.validate().is_err());
 
-    config.batch_size = 100;
-    config.flush_interval_secs = 0;
-    assert!(config.validate().is_err());
+    // 잘못된 설정 - flush_interval_secs = 0
+    let invalid_config2 = PipelineConfig {
+        flush_interval_secs: 0,
+        ..Default::default()
+    };
+    assert!(invalid_config2.validate().is_err());
 
-    config.flush_interval_secs = 5;
-    config.buffer_capacity = 0;
-    assert!(config.validate().is_err());
+    // 잘못된 설정 - buffer_capacity = 0
+    let invalid_config3 = PipelineConfig {
+        buffer_capacity: 0,
+        ..Default::default()
+    };
+    assert!(invalid_config3.validate().is_err());
 }
 
 /// 파이프라인 빌더 체인 테스트

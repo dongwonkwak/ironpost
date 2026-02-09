@@ -443,7 +443,7 @@ mod tests {
     fn flatten_excludes_known_fields() {
         let value: serde_json::Value =
             serde_json::from_str(r#"{"host":"excluded","custom":"included"}"#).unwrap();
-        let exclude = vec!["host".to_owned()];
+        let exclude = ["host".to_owned()];
         let exclude_refs: Vec<&String> = exclude.iter().collect();
         let fields = JsonLogParser::flatten_object(&value, "", &exclude_refs);
         assert!(!fields.iter().any(|(k, _)| k == "host"));
@@ -561,8 +561,8 @@ mod tests {
         let long_msg = "m".repeat(100000);
         let raw = format!(r#"{{"host":"web-01","message":"{}"}}"#, long_msg);
         let result = parser.parse_json(raw.as_bytes());
-        if result.is_ok() {
-            assert_eq!(result.unwrap().message.len(), 100000);
+        if let Ok(entry) = result {
+            assert_eq!(entry.message.len(), 100000);
         }
     }
 
