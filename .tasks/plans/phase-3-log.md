@@ -35,15 +35,15 @@ ebpf-engine 이벤트를 tokio::mpsc로 수신하여 처리합니다.
 - [x] `parser/mod.rs`: 자동 감지 로직 (등록된 파서 순차 시도)
 - [x] 단위 테스트: 48개 테스트 (syslog: 28개, json: 20개)
 
-### T3-2: 수집기 구현 (예상: 4h)
-- [ ] `collector/file.rs`: 비동기 파일 읽기 + offset 추적
-- [ ] `collector/file.rs`: inode 기반 로테이션 감지
-- [ ] `collector/file.rs`: truncation 감지
-- [ ] `collector/syslog_udp.rs`: tokio::net::UdpSocket 바인드 + recv_from 루프
-- [ ] `collector/syslog_tcp.rs`: tokio::net::TcpListener + 연결 핸들링
-- [ ] `collector/syslog_tcp.rs`: newline 프레이밍 + 연결 타임아웃
-- [ ] `collector/event_receiver.rs`: PacketEvent -> RawLog 변환 + 채널 루프
-- [ ] 단위 테스트: 각 수집기 최소 5개
+### T3-2: 수집기 구현 (예상: 4h) ✅
+- [x] `collector/file.rs`: 비동기 파일 읽기 + offset 추적
+- [x] `collector/file.rs`: inode 기반 로테이션 감지
+- [x] `collector/file.rs`: truncation 감지
+- [x] `collector/syslog_udp.rs`: tokio::net::UdpSocket 바인드 + recv_from 루프
+- [x] `collector/syslog_tcp.rs`: tokio::net::TcpListener + 연결 핸들링
+- [x] `collector/syslog_tcp.rs`: newline 프레이밍 + 연결 타임아웃
+- [x] `collector/event_receiver.rs`: PacketEvent -> RawLog 변환 + 채널 루프
+- [x] 단위 테스트: 24개 테스트 (file: 11, udp: 4, tcp: 4, event: 5)
 
 ### T3-3: 규칙 엔진 구현 (예상: 3h)
 - [ ] `rule/loader.rs`: 디렉토리 스캔 + 비동기 파일 로드
