@@ -9,9 +9,7 @@ use tokio::sync::mpsc;
 use ironpost_core::event::{AlertEvent, PacketEvent};
 use ironpost_core::pipeline::{HealthStatus, LogParser, Pipeline};
 use ironpost_core::types::PacketInfo;
-use ironpost_log_pipeline::{
-    LogPipelineBuilder, PipelineConfig, RuleEngine, SyslogParser,
-};
+use ironpost_log_pipeline::{LogPipelineBuilder, PipelineConfig, RuleEngine, SyslogParser};
 
 /// 파서 → 규칙 엔진 흐름 테스트
 #[tokio::test]
@@ -25,9 +23,7 @@ async fn test_parse_and_match_flow() {
 
     // 규칙 디렉토리가 존재하면 로드
     if rules_dir.exists() {
-        let _ = rule_engine
-            .load_rules_from_dir(&rules_dir)
-            .await;
+        let _ = rule_engine.load_rules_from_dir(&rules_dir).await;
     }
 
     // 3. 테스트 로그 파싱
@@ -35,7 +31,9 @@ async fn test_parse_and_match_flow() {
     let log_entry = parser.parse(raw_log).expect("failed to parse log");
 
     // 4. 규칙 매칭
-    let matches = rule_engine.evaluate(&log_entry).expect("failed to evaluate");
+    let matches = rule_engine
+        .evaluate(&log_entry)
+        .expect("failed to evaluate");
 
     // 5. 검증 - 규칙 엔진이 정상 동작하는지 확인 (패닉 없이 완료)
     let _count = matches.len();
@@ -121,7 +119,10 @@ async fn test_packet_event_creation() {
     let packet_event = PacketEvent::new(packet_info, raw_data);
 
     // PacketEvent가 정상적으로 생성되는지 확인
-    assert_eq!(packet_event.packet_info.src_ip, IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)));
+    assert_eq!(
+        packet_event.packet_info.src_ip,
+        IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100))
+    );
     assert_eq!(packet_event.packet_info.protocol, 6);
 }
 
@@ -233,9 +234,7 @@ async fn test_alert_channel_creation() {
     let config = PipelineConfig::default();
 
     // 외부 채널 제공 안 함 - 빌더가 생성
-    let result = LogPipelineBuilder::new()
-        .config(config)
-        .build();
+    let result = LogPipelineBuilder::new().config(config).build();
 
     assert!(result.is_ok());
     if let Ok((_, rx)) = result {
@@ -271,10 +270,7 @@ async fn test_multiple_parser_instances() {
     assert!(result2.is_ok());
 
     // 두 파서가 독립적으로 동작해야 함
-    assert_eq!(
-        result1.unwrap().message,
-        result2.unwrap().message
-    );
+    assert_eq!(result1.unwrap().message, result2.unwrap().message);
 }
 
 /// Collector → Pipeline Flow 통합 테스트
@@ -286,10 +282,10 @@ async fn test_multiple_parser_instances() {
 /// 4. 알림이 생성되어 채널로 전송
 #[tokio::test(flavor = "multi_thread")]
 async fn test_collector_to_pipeline_flow() {
+    use bytes::Bytes;
     use std::fs;
     use std::io::Write;
     use std::time::Duration;
-    use bytes::Bytes;
 
     // 1. 임시 규칙 디렉토리 생성
     let temp_dir = tempfile::tempdir().expect("failed to create temp dir");
@@ -313,7 +309,9 @@ tags:
 "#;
     let rule_path = rules_dir.join("test-failed-login.yaml");
     let mut rule_file = fs::File::create(&rule_path).expect("failed to create rule file");
-    rule_file.write_all(rule_yaml.as_bytes()).expect("failed to write rule");
+    rule_file
+        .write_all(rule_yaml.as_bytes())
+        .expect("failed to write rule");
     drop(rule_file);
 
     // 3. 파이프라인 설정
@@ -351,7 +349,7 @@ tags:
     let matching_log = b"<34>1 2024-01-15T12:00:00Z testhost sshd 1234 - - Failed password for root from 192.168.1.100";
     let raw_log = ironpost_log_pipeline::collector::RawLog::new(
         Bytes::from_static(matching_log),
-        "test_source"
+        "test_source",
     );
 
     sender.send(raw_log).await.expect("failed to send log");
@@ -363,7 +361,10 @@ tags:
         .expect("alert channel closed");
 
     // 9. 알림 검증
-    assert!(alert.alert.rule_name.contains("test-failed-login") || alert.alert.title.contains("Failed Login"));
+    assert!(
+        alert.alert.rule_name.contains("test-failed-login")
+            || alert.alert.title.contains("Failed Login")
+    );
     assert_eq!(alert.alert.severity, ironpost_core::types::Severity::High);
 
     // 10. 통계 확인
@@ -382,10 +383,10 @@ tags:
 /// 규칙에 매칭되지 않는 로그를 주입하면 알림이 생성되지 않아야 함
 #[tokio::test(flavor = "multi_thread")]
 async fn test_collector_to_pipeline_no_match() {
+    use bytes::Bytes;
     use std::fs;
     use std::io::Write;
     use std::time::Duration;
-    use bytes::Bytes;
 
     // 1. 임시 규칙 디렉토리 생성
     let temp_dir = tempfile::tempdir().expect("failed to create temp dir");
@@ -408,7 +409,9 @@ tags:
 "#;
     let rule_path = rules_dir.join("test-attack.yaml");
     let mut rule_file = fs::File::create(&rule_path).expect("failed to create rule file");
-    rule_file.write_all(rule_yaml.as_bytes()).expect("failed to write rule");
+    rule_file
+        .write_all(rule_yaml.as_bytes())
+        .expect("failed to write rule");
     drop(rule_file);
 
     // 3. 파이프라인 빌드
@@ -434,10 +437,11 @@ tags:
 
     // 5. 규칙에 매칭되지 않는 로그 주입
     let sender = pipeline.raw_log_sender();
-    let non_matching_log = b"<34>1 2024-01-15T12:00:00Z host app - - - Normal log message without keyword";
+    let non_matching_log =
+        b"<34>1 2024-01-15T12:00:00Z host app - - - Normal log message without keyword";
     let raw_log = ironpost_log_pipeline::collector::RawLog::new(
         Bytes::from_static(non_matching_log),
-        "test_source"
+        "test_source",
     );
 
     sender.send(raw_log).await.expect("failed to send log");
@@ -460,8 +464,8 @@ tags:
 /// 파이프라인을 start → stop → start하여 재시작 기능을 검증
 #[tokio::test(flavor = "multi_thread")]
 async fn test_pipeline_restart_scenario() {
-    use std::time::Duration;
     use bytes::Bytes;
+    use std::time::Duration;
 
     // 1. 빈 규칙 디렉토리
     let temp_dir = tempfile::tempdir().expect("failed to create temp dir");
@@ -495,11 +499,12 @@ async fn test_pipeline_restart_scenario() {
     // 4. 로그 주입
     let sender1 = pipeline.raw_log_sender();
     let log1 = b"<34>1 2024-01-15T12:00:00Z host app - - - First cycle log";
-    let raw_log1 = ironpost_log_pipeline::collector::RawLog::new(
-        Bytes::from_static(log1),
-        "test_cycle1"
-    );
-    sender1.send(raw_log1).await.expect("failed to send log in cycle 1");
+    let raw_log1 =
+        ironpost_log_pipeline::collector::RawLog::new(Bytes::from_static(log1), "test_cycle1");
+    sender1
+        .send(raw_log1)
+        .await
+        .expect("failed to send log in cycle 1");
 
     // 5. 처리 대기 (flush interval보다 길게)
     tokio::time::sleep(Duration::from_millis(1500)).await;
@@ -521,11 +526,12 @@ async fn test_pipeline_restart_scenario() {
     // 9. 새로운 로그 주입
     let sender2 = pipeline.raw_log_sender();
     let log2 = b"<34>1 2024-01-15T12:01:00Z host app - - - Second cycle log";
-    let raw_log2 = ironpost_log_pipeline::collector::RawLog::new(
-        Bytes::from_static(log2),
-        "test_cycle2"
-    );
-    sender2.send(raw_log2).await.expect("failed to send log in cycle 2");
+    let raw_log2 =
+        ironpost_log_pipeline::collector::RawLog::new(Bytes::from_static(log2), "test_cycle2");
+    sender2
+        .send(raw_log2)
+        .await
+        .expect("failed to send log in cycle 2");
 
     // 10. 처리 대기 (flush interval보다 길게)
     tokio::time::sleep(Duration::from_millis(1500)).await;
@@ -547,18 +553,22 @@ async fn test_pipeline_restart_scenario() {
     // 14. 새로운 로그 주입
     let sender3 = pipeline.raw_log_sender();
     let log3 = b"<34>1 2024-01-15T12:02:00Z host app - - - Third cycle log";
-    let raw_log3 = ironpost_log_pipeline::collector::RawLog::new(
-        Bytes::from_static(log3),
-        "test_cycle3"
-    );
-    sender3.send(raw_log3).await.expect("failed to send log in cycle 3");
+    let raw_log3 =
+        ironpost_log_pipeline::collector::RawLog::new(Bytes::from_static(log3), "test_cycle3");
+    sender3
+        .send(raw_log3)
+        .await
+        .expect("failed to send log in cycle 3");
 
     // 15. 처리 대기 (flush interval보다 길게)
     tokio::time::sleep(Duration::from_millis(1500)).await;
 
     // 16. 최종 통계 확인
     let processed3 = pipeline.processed_count().await;
-    assert_eq!(processed3, 3, "expected 3 logs processed after second restart");
+    assert_eq!(
+        processed3, 3,
+        "expected 3 logs processed after second restart"
+    );
 
     // 17. 최종 정지
     pipeline.stop().await.expect("third stop failed");
@@ -569,8 +579,8 @@ async fn test_pipeline_restart_scenario() {
 /// 여러 개의 로그를 연속으로 주입하여 배치 처리와 플러시 동작을 검증
 #[tokio::test(flavor = "multi_thread")]
 async fn test_multiple_log_injection() {
-    use std::time::Duration;
     use bytes::Bytes;
+    use std::time::Duration;
 
     // 1. 파이프라인 설정 (작은 배치 크기)
     let temp_dir = tempfile::tempdir().expect("failed to create temp dir");
@@ -602,10 +612,13 @@ async fn test_multiple_log_injection() {
     let log_count = 20;
 
     for i in 0..log_count {
-        let log_msg = format!("<34>1 2024-01-15T12:00:00Z host app - - - Test log message {}", i);
+        let log_msg = format!(
+            "<34>1 2024-01-15T12:00:00Z host app - - - Test log message {}",
+            i
+        );
         let raw_log = ironpost_log_pipeline::collector::RawLog::new(
             Bytes::from(log_msg.into_bytes()),
-            "test_batch"
+            "test_batch",
         );
         sender.send(raw_log).await.expect("failed to send log");
     }
@@ -622,7 +635,10 @@ async fn test_multiple_log_injection() {
 
     // 6. 버퍼 사용률 확인 (모두 처리되었으면 낮아야 함)
     let utilization = pipeline.buffer_utilization().await;
-    assert!(utilization < 0.5, "buffer should be mostly empty after processing");
+    assert!(
+        utilization < 0.5,
+        "buffer should be mostly empty after processing"
+    );
 
     // 7. 파이프라인 정지
     pipeline.stop().await.expect("failed to stop pipeline");
@@ -633,10 +649,10 @@ async fn test_multiple_log_injection() {
 /// JSON 형식 로그를 파이프라인에 주입하여 파싱 및 매칭 검증
 #[tokio::test(flavor = "multi_thread")]
 async fn test_json_log_pipeline_flow() {
+    use bytes::Bytes;
     use std::fs;
     use std::io::Write;
     use std::time::Duration;
-    use bytes::Bytes;
 
     // 1. 규칙 디렉토리 생성
     let temp_dir = tempfile::tempdir().expect("failed to create temp dir");
@@ -660,7 +676,9 @@ tags:
 "#;
     let rule_path = rules_dir.join("test-json-error.yaml");
     let mut rule_file = fs::File::create(&rule_path).expect("failed to create rule file");
-    rule_file.write_all(rule_yaml.as_bytes()).expect("failed to write rule");
+    rule_file
+        .write_all(rule_yaml.as_bytes())
+        .expect("failed to write rule");
     drop(rule_file);
 
     // 3. 파이프라인 빌드 (빠른 플러시로 테스트 속도 향상)
@@ -689,8 +707,9 @@ tags:
     let json_log = r#"{"timestamp":"2024-01-15T12:00:00Z","level":"ERROR","message":"Database connection failed","src_ip":"192.168.1.50"}"#;
     let raw_log = ironpost_log_pipeline::collector::RawLog::new(
         Bytes::from(json_log.as_bytes().to_vec()),
-        "test_json"
-    ).with_format_hint("json");
+        "test_json",
+    )
+    .with_format_hint("json");
 
     sender.send(raw_log).await.expect("failed to send JSON log");
 
@@ -701,7 +720,10 @@ tags:
         .expect("alert channel closed");
 
     // 7. 알림 검증
-    assert!(alert.alert.rule_name.contains("test-json-error") || alert.alert.title.contains("JSON Error"));
+    assert!(
+        alert.alert.rule_name.contains("test-json-error")
+            || alert.alert.title.contains("JSON Error")
+    );
     assert_eq!(alert.alert.severity, ironpost_core::types::Severity::Medium);
 
     // 8. 통계 확인
@@ -741,7 +763,7 @@ async fn test_pipeline_health_check_states() {
     // 2. 초기 상태: Unhealthy (not started)
     let health = pipeline.health_check().await;
     match health {
-        HealthStatus::Unhealthy(_) => {},
+        HealthStatus::Unhealthy(_) => {}
         _ => panic!("expected Unhealthy status before start, got: {:?}", health),
     }
 
@@ -751,7 +773,7 @@ async fn test_pipeline_health_check_states() {
 
     let health = pipeline.health_check().await;
     match health {
-        HealthStatus::Healthy => {},
+        HealthStatus::Healthy => {}
         _ => panic!("expected Healthy status after start, got: {:?}", health),
     }
 
@@ -759,7 +781,7 @@ async fn test_pipeline_health_check_states() {
     pipeline.stop().await.expect("failed to stop");
     let health = pipeline.health_check().await;
     match health {
-        HealthStatus::Unhealthy(_) => {},
+        HealthStatus::Unhealthy(_) => {}
         _ => panic!("expected Unhealthy status after stop, got: {:?}", health),
     }
 }

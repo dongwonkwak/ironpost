@@ -204,7 +204,10 @@ impl JsonLogParser {
         const MAX_NESTING_DEPTH: usize = 32;
 
         if depth > MAX_NESTING_DEPTH {
-            tracing::warn!("JSON nesting depth exceeds limit ({}), truncating", MAX_NESTING_DEPTH);
+            tracing::warn!(
+                "JSON nesting depth exceeds limit ({}), truncating",
+                MAX_NESTING_DEPTH
+            );
             return vec![];
         }
 

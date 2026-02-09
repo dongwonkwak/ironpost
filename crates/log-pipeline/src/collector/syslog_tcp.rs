@@ -201,7 +201,9 @@ impl SyslogTcpCollector {
                     if line_buffer.len() > config.max_message_size {
                         warn!(
                             "Message exceeds max size from {} ({} bytes, max: {}), closing connection",
-                            peer_addr, line_buffer.len(), config.max_message_size
+                            peer_addr,
+                            line_buffer.len(),
+                            config.max_message_size
                         );
                         break;
                     }

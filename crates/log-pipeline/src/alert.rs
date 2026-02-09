@@ -1,7 +1,7 @@
 //! 알림 생성 및 관리 -- 규칙 매칭 결과를 AlertEvent로 변환합니다.
 //!
 //! [`AlertGenerator`]는 규칙 매칭 결과를 받아 중복 제거와 속도 제한을 적용한 뒤
-//! [`AlertEvent`](ironpost_core::event::AlertEvent)를 생성합니다.
+//! [`AlertEvent`]를 생성합니다.
 
 use std::collections::HashMap;
 use std::net::IpAddr;

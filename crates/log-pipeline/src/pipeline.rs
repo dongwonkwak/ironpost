@@ -1,6 +1,6 @@
 //! 파이프라인 오케스트레이션 -- 수집/파싱/매칭/알림의 전체 흐름을 관리합니다.
 //!
-//! [`LogPipeline`]은 core의 [`Pipeline`](ironpost_core::pipeline::Pipeline) trait을 구현하여
+//! [`LogPipeline`]은 core의 [`Pipeline`] trait을 구현하여
 //! `ironpost-daemon`에서 다른 모듈과 동일한 생명주기로 관리됩니다.
 //!
 //! # 내부 아키텍처
@@ -8,8 +8,8 @@
 //! Collectors -> mpsc -> Buffer -> Parser -> RuleEngine -> AlertGenerator -> mpsc -> downstream
 //! ```
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use tokio::sync::{Mutex, mpsc};
@@ -373,7 +373,10 @@ impl Pipeline for LogPipeline {
 
         // 3. 드레인된 로그 처리
         if !remaining.is_empty() {
-            tracing::info!(count = remaining.len(), "processing remaining buffered logs");
+            tracing::info!(
+                count = remaining.len(),
+                "processing remaining buffered logs"
+            );
             self.process_batch(remaining).await;
         }
 
@@ -566,8 +569,8 @@ mod tests {
 
     #[tokio::test]
     async fn raw_log_sender_is_accessible() {
-        use bytes::Bytes;
         use crate::collector::RawLog;
+        use bytes::Bytes;
 
         let (pipeline, _alert_rx) = LogPipelineBuilder::new().build().unwrap();
         let sender = pipeline.raw_log_sender();
@@ -589,10 +592,7 @@ mod tests {
             ..Default::default()
         };
 
-        let (mut pipeline, _alert_rx) = LogPipelineBuilder::new()
-            .config(config)
-            .build()
-            .unwrap();
+        let (mut pipeline, _alert_rx) = LogPipelineBuilder::new().config(config).build().unwrap();
 
         // Start the pipeline
         pipeline.start().await.unwrap();

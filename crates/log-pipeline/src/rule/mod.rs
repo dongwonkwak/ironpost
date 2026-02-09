@@ -1,7 +1,7 @@
 //! 탐지 규칙 엔진 -- YAML 기반 로그 매칭 및 알림 생성
 //!
 //! 간소화된 Sigma 스타일의 YAML 규칙을 로드하여
-//! [`LogEntry`](ironpost_core::types::LogEntry)에 대한 패턴 매칭을 수행합니다.
+//! [`LogEntry`]에 대한 패턴 매칭을 수행합니다.
 //!
 //! # 규칙 형식
 //! ```yaml

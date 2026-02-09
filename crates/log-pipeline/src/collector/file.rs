@@ -229,7 +229,11 @@ impl FileCollector {
             if line_buffer.len() > MAX_LINE_LENGTH {
                 return Err(LogPipelineError::Collector {
                     source_type: "file".to_owned(),
-                    reason: format!("line exceeds max length: {} (max: {})", line_buffer.len(), MAX_LINE_LENGTH),
+                    reason: format!(
+                        "line exceeds max length: {} (max: {})",
+                        line_buffer.len(),
+                        MAX_LINE_LENGTH
+                    ),
                 });
             }
 
@@ -239,12 +243,12 @@ impl FileCollector {
             }
 
             current_offset = current_offset
-                .checked_add(
-                    u64::try_from(bytes_read).map_err(|_| LogPipelineError::Collector {
+                .checked_add(u64::try_from(bytes_read).map_err(|_| {
+                    LogPipelineError::Collector {
                         source_type: "file".to_owned(),
                         reason: format!("offset overflow: {}", bytes_read),
-                    })?,
-                )
+                    }
+                })?)
                 .ok_or_else(|| LogPipelineError::Collector {
                     source_type: "file".to_owned(),
                     reason: "offset overflow".to_owned(),

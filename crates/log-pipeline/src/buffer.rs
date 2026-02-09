@@ -5,8 +5,8 @@
 //!
 //! # 오버플로우 정책
 //! 버퍼가 가득 찬 경우:
-//! - [`DropPolicy::Oldest`](crate::config::DropPolicy::Oldest): 가장 오래된 엔트리를 드롭
-//! - [`DropPolicy::Newest`](crate::config::DropPolicy::Newest): 새 유입을 거부
+//! - [`DropPolicy::Oldest`]: 가장 오래된 엔트리를 드롭
+//! - [`DropPolicy::Newest`]: 새 유입을 거부
 
 use std::collections::VecDeque;
 

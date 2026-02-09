@@ -17,8 +17,8 @@ const MAX_REGEX_LENGTH: usize = 1000;
 
 /// 위험한 정규식 패턴 (재귀적 quantifier 등)
 const FORBIDDEN_PATTERNS: &[&str] = &[
-    r"\(\.\*\)\+",   // (.*)+ 형태
-    r"\(\.\+\)\+",   // (.+)+ 형태
+    r"\(\.\*\)\+",    // (.*)+ 형태
+    r"\(\.\+\)\+",    // (.+)+ 형태
     r"\([^)]*\)\+\+", // (...)++ 형태
 ];
 
@@ -51,7 +51,11 @@ impl RuleMatcher {
                 if pattern.len() > MAX_REGEX_LENGTH {
                     return Err(LogPipelineError::RuleValidation {
                         rule_id: rule.id.clone(),
-                        reason: format!("regex pattern too long: {} chars (max: {})", pattern.len(), MAX_REGEX_LENGTH),
+                        reason: format!(
+                            "regex pattern too long: {} chars (max: {})",
+                            pattern.len(),
+                            MAX_REGEX_LENGTH
+                        ),
                     });
                 }
 
@@ -62,20 +66,20 @@ impl RuleMatcher {
                     {
                         return Err(LogPipelineError::RuleValidation {
                             rule_id: rule.id.clone(),
-                            reason: "regex contains potentially catastrophic backtracking pattern".to_owned(),
+                            reason: "regex contains potentially catastrophic backtracking pattern"
+                                .to_owned(),
                         });
                     }
                 }
 
                 // 컴파일 시간 제한 (비동기 컨텍스트가 아니므로 단순 시도)
-                let regex =
-                    Regex::new(pattern).map_err(|e| LogPipelineError::RuleValidation {
-                        rule_id: rule.id.clone(),
-                        reason: format!(
-                            "invalid regex in condition[{idx}] for field '{}': {e}",
-                            condition.field
-                        ),
-                    })?;
+                let regex = Regex::new(pattern).map_err(|e| LogPipelineError::RuleValidation {
+                    rule_id: rule.id.clone(),
+                    reason: format!(
+                        "invalid regex in condition[{idx}] for field '{}': {e}",
+                        condition.field
+                    ),
+                })?;
                 self.regex_cache.insert((rule.id.clone(), idx), regex);
             }
         }

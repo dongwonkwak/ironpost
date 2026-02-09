@@ -1,7 +1,7 @@
 //! 로그 파싱 모듈 -- Syslog RFC 5424, JSON 등 형식별 파서
 //!
 //! [`ParserRouter`]는 원시 로그 데이터의 형식을 판별하여 적절한 파서를 선택합니다.
-//! 각 파서는 core의 [`LogParser`](ironpost_core::pipeline::LogParser) trait을 구현합니다.
+//! 각 파서는 core의 [`LogParser`] trait을 구현합니다.
 //!
 //! # 지원 형식
 //! - Syslog RFC 5424 ([`SyslogParser`])

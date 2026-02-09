@@ -1,7 +1,7 @@
 //! eBPF 이벤트 수신기
 //!
 //! `ironpost-daemon`에서 조립한 `tokio::mpsc` 채널을 통해
-//! eBPF 엔진의 [`PacketEvent`](ironpost_core::event::PacketEvent)를 수신하고,
+//! eBPF 엔진의 [`PacketEvent`]를 수신하고,
 //! 로그 파이프라인에서 처리할 수 있는 [`RawLog`] 형태로 변환합니다.
 //!
 //! # 아키텍처 원칙
@@ -220,10 +220,7 @@ mod tests {
         let mut receiver = EventReceiver::new(packet_rx, tx);
 
         // 송신 측 채널이 이미 닫혔으므로 즉시 종료되어야 함
-        let result = tokio::time::timeout(
-            std::time::Duration::from_secs(1),
-            receiver.run()
-        ).await;
+        let result = tokio::time::timeout(std::time::Duration::from_secs(1), receiver.run()).await;
 
         assert!(result.is_ok(), "Test timed out");
         assert!(result.unwrap().is_ok());
