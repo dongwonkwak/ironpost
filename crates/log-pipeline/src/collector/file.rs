@@ -437,17 +437,25 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn check_rotation_detects_change() {
+        use std::path::PathBuf;
+
         // 원본 파일 생성
         let temp_file = NamedTempFile::new().unwrap();
-        let old_inode = FileCollector::get_inode(temp_file.path()).await.unwrap();
-
-        // 파일을 새로 만들어서 inode 변경 시뮬레이션
         let path = temp_file.path().to_owned();
-        drop(temp_file); // 기존 파일 삭제
+        let old_inode = FileCollector::get_inode(&path).await.unwrap();
+
+        // 실제 로그 로테이션 시나리오: rename 후 새 파일 생성
+        let rotated_path = PathBuf::from(format!("{}.old", path.display()));
+        fs::rename(&path, &rotated_path).await.unwrap();
         fs::write(&path, b"new content").await.unwrap();
 
         let new_inode = FileCollector::get_inode(&path).await.unwrap();
-        assert_ne!(old_inode, new_inode);
+        // rename 방식에서는 새 파일이므로 inode가 달라야 함
+        assert_ne!(
+            old_inode, new_inode,
+            "Rotated file should have different inode (old: {}, new: {})",
+            old_inode, new_inode
+        );
 
         let (tx, _rx) = mpsc::channel(10);
         let _collector = FileCollector::new(FileCollectorConfig::default(), tx);
@@ -456,5 +464,8 @@ mod tests {
             .await
             .unwrap();
         assert!(rotated);
+
+        // cleanup
+        let _ = fs::remove_file(&rotated_path).await;
     }
 }
