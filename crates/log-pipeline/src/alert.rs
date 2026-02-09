@@ -4,6 +4,7 @@
 //! [`AlertEvent`](ironpost_core::event::AlertEvent)를 생성합니다.
 
 use std::collections::HashMap;
+use std::net::IpAddr;
 use std::time::{Duration, SystemTime};
 
 use ironpost_core::event::AlertEvent;
@@ -104,6 +105,9 @@ impl AlertGenerator {
             return None;
         }
 
+        // IP 주소 추출
+        let (source_ip, target_ip) = extract_ips(&rule_match.entry);
+
         // Alert 생성
         let alert = Alert {
             id: uuid::Uuid::new_v4().to_string(),
@@ -111,8 +115,8 @@ impl AlertGenerator {
             description: rule_match.rule.description.clone(),
             severity: rule_match.rule.severity,
             rule_name: rule_match.rule.id.clone(),
-            source_ip: None, // TODO: extract from log entry
-            target_ip: None,
+            source_ip,
+            target_ip,
             created_at: SystemTime::now(),
         };
 
@@ -205,11 +209,46 @@ impl AlertGenerator {
     }
 }
 
+/// 로그 엔트리 필드에서 IP 주소를 추출합니다.
+///
+/// 일반적인 IP 필드명 패턴을 기준으로 source IP와 target IP를 찾습니다.
+/// - Source IP: `src_ip`, `source_ip`, `client_ip`, `src*ip`, `src*addr`
+/// - Target IP: `dst_ip`, `dest_ip`, `destination_ip`, `target_ip`, `remote_ip`, `dst*ip`, `dst*addr`
+fn extract_ips(log_entry: &ironpost_core::types::LogEntry) -> (Option<IpAddr>, Option<IpAddr>) {
+    let source_ip = log_entry
+        .fields
+        .iter()
+        .find(|(k, _)| {
+            let k_lower = k.to_lowercase();
+            k_lower == "source_ip"
+                || k_lower == "src_ip"
+                || k_lower == "client_ip"
+                || (k_lower.contains("src") && (k_lower.contains("ip") || k_lower.contains("addr")))
+        })
+        .and_then(|(_, v)| v.parse::<IpAddr>().ok());
+
+    let target_ip = log_entry
+        .fields
+        .iter()
+        .find(|(k, _)| {
+            let k_lower = k.to_lowercase();
+            k_lower == "dest_ip"
+                || k_lower == "destination_ip"
+                || k_lower == "target_ip"
+                || k_lower == "dst_ip"
+                || k_lower == "remote_ip"
+                || (k_lower.contains("dst") && (k_lower.contains("ip") || k_lower.contains("addr")))
+        })
+        .and_then(|(_, v)| v.parse::<IpAddr>().ok());
+
+    (source_ip, target_ip)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::rule::types::*;
-    use ironpost_core::types::Severity;
+    use ironpost_core::types::{LogEntry, Severity};
 
     fn sample_rule_match() -> RuleMatch {
         RuleMatch {
@@ -224,6 +263,15 @@ mod tests {
                     threshold: None,
                 },
                 tags: vec![],
+            },
+            entry: LogEntry {
+                source: "test".to_owned(),
+                timestamp: SystemTime::now(),
+                hostname: "testhost".to_owned(),
+                process: "testproc".to_owned(),
+                message: "test message".to_owned(),
+                severity: Severity::Info,
+                fields: vec![],
             },
             matched_at: SystemTime::now(),
             match_count: None,
@@ -574,5 +622,158 @@ mod tests {
         }
 
         assert_eq!(generator.total_generated(), 1000);
+    }
+
+    // === IP Extraction Tests ===
+
+    #[test]
+    fn ip_extraction_from_standard_fields() {
+        use ironpost_core::types::LogEntry;
+        use std::time::SystemTime;
+
+        let log_entry = LogEntry {
+            source: "test".to_owned(),
+            timestamp: SystemTime::now(),
+            hostname: "test".to_owned(),
+            process: "test".to_owned(),
+            message: "test".to_owned(),
+            severity: Severity::Info,
+            fields: vec![
+                ("src_ip".to_owned(), "192.168.1.100".to_owned()),
+                ("dst_ip".to_owned(), "10.0.0.5".to_owned()),
+            ],
+        };
+
+        let (src, dst) = extract_ips(&log_entry);
+        assert_eq!(src, Some("192.168.1.100".parse().unwrap()));
+        assert_eq!(dst, Some("10.0.0.5".parse().unwrap()));
+    }
+
+    #[test]
+    fn ip_extraction_from_alternative_field_names() {
+        use ironpost_core::types::LogEntry;
+        use std::time::SystemTime;
+
+        let log_entry = LogEntry {
+            source: "test".to_owned(),
+            timestamp: SystemTime::now(),
+            hostname: "test".to_owned(),
+            process: "test".to_owned(),
+            message: "test".to_owned(),
+            severity: Severity::Info,
+            fields: vec![
+                ("client_ip".to_owned(), "203.0.113.42".to_owned()),
+                ("remote_ip".to_owned(), "198.51.100.23".to_owned()),
+            ],
+        };
+
+        let (src, dst) = extract_ips(&log_entry);
+        assert_eq!(src, Some("203.0.113.42".parse().unwrap()));
+        assert_eq!(dst, Some("198.51.100.23".parse().unwrap()));
+    }
+
+    #[test]
+    fn ip_extraction_ipv6_support() {
+        use ironpost_core::types::LogEntry;
+        use std::time::SystemTime;
+
+        let log_entry = LogEntry {
+            source: "test".to_owned(),
+            timestamp: SystemTime::now(),
+            hostname: "test".to_owned(),
+            process: "test".to_owned(),
+            message: "test".to_owned(),
+            severity: Severity::Info,
+            fields: vec![
+                ("source_ip".to_owned(), "2001:db8::1".to_owned()),
+                ("destination_ip".to_owned(), "2001:db8::2".to_owned()),
+            ],
+        };
+
+        let (src, dst) = extract_ips(&log_entry);
+        assert_eq!(src, Some("2001:db8::1".parse().unwrap()));
+        assert_eq!(dst, Some("2001:db8::2".parse().unwrap()));
+    }
+
+    #[test]
+    fn ip_extraction_no_ips_returns_none() {
+        use ironpost_core::types::LogEntry;
+        use std::time::SystemTime;
+
+        let log_entry = LogEntry {
+            source: "test".to_owned(),
+            timestamp: SystemTime::now(),
+            hostname: "test".to_owned(),
+            process: "test".to_owned(),
+            message: "test".to_owned(),
+            severity: Severity::Info,
+            fields: vec![
+                ("username".to_owned(), "admin".to_owned()),
+                ("action".to_owned(), "login".to_owned()),
+            ],
+        };
+
+        let (src, dst) = extract_ips(&log_entry);
+        assert_eq!(src, None);
+        assert_eq!(dst, None);
+    }
+
+    #[test]
+    fn ip_extraction_invalid_ip_ignored() {
+        use ironpost_core::types::LogEntry;
+        use std::time::SystemTime;
+
+        let log_entry = LogEntry {
+            source: "test".to_owned(),
+            timestamp: SystemTime::now(),
+            hostname: "test".to_owned(),
+            process: "test".to_owned(),
+            message: "test".to_owned(),
+            severity: Severity::Info,
+            fields: vec![
+                ("src_ip".to_owned(), "not.an.ip.address".to_owned()),
+                ("dst_ip".to_owned(), "999.999.999.999".to_owned()),
+            ],
+        };
+
+        let (src, dst) = extract_ips(&log_entry);
+        assert_eq!(src, None);
+        assert_eq!(dst, None);
+    }
+
+    #[test]
+    fn alert_contains_extracted_ips() {
+        use ironpost_core::types::LogEntry;
+        use std::time::SystemTime;
+
+        let mut generator = AlertGenerator::new(60, 10);
+        let mut rule_match = sample_rule_match();
+
+        // Add IP fields to the matched log entry
+        rule_match.entry = LogEntry {
+            source: "test".to_owned(),
+            timestamp: SystemTime::now(),
+            hostname: "test".to_owned(),
+            process: "test".to_owned(),
+            message: "suspicious activity".to_owned(),
+            severity: Severity::High,
+            fields: vec![
+                ("src_ip".to_owned(), "192.168.1.50".to_owned()),
+                ("dst_ip".to_owned(), "10.0.0.100".to_owned()),
+            ],
+        };
+
+        if let Some(alert_event) = generator.generate(&rule_match, None) {
+            assert_eq!(
+                alert_event.alert.source_ip,
+                Some("192.168.1.50".parse().unwrap())
+            );
+            assert_eq!(
+                alert_event.alert.target_ip,
+                Some("10.0.0.100".parse().unwrap())
+            );
+        } else {
+            panic!("alert should be generated");
+        }
     }
 }

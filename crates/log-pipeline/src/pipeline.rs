@@ -74,7 +74,6 @@ pub struct LogPipeline {
     /// 내부 RawLog 채널 (수집기 -> 파이프라인)
     raw_log_rx: Option<mpsc::Receiver<RawLog>>,
     /// 내부 RawLog 채널 송신측 (수집기에 전달)
-    #[allow(dead_code)]
     raw_log_tx: mpsc::Sender<RawLog>,
     /// 알림 전송 채널 (파이프라인 -> downstream)
     alert_tx: mpsc::Sender<AlertEvent>,
@@ -122,6 +121,19 @@ impl LogPipeline {
     /// 규칙 엔진에 대한 Arc 참조를 반환합니다.
     pub fn rule_engine_arc(&self) -> Arc<Mutex<RuleEngine>> {
         Arc::clone(&self.rule_engine)
+    }
+
+    /// 원시 로그 주입을 위한 Sender를 반환합니다.
+    ///
+    /// 수집기나 외부 로그 소스가 이 Sender를 사용하여 파이프라인에 로그를 전송할 수 있습니다.
+    ///
+    /// # 사용 예시
+    /// ```ignore
+    /// let sender = pipeline.raw_log_sender();
+    /// sender.send(RawLog::new(data, "custom_source")).await?;
+    /// ```
+    pub fn raw_log_sender(&self) -> mpsc::Sender<RawLog> {
+        self.raw_log_tx.clone()
     }
 
     /// 배치를 처리합니다: 파싱 -> 규칙 매칭 -> 알림 생성
@@ -365,6 +377,11 @@ impl Pipeline for LogPipeline {
             self.process_batch(remaining).await;
         }
 
+        // 4. 채널 재생성 (재시작 지원)
+        let (tx, rx) = mpsc::channel(self.config.buffer_capacity);
+        self.raw_log_tx = tx;
+        self.raw_log_rx = Some(rx);
+
         self.state = PipelineState::Stopped;
         tracing::info!("log pipeline stopped");
         Ok(())
@@ -545,5 +562,52 @@ mod tests {
         assert_eq!(pipeline.parse_error_count().await, 0);
         assert_eq!(pipeline.rule_count().await, 0);
         assert_eq!(pipeline.buffer_utilization().await, 0.0);
+    }
+
+    #[tokio::test]
+    async fn raw_log_sender_is_accessible() {
+        use bytes::Bytes;
+        use crate::collector::RawLog;
+
+        let (pipeline, _alert_rx) = LogPipelineBuilder::new().build().unwrap();
+        let sender = pipeline.raw_log_sender();
+
+        // Verify we can send logs through the sender
+        let raw_log = RawLog::new(Bytes::from_static(b"test log"), "test_source");
+        let result = sender.send(raw_log).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn pipeline_can_restart_after_stop() {
+        // Create a temporary directory for rules
+        let temp_dir = std::env::temp_dir().join("ironpost_test_restart");
+        std::fs::create_dir_all(&temp_dir).ok();
+
+        let config = PipelineConfig {
+            rule_dir: temp_dir.to_string_lossy().to_string(),
+            ..Default::default()
+        };
+
+        let (mut pipeline, _alert_rx) = LogPipelineBuilder::new()
+            .config(config)
+            .build()
+            .unwrap();
+
+        // Start the pipeline
+        pipeline.start().await.unwrap();
+        assert_eq!(pipeline.state_name(), "running");
+
+        // Stop the pipeline
+        pipeline.stop().await.unwrap();
+        assert_eq!(pipeline.state_name(), "stopped");
+
+        // Restart the pipeline
+        let result = pipeline.start().await;
+        assert!(result.is_ok(), "pipeline should be restartable after stop");
+        assert_eq!(pipeline.state_name(), "running");
+
+        // Clean up
+        pipeline.stop().await.unwrap();
     }
 }

@@ -4,9 +4,9 @@
 - 리뷰어: reviewer
 - 날짜: 2026-02-09
 - 대상: `crates/log-pipeline/src/**`, `tests/integration_tests.rs`
-- 결과: ✅ 수정 완료 (Critical 10건 수정, High 3건 수정)
+- 결과: ✅ 수정 완료 (Critical 10건, High 5건, Medium 1건 수정)
 - 수정자: implementer
-- 수정일: 2026-02-09
+- 수정일: 2026-02-09 (초기), 2026-02-09 (추가 수정)
 
 ## 개요
 Phase 3 log-pipeline 크레이트는 전체적으로 잘 구조화되어 있으며 266개의 테스트를 통해 충분한 커버리지를 확보하고 있습니다. 그러나 보안 취약점, 메모리 안전성 문제, 프로젝트 규칙 위반이 다수 발견되었습니다.
@@ -124,6 +124,72 @@ Phase 3 log-pipeline 크레이트는 전체적으로 잘 구조화되어 있으�
 - `checked_mul(1000)` 사용으로 오버플로우 체크
 - `config.rs validate()`에 `MAX_FLUSH_INTERVAL_SECS = 3600` 상한값 추가
 - 오버플로우 발생 시 적절한 에러 반환
+
+---
+
+## 추가 수정 사항 (2026-02-09)
+
+### H-NEW-1: pipeline.rs - 로그 주입 경로 없음
+**✅ 수정 완료**
+
+**문제:**
+- `raw_log_tx`가 외부로 노출되지 않음 (L78에 `#[allow(dead_code)]`)
+- `start()`에서 수집기 태스크를 스폰하지 않음 (L188-191은 TODO 주석)
+- 파이프라인이 실행되지만 로그를 주입할 방법이 없어 로그 처리 불가
+
+**수정 내용:**
+- `raw_log_sender()` public 메서드 추가하여 외부 로그 주입 지원
+- `#[allow(dead_code)]` 제거
+- 수집기 및 외부 로그 소스가 이 Sender를 통해 파이프라인에 로그 전송 가능
+
+---
+
+### H-NEW-2: pipeline.rs - stop() 후 재시작 불가
+**✅ 수정 완료**
+
+**문제:**
+- `start()`에서 `raw_log_rx.take()` 사용으로 receiver 소비
+- `stop()` 후 `raw_log_rx`가 None이 되어 두 번째 `start()` 호출 시 AlreadyRunning 에러 발생
+- 에러 메시지도 부정확 ("이미 실행 중"이 아니라 "receiver 소비됨")
+
+**수정 내용:**
+- `stop()` 메서드에서 채널 재생성 로직 추가
+- 새로운 `(tx, rx)` 채널 쌍 생성하여 `raw_log_tx`, `raw_log_rx` 업데이트
+- 파이프라인 재시작 지원 (daemon 사용 사례에 유용)
+- 재시작 테스트 추가 (`pipeline_can_restart_after_stop`)
+
+---
+
+### M-NEW-1: alert.rs - IP 추출 미구현
+**✅ 수정 완료**
+
+**문제:**
+- Alert에 항상 `source_ip: None, target_ip: None` (alert.rs L108-120)
+- LogEntry.fields에 IP 주소가 있어도 추출하지 않음
+- Alert 품질이 낮음
+
+**수정 내용:**
+- `extract_ips()` 헬퍼 함수 추가
+  - Source IP 패턴: `src_ip`, `source_ip`, `client_ip`, `src*ip`, `src*addr`
+  - Target IP 패턴: `dst_ip`, `dest_ip`, `destination_ip`, `target_ip`, `remote_ip`, `dst*ip`, `dst*addr`
+- IPv4 및 IPv6 지원
+- 잘못된 IP 형식은 무시 (파싱 실패 시 None)
+- `RuleMatch` 구조체에 `entry: LogEntry` 필드 추가하여 Alert 생성 시 원본 로그 접근 가능
+- 7개의 IP 추출 테스트 추가:
+  - 표준 필드명 (`src_ip`, `dst_ip`)
+  - 대체 필드명 (`client_ip`, `remote_ip`)
+  - IPv6 지원
+  - IP 없는 경우 None 반환
+  - 잘못된 IP 무시
+  - Alert에 추출된 IP 포함
+
+---
+
+### M-NEW-2: daemon 플레이스홀더
+**보류** (Phase 4에서 처리)
+
+daemon (`ironpost-daemon/src/main.rs`)은 여전히 플레이스홀더이며 TODO 주석이 있음.
+Phase 3에서는 로그 파이프라인 크레이트 자체에만 집중하고, daemon 통합은 Phase 4에서 진행 예정.
 
 ---
 

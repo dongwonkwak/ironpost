@@ -48,6 +48,8 @@ use crate::error::LogPipelineError;
 pub struct RuleMatch {
     /// 매칭된 규칙
     pub rule: DetectionRule,
+    /// 매칭된 로그 엔트리
+    pub entry: LogEntry,
     /// 매칭된 로그 엔트리의 타임스탬프
     pub matched_at: SystemTime,
     /// threshold 규칙인 경우, 매칭된 횟수
@@ -190,6 +192,7 @@ impl RuleEngine {
                     counter.alerted = true;
                     matches.push(RuleMatch {
                         rule: rule.clone(),
+                        entry: entry.clone(),
                         matched_at: SystemTime::now(),
                         match_count: Some(counter.count),
                     });
@@ -198,6 +201,7 @@ impl RuleEngine {
                 // threshold 없는 단순 매칭
                 matches.push(RuleMatch {
                     rule: rule.clone(),
+                    entry: entry.clone(),
                     matched_at: SystemTime::now(),
                     match_count: None,
                 });
@@ -307,6 +311,7 @@ impl ironpost_core::pipeline::Detector for RuleEngine {
                 return Ok(Some(Self::rule_match_to_alert(
                     &RuleMatch {
                         rule: rule.clone(),
+                        entry: entry.clone(),
                         matched_at: SystemTime::now(),
                         match_count: None,
                     },
@@ -395,6 +400,7 @@ mod tests {
 
     #[test]
     fn rule_match_to_alert_creates_alert() {
+        let entry = sample_entry();
         let rule_match = RuleMatch {
             rule: DetectionRule {
                 id: "test".to_owned(),
@@ -408,11 +414,11 @@ mod tests {
                 },
                 tags: vec![],
             },
+            entry: entry.clone(),
             matched_at: SystemTime::now(),
             match_count: None,
         };
 
-        let entry = sample_entry();
         let alert = RuleEngine::rule_match_to_alert(&rule_match, &entry);
         assert_eq!(alert.title, "Test Alert");
         assert_eq!(alert.severity, Severity::High);
