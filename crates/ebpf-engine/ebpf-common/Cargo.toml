@@ -1,0 +1,12 @@
+[package]
+name = "ironpost-ebpf-common"
+version = "0.1.0"
+edition = "2024"
+description = "Ironpost eBPF 커널/유저스페이스 공유 타입 (#![no_std])"
+
+[features]
+default = []
+user = ["aya"]
+
+[dependencies]
+aya = { version = "0.13", optional = true, default-features = false }

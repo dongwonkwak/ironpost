@@ -6,6 +6,8 @@ edition = "2024"
 [dependencies]
 aya-ebpf = "0.1"
 aya-log-ebpf = "0.1"
+ironpost-ebpf-common = { path = "../ebpf-common" }
+network-types = "0.1.0"
 
 [[bin]]
 name = "ironpost-ebpf"
