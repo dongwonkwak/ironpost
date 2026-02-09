@@ -9,8 +9,14 @@
 //! - 새 파일 자동 열기
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
+use bytes::Bytes;
+use tokio::fs::{File, metadata};
+use tokio::io::{AsyncBufReadExt, AsyncSeekExt, BufReader};
 use tokio::sync::mpsc;
+use tokio::time::sleep;
+use tracing::{debug, error, info, warn};
 
 use super::{CollectorStatus, RawLog};
 use crate::error::LogPipelineError;
@@ -103,26 +109,172 @@ impl FileCollector {
     /// `tokio::spawn`으로 별도 태스크에서 호출하세요.
     pub async fn run(&mut self) -> Result<(), LogPipelineError> {
         self.status = CollectorStatus::Running;
-        todo!("implement file watching loop with rotation detection")
+        info!(
+            "Starting file collector for {} files",
+            self.file_states.len()
+        );
+
+        let poll_interval = Duration::from_millis(self.config.poll_interval_ms);
+
+        loop {
+            for i in 0..self.file_states.len() {
+                let path = self.file_states[i].path.clone();
+                let mut offset = self.file_states[i].offset;
+                #[cfg(unix)]
+                let mut inode = self.file_states[i].inode;
+
+                // 파일 로테이션 확인
+                #[cfg(unix)]
+                {
+                    if let Ok(rotated) = Self::check_rotation(&path, inode).await
+                        && rotated
+                    {
+                        info!("File rotation detected: {:?}", path);
+                        offset = 0;
+                        inode = Self::get_inode(&path).await.ok();
+                    }
+                }
+
+                // Truncation 감지
+                if let Ok(meta) = metadata(&path).await {
+                    let file_size = meta.len();
+                    if file_size < offset {
+                        warn!(
+                            "File truncation detected: {:?} (size: {}, offset: {})",
+                            path, file_size, offset
+                        );
+                        offset = 0;
+                    }
+                }
+
+                // 새 라인 읽기
+                match Self::read_new_lines(&path, offset).await {
+                    Ok((lines, new_offset)) => {
+                        // 상태 업데이트
+                        self.file_states[i].offset = new_offset;
+                        #[cfg(unix)]
+                        {
+                            self.file_states[i].inode = inode;
+                        }
+
+                        // 읽은 라인을 RawLog로 변환하여 전송
+                        for line_bytes in lines {
+                            let raw_log =
+                                RawLog::new(line_bytes, format!("file:{}", path.display()))
+                                    .with_format_hint("syslog");
+
+                            if let Err(e) = self.tx.send(raw_log).await {
+                                error!("Failed to send log: {}", e);
+                                self.status = CollectorStatus::Error(e.to_string());
+                                return Err(LogPipelineError::Channel(e.to_string()));
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        error!("Failed to read file {:?}: {}", path, e);
+                        // 에러 발생 시 백오프 후 계속 진행
+                        sleep(Duration::from_secs(1)).await;
+                    }
+                }
+            }
+
+            // 폴링 간격 대기
+            sleep(poll_interval).await;
+        }
     }
 
     /// 단일 파일에서 새로운 라인을 읽습니다.
+    ///
+    /// 주어진 오프셋부터 파일을 읽어 새로운 라인들을 반환합니다.
+    /// 반환값: (읽은 라인들, 새로운 오프셋)
     async fn read_new_lines(
-        &self,
-        _path: &Path,
-        _offset: u64,
-    ) -> Result<(Vec<bytes::Bytes>, u64), LogPipelineError> {
-        todo!("implement file reading from offset")
+        path: &Path,
+        offset: u64,
+    ) -> Result<(Vec<Bytes>, u64), LogPipelineError> {
+        let file = File::open(path)
+            .await
+            .map_err(|e| LogPipelineError::Collector {
+                source_type: "file".to_owned(),
+                reason: format!("failed to open {:?}: {}", path, e),
+            })?;
+
+        let mut reader = BufReader::new(file);
+
+        // 오프셋으로 이동
+        reader
+            .seek(std::io::SeekFrom::Start(offset))
+            .await
+            .map_err(|e| LogPipelineError::Collector {
+                source_type: "file".to_owned(),
+                reason: format!("failed to seek to offset {}: {}", offset, e),
+            })?;
+
+        let mut lines = Vec::new();
+        let mut current_offset = offset;
+        let mut line_buffer = String::new();
+
+        loop {
+            line_buffer.clear();
+            let bytes_read = reader.read_line(&mut line_buffer).await.map_err(|e| {
+                LogPipelineError::Collector {
+                    source_type: "file".to_owned(),
+                    reason: format!("failed to read line: {}", e),
+                }
+            })?;
+
+            if bytes_read == 0 {
+                // EOF 도달
+                break;
+            }
+
+            current_offset += bytes_read as u64;
+
+            // 빈 라인이 아니면 추가
+            if !line_buffer.trim().is_empty() {
+                lines.push(Bytes::from(line_buffer.trim_end().to_owned()));
+            }
+
+            // 한 번에 너무 많은 라인을 읽지 않도록 제한
+            if lines.len() >= 1000 {
+                debug!("Read batch limit reached (1000 lines), will continue in next iteration");
+                break;
+            }
+        }
+
+        Ok((lines, current_offset))
     }
 
     /// 파일 로테이션 여부를 확인합니다.
+    ///
+    /// Unix 시스템에서 inode를 비교하여 로테이션을 감지합니다.
     #[cfg(unix)]
     async fn check_rotation(
-        &self,
-        _path: &Path,
-        _last_inode: Option<u64>,
+        path: &Path,
+        last_inode: Option<u64>,
     ) -> Result<bool, LogPipelineError> {
-        todo!("implement inode-based rotation detection")
+        let current_inode = Self::get_inode(path).await?;
+
+        if let Some(last) = last_inode {
+            Ok(current_inode != last)
+        } else {
+            // 첫 번째 체크, 로테이션 아님
+            Ok(false)
+        }
+    }
+
+    /// 파일의 inode를 가져옵니다 (Unix 전용).
+    #[cfg(unix)]
+    async fn get_inode(path: &Path) -> Result<u64, LogPipelineError> {
+        use std::os::unix::fs::MetadataExt;
+
+        let meta = metadata(path)
+            .await
+            .map_err(|e| LogPipelineError::Collector {
+                source_type: "file".to_owned(),
+                reason: format!("failed to get metadata for {:?}: {}", path, e),
+            })?;
+
+        Ok(meta.ino())
     }
 
     /// 현재 상태를 반환합니다.
@@ -134,6 +286,9 @@ impl FileCollector {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{Seek, Write};
+    use tempfile::NamedTempFile;
+    use tokio::fs;
 
     #[test]
     fn default_config() {
@@ -147,5 +302,134 @@ mod tests {
         let (tx, _rx) = mpsc::channel(10);
         let collector = FileCollector::new(FileCollectorConfig::default(), tx);
         assert_eq!(*collector.status(), CollectorStatus::Idle);
+    }
+
+    #[tokio::test]
+    async fn read_new_lines_from_file() {
+        // 테스트 파일 생성
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(temp_file, "line 1").unwrap();
+        writeln!(temp_file, "line 2").unwrap();
+        writeln!(temp_file, "line 3").unwrap();
+        temp_file.flush().unwrap();
+
+        let (tx, _rx) = mpsc::channel(10);
+        let _collector = FileCollector::new(FileCollectorConfig::default(), tx);
+
+        // 오프셋 0부터 읽기
+        let (lines, new_offset) = FileCollector::read_new_lines(temp_file.path(), 0)
+            .await
+            .unwrap();
+
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0].as_ref(), b"line 1");
+        assert_eq!(lines[1].as_ref(), b"line 2");
+        assert_eq!(lines[2].as_ref(), b"line 3");
+        assert!(new_offset > 0);
+    }
+
+    #[tokio::test]
+    async fn read_new_lines_with_offset() {
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(temp_file, "line 1").unwrap();
+        let first_offset = temp_file.stream_position().unwrap();
+        writeln!(temp_file, "line 2").unwrap();
+        writeln!(temp_file, "line 3").unwrap();
+        temp_file.flush().unwrap();
+
+        let (tx, _rx) = mpsc::channel(10);
+        let _collector = FileCollector::new(FileCollectorConfig::default(), tx);
+
+        // 첫 번째 라인 이후부터 읽기
+        let (lines, _) = FileCollector::read_new_lines(temp_file.path(), first_offset)
+            .await
+            .unwrap();
+
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].as_ref(), b"line 2");
+        assert_eq!(lines[1].as_ref(), b"line 3");
+    }
+
+    #[tokio::test]
+    async fn read_empty_file() {
+        let temp_file = NamedTempFile::new().unwrap();
+
+        let (tx, _rx) = mpsc::channel(10);
+        let _collector = FileCollector::new(FileCollectorConfig::default(), tx);
+
+        let (lines, new_offset) = FileCollector::read_new_lines(temp_file.path(), 0)
+            .await
+            .unwrap();
+
+        assert_eq!(lines.len(), 0);
+        assert_eq!(new_offset, 0);
+    }
+
+    #[tokio::test]
+    async fn skip_empty_lines() {
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(temp_file, "line 1").unwrap();
+        writeln!(temp_file).unwrap(); // 빈 라인
+        writeln!(temp_file, "line 2").unwrap();
+        temp_file.flush().unwrap();
+
+        let (tx, _rx) = mpsc::channel(10);
+        let _collector = FileCollector::new(FileCollectorConfig::default(), tx);
+
+        let (lines, _) = FileCollector::read_new_lines(temp_file.path(), 0)
+            .await
+            .unwrap();
+
+        // 빈 라인은 제외되어야 함
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].as_ref(), b"line 1");
+        assert_eq!(lines[1].as_ref(), b"line 2");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn get_inode_returns_valid_inode() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let inode = FileCollector::get_inode(temp_file.path()).await.unwrap();
+        assert!(inode > 0);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn check_rotation_detects_no_change() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let inode = FileCollector::get_inode(temp_file.path()).await.unwrap();
+
+        let (tx, _rx) = mpsc::channel(10);
+        let _collector = FileCollector::new(FileCollectorConfig::default(), tx);
+
+        let rotated = FileCollector::check_rotation(temp_file.path(), Some(inode))
+            .await
+            .unwrap();
+        assert!(!rotated);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn check_rotation_detects_change() {
+        // 원본 파일 생성
+        let temp_file = NamedTempFile::new().unwrap();
+        let old_inode = FileCollector::get_inode(temp_file.path()).await.unwrap();
+
+        // 파일을 새로 만들어서 inode 변경 시뮬레이션
+        let path = temp_file.path().to_owned();
+        drop(temp_file); // 기존 파일 삭제
+        fs::write(&path, b"new content").await.unwrap();
+
+        let new_inode = FileCollector::get_inode(&path).await.unwrap();
+        assert_ne!(old_inode, new_inode);
+
+        let (tx, _rx) = mpsc::channel(10);
+        let _collector = FileCollector::new(FileCollectorConfig::default(), tx);
+
+        let rotated = FileCollector::check_rotation(&path, Some(old_inode))
+            .await
+            .unwrap();
+        assert!(rotated);
     }
 }

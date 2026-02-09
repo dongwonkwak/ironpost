@@ -54,8 +54,38 @@ impl EventReceiver {
     /// PacketEvent를 수신하여 RawLog로 변환한 뒤 파이프라인으로 전달합니다.
     /// 송신 측 채널이 닫히면 자동 종료됩니다.
     pub async fn run(&mut self) -> Result<(), LogPipelineError> {
+        use tracing::{debug, error, info};
+
         self.status = CollectorStatus::Running;
-        todo!("implement: recv PacketEvent -> serialize to JSON RawLog -> send to pipeline")
+        info!("Starting event receiver from ebpf-engine");
+
+        loop {
+            match self.packet_rx.recv().await {
+                Some(event) => {
+                    debug!("Received PacketEvent: {:?}", event.packet_info);
+
+                    // PacketEvent를 RawLog로 변환
+                    let raw_log = Self::packet_event_to_raw_log(&event)?;
+
+                    // 파이프라인으로 전송
+                    if let Err(e) = self.tx.send(raw_log).await {
+                        error!("Failed to send RawLog to pipeline: {}", e);
+                        self.status = CollectorStatus::Error(e.to_string());
+                        return Err(LogPipelineError::Channel(e.to_string()));
+                    }
+
+                    self.received_count += 1;
+                }
+                None => {
+                    // 송신 측 채널이 닫힘 - 정상 종료
+                    info!("PacketEvent channel closed, shutting down event receiver");
+                    self.status = CollectorStatus::Stopped;
+                    break;
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// PacketEvent를 RawLog로 변환합니다.
@@ -143,5 +173,76 @@ mod tests {
         let receiver = EventReceiver::new(packet_rx, tx);
         assert_eq!(*receiver.status(), CollectorStatus::Idle);
         assert_eq!(receiver.received_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn receive_and_convert_packet_event() {
+        let (packet_tx, packet_rx) = mpsc::channel(10);
+        let (tx, mut rx) = mpsc::channel(10);
+
+        let mut receiver = EventReceiver::new(packet_rx, tx);
+
+        // 이벤트를 백그라운드 태스크로 수신
+        let handle = tokio::spawn(async move { receiver.run().await });
+
+        // 테스트 이벤트 전송
+        let event = sample_packet_event();
+        packet_tx.send(event).await.unwrap();
+
+        // RawLog 수신 확인
+        let raw_log = tokio::time::timeout(tokio::time::Duration::from_millis(100), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(raw_log.source, "ebpf-engine");
+        assert_eq!(raw_log.format_hint, Some("json".to_owned()));
+
+        // JSON 파싱 확인
+        let value: serde_json::Value = serde_json::from_slice(&raw_log.data).unwrap();
+        assert_eq!(value["src_ip"], "192.168.1.1");
+
+        // 채널 닫기로 종료
+        drop(packet_tx);
+        let result = handle.await.unwrap();
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn receiver_stops_when_channel_closed() {
+        let (_packet_tx, packet_rx) = mpsc::channel(10);
+        let (tx, _rx) = mpsc::channel(10);
+
+        let mut receiver = EventReceiver::new(packet_rx, tx);
+
+        // 송신 측 채널이 이미 닫혔으므로 즉시 종료되어야 함
+        let result = receiver.run().await;
+        assert!(result.is_ok());
+        assert_eq!(*receiver.status(), CollectorStatus::Stopped);
+    }
+
+    #[test]
+    fn json_contains_all_packet_fields() {
+        let event = sample_packet_event();
+        let raw = EventReceiver::packet_event_to_raw_log(&event).unwrap();
+
+        let value: serde_json::Value = serde_json::from_slice(&raw.data).unwrap();
+
+        // 필수 필드 확인
+        assert!(value.get("source").is_some());
+        assert!(value.get("event_type").is_some());
+        assert!(value.get("trace_id").is_some());
+        assert!(value.get("src_ip").is_some());
+        assert!(value.get("dst_ip").is_some());
+        assert!(value.get("src_port").is_some());
+        assert!(value.get("dst_port").is_some());
+        assert!(value.get("protocol").is_some());
+        assert!(value.get("size").is_some());
+        assert!(value.get("message").is_some());
+
+        // 값 타입 확인
+        assert!(value["src_ip"].is_string());
+        assert!(value["src_port"].is_number());
+        assert!(value["protocol"].is_number());
     }
 }

@@ -16,8 +16,7 @@
 - 없음
 
 ## 현재 진행중
-- 🔄 [Phase 3] T3-1: 파서 구현 (시작: 2026-02-09 11:30)
-- Phase 3 스캐폴딩 (설계 + 타입 스켈레톤) 완료 -- 구현 대기
+- Phase 3 T3-1 완료, T3-2 대기 중
 
 ## Phase 3 설계 완료 항목
 - [x] `.knowledge/log-pipeline-design.md` -- 전체 설계 문서
@@ -67,6 +66,7 @@
   - ✅ Medium 1건 수정 완료 (M3)
 
 ## 최근 완료
+- [P3] T3-1: 파서 구현 완료 (RFC 5424/3164 syslog + JSON, 48 tests, commit e80e91d)
 - [P3] 설계: log-pipeline 스캐폴딩 완료 (설계 문서 + 12개 소스 파일 + 타입/trait 스켈레톤)
 - [P2] 구현: phase-2-ebpf 리뷰 지적사항 수정 완료 (Critical 5건, High 4건, Medium 1건)
 - [P2] 리뷰: phase-2-ebpf 코드 리뷰 완료 (28건 발견)
@@ -76,4 +76,3 @@
 - [P1] pipeline.rs: Pipeline trait + HealthStatus + Detector/LogParser/PolicyEnforcer
 - [P1] config.rs: IronpostConfig TOML 파싱 + 환경변수 오버라이드 + 유효성 검증
 - [P1] types.rs: PacketInfo/LogEntry/Alert/Severity/ContainerInfo/Vulnerability
-- [P1] lib.rs: pub mod + 주요 타입 re-export

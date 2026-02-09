@@ -321,7 +321,7 @@ mod tests {
     #[test]
     fn builder_with_external_alert_sender() {
         let (alert_tx, _alert_rx) = mpsc::channel(10);
-        let (pipeline, rx) = LogPipelineBuilder::new()
+        let (_pipeline, rx) = LogPipelineBuilder::new()
             .alert_sender(alert_tx)
             .build()
             .unwrap();
