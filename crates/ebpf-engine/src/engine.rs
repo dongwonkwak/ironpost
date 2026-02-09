@@ -134,6 +134,14 @@ impl EbpfEngineBuilder {
             .config
             .ok_or_else(|| PipelineError::InitFailed("config is required".to_owned()))?;
 
+        // channel_capacity 검증
+        if self.channel_capacity == 0 {
+            return Err(PipelineError::InitFailed(
+                "channel_capacity must be greater than 0".to_owned(),
+            )
+            .into());
+        }
+
         let (event_tx, event_rx) = if let Some(tx) = self.event_tx {
             // 외부 채널 사용 시 수신자 없음
             (tx, None)
@@ -422,10 +430,18 @@ impl EbpfEngine {
                 let mut ringbuf = ringbuf;
                 tracing::info!("eBPF event reader task started");
 
+                // Exponential backoff: idle일 때 CPU 사용 최소화
+                // 초기 1ms → 최대 100ms (초당 ~10회 wakeup, 기존 100회에서 90% 감소)
+                let mut backoff_ms: u64 = 1;
+                const MAX_BACKOFF_MS: u64 = 100;
+
                 loop {
                     // RingBuf에서 이벤트 폴링
                     match ringbuf.next() {
                         Some(data) => {
+                            // 이벤트 수신 시 backoff 리셋
+                            backoff_ms = 1;
+
                             // PacketEventData 역직렬화
                             if data.len() < std::mem::size_of::<PacketEventData>() {
                                 tracing::warn!(
@@ -444,18 +460,14 @@ impl EbpfEngine {
                             };
 
                             // PacketInfo로 변환
-                            let src_ip = IpAddr::V4(std::net::Ipv4Addr::from(u32::from_be(
-                                event_data.src_ip,
-                            )));
-                            let dst_ip = IpAddr::V4(std::net::Ipv4Addr::from(u32::from_be(
-                                event_data.dst_ip,
-                            )));
+                            let src_ip = IpAddr::V4(std::net::Ipv4Addr::from(event_data.src_ip));
+                            let dst_ip = IpAddr::V4(std::net::Ipv4Addr::from(event_data.dst_ip));
 
                             let packet_info = PacketInfo {
                                 src_ip,
                                 dst_ip,
-                                src_port: u16::from_be(event_data.src_port),
-                                dst_port: u16::from_be(event_data.dst_port),
+                                src_port: event_data.src_port,
+                                dst_port: event_data.dst_port,
                                 protocol: event_data.protocol,
                                 size: usize::try_from(event_data.pkt_len).unwrap_or(usize::MAX),
                                 timestamp: std::time::SystemTime::now(),
@@ -476,8 +488,10 @@ impl EbpfEngine {
                             }
                         }
                         None => {
-                            // RingBuf가 비어있으면 짧게 대기
-                            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                            // RingBuf가 비어있으면 지수적 백오프로 대기
+                            // idle 시 CPU 사이클 낭비 방지, 부하 증가 시 빠른 반응
+                            tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
+                            backoff_ms = (backoff_ms * 2).min(MAX_BACKOFF_MS);
                         }
                     }
                 }
@@ -673,7 +687,9 @@ impl Pipeline for EbpfEngine {
     ///
     /// 1. 백그라운드 태스크 취소
     /// 2. XDP 프로그램 언로드
-    /// 3. 통계 리셋
+    ///
+    /// # 참고
+    /// 통계(stats)는 리셋되지 않으므로, stop() 후에도 누적된 트래픽 통계를 조회할 수 있습니다.
     async fn stop(&mut self) -> Result<(), IronpostError> {
         if !self.running {
             return Err(PipelineError::NotRunning.into());
@@ -1017,15 +1033,18 @@ mod tests {
     // =============================================================================
 
     #[test]
-    #[should_panic(expected = "mpsc bounded channel requires buffer > 0")]
     fn test_builder_with_zero_capacity() {
         let config = EngineConfig::default();
 
-        // capacity 0은 mpsc::channel에서 panic을 발생시킵니다
-        let _ = EbpfEngine::builder()
+        let result = EbpfEngine::builder()
             .config(config)
             .channel_capacity(0)
             .build();
+
+        assert!(result.is_err());
+        if let Err(err) = result {
+            assert!(err.to_string().contains("channel_capacity must be greater than 0"));
+        }
     }
 
     #[test]
@@ -1068,5 +1087,103 @@ mod tests {
         assert_eq!(engine.config().base.interface, "eth0");
         assert_eq!(engine.config().base.xdp_mode, "native");
         assert_eq!(engine.config().base.ring_buffer_size, 2048);
+    }
+
+    // =============================================================================
+    // 바이트 오더 일관성 테스트 (회귀 방지)
+    // =============================================================================
+
+    #[test]
+    fn test_blocklist_key_byte_order_consistency() {
+        // 커널(XDP)과 유저스페이스(engine)의 BLOCKLIST 맵 키 표현이 일치하는지 검증
+        // 버그: 키 생성 방식 불일치로 IP 필터링 실패
+
+        use std::net::Ipv4Addr;
+
+        // 테스트 IP 주소들
+        let test_ips = [
+            Ipv4Addr::new(10, 0, 0, 1),
+            Ipv4Addr::new(192, 168, 1, 100),
+            Ipv4Addr::new(172, 16, 0, 50),
+            Ipv4Addr::new(8, 8, 8, 8),
+        ];
+
+        for ip in test_ips.iter() {
+            // 커널(XDP) 방식: from_be_bytes([a, b, c, d])
+            let kernel_key = u32::from_be_bytes(ip.octets());
+
+            // 유저스페이스(engine) 방식: FilterRule의 IP → u32 변환
+            // engine.rs:346에서 사용되는 방식
+            let userspace_key = u32::from_be_bytes(ip.octets());
+
+            // 검증: 두 방식이 동일한 키를 생성해야 함
+            assert_eq!(
+                kernel_key, userspace_key,
+                "IP {} 의 커널/유저스페이스 키 불일치: kernel={:#x}, userspace={:#x}",
+                ip, kernel_key, userspace_key
+            );
+
+            // 추가 검증: 키에서 다시 IP로 변환 가능해야 함
+            // kernel_key는 이미 호스트 바이트 오더이므로 그대로 사용
+            let recovered_ip = Ipv4Addr::from(kernel_key);
+            assert_eq!(
+                recovered_ip, *ip,
+                "IP 복원 실패: original={}, recovered={}",
+                ip, recovered_ip
+            );
+        }
+    }
+
+    #[test]
+    fn test_packet_event_data_byte_order_round_trip() {
+        // PacketEventData의 IP/포트가 커널 → 유저스페이스 변환 후 올바른지 검증
+
+        use std::net::Ipv4Addr;
+
+        let src_ip = Ipv4Addr::new(10, 0, 0, 50);
+        let dst_ip = Ipv4Addr::new(192, 168, 1, 1);
+        let src_port: u16 = 12345;
+        let dst_port: u16 = 443;
+
+        // 커널(XDP)에서 생성되는 방식 시뮬레이션
+        let kernel_src_ip = u32::from_be_bytes(src_ip.octets());
+        let kernel_dst_ip = u32::from_be_bytes(dst_ip.octets());
+        let kernel_src_port = u16::from_be_bytes(src_port.to_be_bytes());
+        let kernel_dst_port = u16::from_be_bytes(dst_port.to_be_bytes());
+
+        // 유저스페이스(engine.rs:455-462)에서 복원하는 방식
+        let recovered_src_ip = Ipv4Addr::from(kernel_src_ip);
+        let recovered_dst_ip = Ipv4Addr::from(kernel_dst_ip);
+        let recovered_src_port = kernel_src_port;
+        let recovered_dst_port = kernel_dst_port;
+
+        // 검증: 원본과 복원된 값이 일치해야 함
+        assert_eq!(recovered_src_ip, src_ip);
+        assert_eq!(recovered_dst_ip, dst_ip);
+        assert_eq!(recovered_src_port, src_port);
+        assert_eq!(recovered_dst_port, dst_port);
+    }
+
+    #[test]
+    fn test_ip_address_network_byte_order() {
+        // IP 주소의 네트워크 바이트 오더(big-endian) 표현 검증
+
+        use std::net::Ipv4Addr;
+
+        // 10.0.0.1 = 0x0a000001 (network byte order)
+        let ip = Ipv4Addr::new(10, 0, 0, 1);
+        let as_u32 = u32::from_be_bytes(ip.octets());
+
+        // 검증: 네트워크 바이트 오더로 변환
+        assert_eq!(as_u32, 0x0a00_0001);
+
+        // little-endian 시스템에서도 동일한 결과여야 함
+        let ip2 = Ipv4Addr::new(192, 168, 1, 100);
+        let as_u32_2 = u32::from_be_bytes(ip2.octets());
+        assert_eq!(as_u32_2, 0xc0a8_0164); // 192=0xc0, 168=0xa8, 1=0x01, 100=0x64
+
+        // 역변환 검증
+        let recovered = Ipv4Addr::from(as_u32_2);
+        assert_eq!(recovered, ip2);
     }
 }

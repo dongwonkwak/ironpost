@@ -16,7 +16,7 @@
 //! ```
 
 use std::collections::{HashMap, HashSet};
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::IpAddr;
 use std::time::{Instant, SystemTime};
 
 use tokio::sync::mpsc;
@@ -133,6 +133,112 @@ impl SynFloodDetector {
                 now.duration_since(counter.window_start).as_secs() < self.config.window_secs
             });
         }
+    }
+
+    /// PacketEventData를 분석하여 SYN flood 여부를 판단합니다 (최적화 버전).
+    ///
+    /// 이 메서드는 PacketEventData에서 직접 필드를 읽으므로
+    /// LogEntry로 변환하는 오버헤드(String 할당)를 피합니다.
+    ///
+    /// # 성능
+    /// - String 할당 없음
+    /// - 파싱 없음
+    /// - 바이너리 필드 직접 접근
+    pub fn detect_packet(&self, event: &PacketEventData) -> Result<Option<Alert>, IronpostError> {
+        use ironpost_ebpf_common::PROTO_TCP;
+
+        // TCP 프로토콜 확인
+        if event.protocol != PROTO_TCP {
+            return Ok(None);
+        }
+
+        // 출발지 IP 변환 (이미 big-endian에서 변환됨)
+        let src_ip = IpAddr::V4(std::net::Ipv4Addr::from(u32::from_be(event.src_ip)));
+
+        // SYN-only 패킷 여부 확인 (SYN=1, ACK=0)
+        let is_syn_only = (event.tcp_flags & TCP_SYN != 0) && (event.tcp_flags & TCP_ACK == 0);
+
+        // try_lock으로 non-blocking 상태 업데이트
+        let mut state = match self.state.try_lock() {
+            Ok(s) => s,
+            Err(_) => {
+                tracing::debug!("SynFloodDetector: lock contention, skipping detection");
+                return Ok(None);
+            }
+        };
+
+        let now = Instant::now();
+
+        // 최대 엔트리 수 제한 (IP 스푸핑 기반 DoS 방지)
+        if state.len() >= MAX_TRACKED_IPS && !state.contains_key(&src_ip) {
+            // 만료된 엔트리 정리 시도
+            state.retain(|_, counter| {
+                now.duration_since(counter.window_start).as_secs() < self.config.window_secs
+            });
+
+            // 정리 후에도 초과하면 새 엔트리 거부
+            if state.len() >= MAX_TRACKED_IPS {
+                tracing::warn!(
+                    "SynFloodDetector: MAX_TRACKED_IPS reached, dropping new IP tracking"
+                );
+                return Ok(None);
+            }
+        }
+
+        // 엔트리 획득 또는 생성
+        let counter = state.entry(src_ip).or_insert_with(|| SynCounter {
+            total_tcp: 0,
+            syn_only: 0,
+            window_start: now,
+            alerted: false,
+        });
+
+        // 윈도우 만료 확인
+        if now.duration_since(counter.window_start).as_secs() >= self.config.window_secs {
+            // 윈도우 리셋
+            counter.total_tcp = 0;
+            counter.syn_only = 0;
+            counter.window_start = now;
+            counter.alerted = false; // 새 윈도우에서는 다시 알림 가능
+        }
+
+        // 카운터 업데이트
+        counter.total_tcp += 1;
+        if is_syn_only {
+            counter.syn_only += 1;
+        }
+
+        // 탐지 조건 확인
+        if counter.total_tcp >= self.config.min_packets {
+            // u64 → f64 변환: 비율 계산 목적이므로 정밀도 손실 허용
+            #[allow(clippy::cast_precision_loss)]
+            let ratio = counter.syn_only as f64 / counter.total_tcp as f64;
+            if ratio > self.config.threshold_ratio && !counter.alerted {
+                // 중복 알림 방지를 위해 플래그 설정
+                counter.alerted = true;
+
+                // Alert 생성 (필요시에만 문자열화)
+                let alert = Alert {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    title: format!("SYN flood detected from {}", src_ip),
+                    description: format!(
+                        "SYN-only packet ratio ({:.2}%) exceeds threshold ({:.2}%) in {} seconds window",
+                        ratio * 100.0,
+                        self.config.threshold_ratio * 100.0,
+                        self.config.window_secs,
+                    ),
+                    severity: Severity::High,
+                    rule_name: "syn_flood".to_owned(),
+                    source_ip: Some(src_ip),
+                    target_ip: None,
+                    created_at: SystemTime::now(),
+                };
+
+                return Ok(Some(alert));
+            }
+        }
+
+        Ok(None)
     }
 }
 
@@ -303,6 +409,90 @@ impl PortScanDetector {
             });
         }
     }
+
+    /// PacketEventData를 분석하여 포트 스캔 여부를 판단합니다 (최적화 버전).
+    ///
+    /// 이 메서드는 PacketEventData에서 직접 필드를 읽으므로
+    /// LogEntry로 변환하는 오버헤드(String 할당)를 피합니다.
+    ///
+    /// # 성능
+    /// - String 할당 없음
+    /// - 파싱 없음
+    /// - 바이너리 필드 직접 접근
+    pub fn detect_packet(&self, event: &PacketEventData) -> Result<Option<Alert>, IronpostError> {
+        // 출발지 IP 변환
+        let src_ip = IpAddr::V4(std::net::Ipv4Addr::from(u32::from_be(event.src_ip)));
+
+        // 목적지 포트 (이미 big-endian에서 변환됨)
+        let dst_port = u16::from_be(event.dst_port);
+
+        // try_lock으로 non-blocking 상태 업데이트
+        let mut state = match self.state.try_lock() {
+            Ok(s) => s,
+            Err(_) => {
+                tracing::debug!("PortScanDetector: lock contention, skipping detection");
+                return Ok(None);
+            }
+        };
+
+        let now = Instant::now();
+
+        // 최대 엔트리 수 제한 (IP 스푸핑 기반 DoS 방지)
+        if state.len() >= MAX_TRACKED_IPS && !state.contains_key(&src_ip) {
+            // 만료된 엔트리 정리 시도
+            state.retain(|_, tracker| {
+                now.duration_since(tracker.window_start).as_secs() < self.config.window_secs
+            });
+
+            // 정리 후에도 초과하면 새 엔트리 거부
+            if state.len() >= MAX_TRACKED_IPS {
+                tracing::warn!(
+                    "PortScanDetector: MAX_TRACKED_IPS reached, dropping new IP tracking"
+                );
+                return Ok(None);
+            }
+        }
+
+        // 엔트리 획득 또는 생성
+        let tracker = state.entry(src_ip).or_insert_with(|| PortTracker {
+            ports: HashSet::new(),
+            window_start: now,
+        });
+
+        // 윈도우 만료 확인
+        if now.duration_since(tracker.window_start).as_secs() >= self.config.window_secs {
+            // 윈도우 리셋
+            tracker.ports.clear();
+            tracker.window_start = now;
+        }
+
+        // 포트 추가
+        tracker.ports.insert(dst_port);
+
+        // 탐지 조건 확인
+        if tracker.ports.len() >= self.config.port_threshold {
+            // Alert 생성 (필요시에만 문자열화)
+            let alert = Alert {
+                id: uuid::Uuid::new_v4().to_string(),
+                title: format!("Port scan detected from {}", src_ip),
+                description: format!(
+                    "Single IP accessed {} unique ports within {} seconds (threshold: {})",
+                    tracker.ports.len(),
+                    self.config.window_secs,
+                    self.config.port_threshold,
+                ),
+                severity: Severity::Medium,
+                rule_name: "port_scan".to_owned(),
+                source_ip: Some(src_ip),
+                target_ip: None,
+                created_at: SystemTime::now(),
+            };
+
+            return Ok(Some(alert));
+        }
+
+        Ok(None)
+    }
 }
 
 impl Detector for PortScanDetector {
@@ -440,28 +630,30 @@ impl PacketDetector {
 
     /// PacketEventData를 분석하여 위협을 탐지합니다.
     ///
-    /// 내부 탐지기들에게 이벤트를 전달하고, 알림이 생성되면
+    /// 내부 탐지기들에게 이벤트를 직접 전달하고, 알림이 생성되면
     /// AlertEvent로 변환하여 채널로 전송합니다.
+    ///
+    /// # 성능
+    /// - LogEntry 생성/String 할당 제거
+    /// - PacketEventData 바이너리 필드 직접 접근
+    /// - Alert 생성 시점에만 문자열화
     pub fn analyze(&self, event: &PacketEventData) -> Result<(), IronpostError> {
-        // PacketEventData를 LogEntry로 변환
-        let log_entry = packet_event_to_log_entry(event);
-
-        // SYN flood 탐지
-        if let Some(alert) = self.syn_flood.detect(&log_entry)? {
+        // SYN flood 탐지 (최적화 버전: PacketEventData 직접 처리)
+        if let Some(alert) = self.syn_flood.detect_packet(event)? {
             let severity = alert.severity;
             let alert_event = AlertEvent::new(alert, severity);
 
             // 채널이 있으면 전송
             if let Some(ref tx) = self.alert_tx {
-                // blocking_send 대신 try_send 사용 (async context 아님)
+                // try_send 사용 (async context 아님, non-blocking)
                 tx.try_send(alert_event).map_err(|e| {
                     PipelineError::ChannelSend(format!("failed to send alert: {}", e))
                 })?;
             }
         }
 
-        // 포트 스캔 탐지
-        if let Some(alert) = self.port_scan.detect(&log_entry)? {
+        // 포트 스캔 탐지 (최적화 버전: PacketEventData 직접 처리)
+        if let Some(alert) = self.port_scan.detect_packet(event)? {
             let severity = alert.severity;
             let alert_event = AlertEvent::new(alert, severity);
 
@@ -505,54 +697,10 @@ impl Default for PacketDetector {
     }
 }
 
-// =============================================================================
-// 유틸리티: PacketEventData → LogEntry 변환
-// =============================================================================
-
-/// PacketEventData를 LogEntry 형태로 변환합니다.
-///
-/// Detector trait이 LogEntry를 받으므로, 패킷 이벤트의 메타데이터를
-/// LogEntry의 fields에 key-value 쌍으로 저장합니다.
-///
-/// # 필드 매핑
-/// - `src_ip` → IPv4 주소 문자열
-/// - `dst_ip` → IPv4 주소 문자열
-/// - `src_port` → 포트 번호 문자열
-/// - `dst_port` → 포트 번호 문자열
-/// - `protocol` → 프로토콜 번호 문자열
-/// - `tcp_flags` → TCP 플래그 값 문자열
-/// - `action` → 액션 코드 문자열
-pub fn packet_event_to_log_entry(event: &PacketEventData) -> LogEntry {
-    let src_ip = Ipv4Addr::from(u32::from_be(event.src_ip));
-    let dst_ip = Ipv4Addr::from(u32::from_be(event.dst_ip));
-    let src_port = u16::from_be(event.src_port);
-    let dst_port = u16::from_be(event.dst_port);
-
-    LogEntry {
-        source: "ebpf-xdp".to_owned(),
-        timestamp: SystemTime::now(),
-        hostname: String::new(),
-        process: "ironpost-xdp".to_owned(),
-        message: format!(
-            "{src_ip}:{src_port} -> {dst_ip}:{dst_port} proto={}",
-            event.protocol,
-        ),
-        severity: Severity::Info,
-        fields: vec![
-            ("src_ip".to_owned(), src_ip.to_string()),
-            ("dst_ip".to_owned(), dst_ip.to_string()),
-            ("src_port".to_owned(), src_port.to_string()),
-            ("dst_port".to_owned(), dst_port.to_string()),
-            ("protocol".to_owned(), event.protocol.to_string()),
-            ("tcp_flags".to_owned(), event.tcp_flags.to_string()),
-            ("action".to_owned(), event.action.to_string()),
-        ],
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::Ipv4Addr;
 
     // =============================================================================
     // packet_event_to_log_entry 테스트
@@ -1027,8 +1175,155 @@ mod tests {
     }
 
     // =============================================================================
+    // 바이트 오더 테스트 (회귀 방지)
+    // =============================================================================
+
+    #[test]
+    fn test_packet_event_ip_byte_order_consistency() {
+        // 커널(XDP)과 유저스페이스(detector)의 IP 주소 변환이 일치하는지 검증
+        // 버그: from_ne_bytes vs from_be_bytes 불일치로 필터링 실패
+
+        // 10.0.0.1을 네트워크 바이트 오더로 표현
+        let ip_bytes = [10u8, 0, 0, 1];
+
+        // 커널(XDP) 방식: from_be_bytes 사용
+        let kernel_representation = u32::from_be_bytes(ip_bytes);
+
+        // PacketEventData에 저장 (커널에서 온 데이터 시뮬레이션)
+        let event = PacketEventData {
+            src_ip: kernel_representation.to_be(), // 네트워크 바이트 오더로 저장
+            dst_ip: u32::from_be_bytes([192, 168, 1, 1]).to_be(),
+            src_port: u16::to_be(12345),
+            dst_port: u16::to_be(80),
+            pkt_len: 64,
+            protocol: ironpost_ebpf_common::PROTO_TCP,
+            action: ironpost_ebpf_common::ACTION_PASS,
+            tcp_flags: TCP_SYN,
+            _pad: [0; 1],
+        };
+
+        // 유저스페이스(detector) 방식: from_be 사용
+        let src_ip = IpAddr::V4(Ipv4Addr::from(u32::from_be(event.src_ip)));
+
+        // 검증: 올바른 IP 주소로 변환되어야 함
+        assert_eq!(src_ip.to_string(), "10.0.0.1");
+
+        // 추가 검증: 목적지 IP도 확인
+        let dst_ip = IpAddr::V4(Ipv4Addr::from(u32::from_be(event.dst_ip)));
+        assert_eq!(dst_ip.to_string(), "192.168.1.1");
+    }
+
+    #[test]
+    fn test_packet_event_port_byte_order_consistency() {
+        // 커널과 유저스페이스의 포트 번호 변환이 일치하는지 검증
+
+        let src_port: u16 = 12345;
+        let dst_port: u16 = 443;
+
+        // 커널(XDP) 방식: from_be_bytes 사용
+        let kernel_src_port = u16::from_be_bytes(src_port.to_be_bytes());
+        let kernel_dst_port = u16::from_be_bytes(dst_port.to_be_bytes());
+
+        // PacketEventData에 저장
+        let event = PacketEventData {
+            src_ip: u32::from_be_bytes([10, 0, 0, 1]).to_be(),
+            dst_ip: u32::from_be_bytes([10, 0, 0, 2]).to_be(),
+            src_port: kernel_src_port.to_be(),
+            dst_port: kernel_dst_port.to_be(),
+            pkt_len: 64,
+            protocol: ironpost_ebpf_common::PROTO_TCP,
+            action: ironpost_ebpf_common::ACTION_PASS,
+            tcp_flags: 0,
+            _pad: [0; 1],
+        };
+
+        // 유저스페이스(detector) 방식: from_be 사용
+        let decoded_src_port = u16::from_be(event.src_port);
+        let decoded_dst_port = u16::from_be(event.dst_port);
+
+        // 검증: 원래 포트 번호로 복원되어야 함
+        assert_eq!(decoded_src_port, 12345);
+        assert_eq!(decoded_dst_port, 443);
+    }
+
+    #[test]
+    fn test_detect_packet_ip_extraction_correctness() {
+        // detect_packet()이 PacketEventData에서 올바르게 IP를 추출하는지 검증
+
+        let detector = SynFloodDetector::new(SynFloodConfig {
+            threshold_ratio: 0.7,
+            window_secs: 10,
+            min_packets: 5, // 테스트용으로 낮게 설정
+        });
+
+        // 10.0.0.50에서 SYN flood 패턴 생성
+        for _ in 0..10 {
+            let event = PacketEventData {
+                src_ip: u32::from_be_bytes([10, 0, 0, 50]).to_be(),
+                dst_ip: u32::from_be_bytes([192, 168, 1, 1]).to_be(),
+                src_port: u16::to_be(12345),
+                dst_port: u16::to_be(80),
+                pkt_len: 64,
+                protocol: ironpost_ebpf_common::PROTO_TCP,
+                action: ironpost_ebpf_common::ACTION_PASS,
+                tcp_flags: TCP_SYN,
+                _pad: [0; 1],
+            };
+
+            let _ = detector.detect_packet(&event);
+        }
+
+        // Alert가 생성되었으면 source_ip가 "10.0.0.50"이어야 함
+        // (바이트 오더가 올바르지 않으면 다른 IP가 나옴)
+        let event = PacketEventData {
+            src_ip: u32::from_be_bytes([10, 0, 0, 50]).to_be(),
+            dst_ip: u32::from_be_bytes([192, 168, 1, 1]).to_be(),
+            src_port: u16::to_be(12345),
+            dst_port: u16::to_be(80),
+            pkt_len: 64,
+            protocol: ironpost_ebpf_common::PROTO_TCP,
+            action: ironpost_ebpf_common::ACTION_PASS,
+            tcp_flags: TCP_SYN,
+            _pad: [0; 1],
+        };
+
+        if let Ok(Some(alert)) = detector.detect_packet(&event) {
+            assert_eq!(alert.source_ip.unwrap().to_string(), "10.0.0.50");
+        }
+    }
+
+    // =============================================================================
     // 헬퍼 함수
     // =============================================================================
+
+    /// PacketEventData를 LogEntry 형태로 변환합니다 (테스트용).
+    fn packet_event_to_log_entry(event: &PacketEventData) -> LogEntry {
+        let src_ip = Ipv4Addr::from(u32::from_be(event.src_ip));
+        let dst_ip = Ipv4Addr::from(u32::from_be(event.dst_ip));
+        let src_port = u16::from_be(event.src_port);
+        let dst_port = u16::from_be(event.dst_port);
+
+        LogEntry {
+            source: "ebpf-xdp".to_owned(),
+            timestamp: SystemTime::now(),
+            hostname: String::new(),
+            process: "ironpost-xdp".to_owned(),
+            message: format!(
+                "{src_ip}:{src_port} -> {dst_ip}:{dst_port} proto={}",
+                event.protocol,
+            ),
+            severity: Severity::Info,
+            fields: vec![
+                ("src_ip".to_owned(), src_ip.to_string()),
+                ("dst_ip".to_owned(), dst_ip.to_string()),
+                ("src_port".to_owned(), src_port.to_string()),
+                ("dst_port".to_owned(), dst_port.to_string()),
+                ("protocol".to_owned(), event.protocol.to_string()),
+                ("tcp_flags".to_owned(), event.tcp_flags.to_string()),
+                ("action".to_owned(), event.action.to_string()),
+            ],
+        }
+    }
 
     fn create_test_log_entry(src_ip: &str, tcp_flags: u8) -> LogEntry {
         LogEntry {

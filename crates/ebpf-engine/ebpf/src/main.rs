@@ -108,9 +108,9 @@ fn try_ironpost_xdp(ctx: XdpContext) -> Result<u32, u32> {
     // 2) IPv4 헤더 파싱
     let ipv4 = ptr_at::<Ipv4Hdr>(&ctx, EthHdr::LEN).ok_or(0u32)?;
     // SAFETY: ptr_at 바운드 체크 통과
-    // network-types는 IP 주소를 [u8; 4]로 저장 → u32로 변환 (네트워크 바이트 오더 유지)
-    let src_ip = unsafe { u32::from_ne_bytes((*ipv4).src_addr) };
-    let dst_ip = unsafe { u32::from_ne_bytes((*ipv4).dst_addr) };
+    // IPv4 주소는 항상 네트워크 바이트 오더(big-endian)로 저장됨
+    let src_ip = unsafe { u32::from_be_bytes((*ipv4).src_addr) };
+    let dst_ip = unsafe { u32::from_be_bytes((*ipv4).dst_addr) };
     let proto = unsafe { (*ipv4).proto };
     let ihl = (unsafe { (*ipv4).vihl } & 0x0F) as usize;
     let ip_hdr_len = ihl * 4;
