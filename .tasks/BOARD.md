@@ -16,7 +16,7 @@
 - 없음
 
 ## 현재 진행중
-- 없음 (Phase 3 완료)
+- 없음 (Phase 3 완료, 문서화 완료)
 
 ## Phase 3 설계 완료 항목
 - [x] `.knowledge/log-pipeline-design.md` -- 전체 설계 문서
