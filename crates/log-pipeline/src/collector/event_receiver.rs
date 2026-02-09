@@ -210,14 +210,23 @@ mod tests {
 
     #[tokio::test]
     async fn receiver_stops_when_channel_closed() {
-        let (_packet_tx, packet_rx) = mpsc::channel(10);
+        let packet_rx = {
+            let (packet_tx, packet_rx) = mpsc::channel(10);
+            drop(packet_tx); // 명시적으로 송신 측 닫기
+            packet_rx
+        };
         let (tx, _rx) = mpsc::channel(10);
 
         let mut receiver = EventReceiver::new(packet_rx, tx);
 
         // 송신 측 채널이 이미 닫혔으므로 즉시 종료되어야 함
-        let result = receiver.run().await;
-        assert!(result.is_ok());
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            receiver.run()
+        ).await;
+
+        assert!(result.is_ok(), "Test timed out");
+        assert!(result.unwrap().is_ok());
         assert_eq!(*receiver.status(), CollectorStatus::Stopped);
     }
 
