@@ -91,7 +91,8 @@ pub fn ironpost_xdp(ctx: XdpContext) -> u32 {
 fn try_ironpost_xdp(ctx: XdpContext) -> Result<u32, u32> {
     let data = ctx.data();
     let data_end = ctx.data_end();
-    let pkt_len: u16 = (data_end - data) as u16;
+    // 점보 프레임 지원을 위해 u32로 저장
+    let pkt_len: u32 = (data_end - data) as u32;
 
     // 1) Ethernet 헤더 파싱
     let eth = ptr_at::<EthHdr>(&ctx, 0).ok_or(0u32)?;
@@ -197,7 +198,7 @@ fn try_ironpost_xdp(ctx: XdpContext) -> Result<u32, u32> {
             protocol: proto as u8,
             action,
             tcp_flags,
-            _pad: [0; 3],
+            _pad: [0; 1],
         };
         emit_event(&event);
     }
@@ -236,7 +237,7 @@ fn ptr_at<T>(ctx: &XdpContext, offset: usize) -> Option<*const T> {
 ///
 /// CPU별 독립 카운터이므로 락 없이 안전하게 업데이트됩니다.
 #[inline(always)]
-fn update_stats(idx: u32, pkt_len: u16, action: u8) {
+fn update_stats(idx: u32, pkt_len: u32, action: u8) {
     // SAFETY: PerCpuArray 맵 접근 후 null 체크 수행.
     // get_ptr_mut는 현재 CPU의 엔트리에 대한 가변 포인터를 반환합니다.
     unsafe {

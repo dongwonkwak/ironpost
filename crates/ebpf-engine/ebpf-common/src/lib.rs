@@ -136,18 +136,18 @@ unsafe impl aya::Pod for ProtoStats {}
 /// 단일 링 버퍼를 모든 CPU가 공유하여 메모리 효율이 높고,
 /// 커널 5.8+에서 지원되는 최신 메커니즘입니다.
 ///
-/// # 메모리 레이아웃 (20 바이트, 4바이트 정렬)
+/// # 메모리 레이아웃 (24 바이트, 4바이트 정렬)
 /// ```text
 /// offset  field       size
 /// 0       src_ip      4
 /// 4       dst_ip      4
 /// 8       src_port    2
 /// 10      dst_port    2
-/// 12      pkt_len     2
-/// 14      protocol    1
-/// 15      action      1
-/// 16      tcp_flags   1
-/// 17      _pad        3
+/// 12      pkt_len     4
+/// 16      protocol    1
+/// 17      action      1
+/// 18      tcp_flags   1
+/// 19      _pad        1
 /// ```
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -161,8 +161,8 @@ pub struct PacketEventData {
     pub src_port: u16,
     /// 목적지 포트 (네트워크 바이트 오더)
     pub dst_port: u16,
-    /// 패킷 길이 (바이트)
-    pub pkt_len: u16,
+    /// 패킷 길이 (바이트) - 점보 프레임 지원을 위해 u32 사용
+    pub pkt_len: u32,
     /// IP 프로토콜 번호 (PROTO_TCP, PROTO_UDP, PROTO_ICMP)
     pub protocol: u8,
     /// 적용된 액션 (ACTION_PASS, ACTION_DROP, ACTION_MONITOR)
@@ -170,7 +170,7 @@ pub struct PacketEventData {
     /// TCP 플래그 (TCP 패킷인 경우, 0이면 비-TCP)
     pub tcp_flags: u8,
     /// 4바이트 정렬을 위한 패딩
-    pub _pad: [u8; 3],
+    pub _pad: [u8; 1],
 }
 
 // SAFETY: PacketEventData는 #[repr(C)]이며 모든 필드가 Plain Old Data입니다.
@@ -202,7 +202,7 @@ impl PacketEventData {
             protocol: 0,
             action: 0,
             tcp_flags: 0,
-            _pad: [0; 3],
+            _pad: [0; 1],
         }
     }
 }

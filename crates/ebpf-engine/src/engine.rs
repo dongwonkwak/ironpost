@@ -308,9 +308,35 @@ impl EbpfEngine {
                     DetectionError::EbpfMap(format!("failed to get blocklist map: {}", e))
                 })?;
 
-            // 맵 초기화 (기존 엔트리 삭제)
-            // aya HashMap은 clear() 메서드가 없으므로, 모든 키를 순회하며 삭제해야 합니다.
-            // 여기서는 단순히 새 룰만 추가하고, 삭제는 스킵합니다 (프로덕션에서는 개선 필요).
+            // 현재 룰의 IP 집합 수집
+            let current_ips: std::collections::HashSet<u32> = self
+                .config
+                .ip_rules()
+                .filter_map(|r| {
+                    if let Some(IpAddr::V4(ipv4)) = r.src_ip {
+                        Some(u32::from_be_bytes(ipv4.octets()))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            // 기존 맵의 키를 수집하여 삭제 대상 확인
+            let existing_keys: Vec<u32> = map
+                .keys()
+                .filter_map(|k| k.ok())
+                .collect();
+
+            // 현재 룰에 없는 키 삭제
+            for key in existing_keys {
+                if !current_ips.contains(&key) {
+                    if let Err(e) = map.remove(&key) {
+                        tracing::warn!(ip = u32::from_be(key), error = %e, "failed to remove stale blocklist entry");
+                    } else {
+                        tracing::debug!(ip = u32::from_be(key), "removed stale blocklist entry");
+                    }
+                }
+            }
 
             // 모든 IP 룰을 맵에 추가
             for rule in self.config.ip_rules() {
@@ -414,9 +440,10 @@ impl EbpfEngine {
                             }
 
                             // SAFETY: PacketEventData는 #[repr(C)]이며 크기 검증을 완료했습니다.
-                            // 메모리 정렬도 보장되므로 안전하게 캐스팅 가능합니다.
+                            // RingBuf에서 반환된 데이터의 정렬이 보장되지 않을 수 있으므로
+                            // read_unaligned를 사용하여 UB를 방지합니다.
                             let event_data =
-                                unsafe { std::ptr::read(data.as_ptr() as *const PacketEventData) };
+                                unsafe { std::ptr::read_unaligned(data.as_ptr() as *const PacketEventData) };
 
                             // PacketInfo로 변환
                             let src_ip = IpAddr::V4(std::net::Ipv4Addr::from(u32::from_be(
@@ -432,7 +459,7 @@ impl EbpfEngine {
                                 src_port: u16::from_be(event_data.src_port),
                                 dst_port: u16::from_be(event_data.dst_port),
                                 protocol: event_data.protocol,
-                                size: event_data.pkt_len as usize,
+                                size: usize::try_from(event_data.pkt_len).unwrap_or(usize::MAX),
                                 timestamp: std::time::SystemTime::now(),
                             };
 
@@ -621,6 +648,15 @@ impl Pipeline for EbpfEngine {
         // 이후 단계에서 실패 시 자동 롤백
         if let Err(e) = self.initialize_post_attach() {
             tracing::error!(error = %e, "failed to initialize engine, rolling back");
+
+            // 이미 스폰된 백그라운드 태스크 정리
+            #[cfg(target_os = "linux")]
+            {
+                for task in self.tasks.drain(..) {
+                    task.abort();
+                }
+            }
+
             // XDP 프로그램 detach (롤백)
             if let Err(detach_err) = self.detach() {
                 tracing::error!(
@@ -961,7 +997,7 @@ mod tests {
             let start_result = engine.start().await;
             if start_result.is_err() {
                 // eBPF 바이너리가 없거나 권한 부족 시 스킵
-                eprintln!("Skipping: {:?}", start_result.unwrap_err());
+                tracing::warn!(error = ?start_result.unwrap_err(), "skipping test due to error");
                 return;
             }
 

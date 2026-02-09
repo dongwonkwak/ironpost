@@ -193,9 +193,14 @@ impl TrafficStats {
         let delta_packets = current.packets.saturating_sub(prev.packets);
         let delta_bytes = current.bytes.saturating_sub(prev.bytes);
 
-        metrics.pps = delta_packets as f64 / elapsed_secs;
-        // bytes → bits: *8
-        metrics.bps = (delta_bytes as f64 * 8.0) / elapsed_secs;
+        // u64 → f64 변환: 1초 간격 폴링이므로 delta 값은 실용적으로 2^53 미만
+        // 정밀도 손실이 발생할 수 있지만 비율 계산에서는 문제없음
+        #[allow(clippy::cast_precision_loss)]
+        {
+            metrics.pps = delta_packets as f64 / elapsed_secs;
+            // bytes → bits: *8
+            metrics.bps = (delta_bytes as f64 * 8.0) / elapsed_secs;
+        }
     }
 
     /// 누적값만 설정합니다 (rate는 0).

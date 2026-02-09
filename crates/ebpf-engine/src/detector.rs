@@ -32,6 +32,9 @@ use ironpost_ebpf_common::{PacketEventData, TCP_ACK, TCP_SYN};
 // 탐지 설정
 // =============================================================================
 
+/// IP 추적 최대 엔트리 수 (DoS 방지)
+const MAX_TRACKED_IPS: usize = 100_000;
+
 /// SYN flood 탐지 설정
 #[derive(Debug, Clone)]
 pub struct SynFloodConfig {
@@ -83,6 +86,8 @@ struct SynCounter {
     syn_only: u64,
     /// 윈도우 시작 시각
     window_start: Instant,
+    /// 이미 알림을 생성했는지 여부 (중복 알림 방지)
+    alerted: bool,
 }
 
 /// IP별 포트 접근 추적 상태
@@ -185,16 +190,34 @@ impl Detector for SynFloodDetector {
         // try_lock으로 non-blocking 상태 업데이트
         let mut state = match self.state.try_lock() {
             Ok(s) => s,
-            Err(_) => return Ok(None), // 락 획득 실패 시 스킵
+            Err(_) => {
+                tracing::debug!("SynFloodDetector: lock contention, skipping detection");
+                return Ok(None);
+            }
         };
 
         let now = Instant::now();
+
+        // 최대 엔트리 수 제한 (IP 스푸핑 기반 DoS 방지)
+        if state.len() >= MAX_TRACKED_IPS && !state.contains_key(&src_ip) {
+            // 만료된 엔트리 정리 시도
+            state.retain(|_, counter| {
+                now.duration_since(counter.window_start).as_secs() < self.config.window_secs
+            });
+
+            // 정리 후에도 초과하면 새 엔트리 거부
+            if state.len() >= MAX_TRACKED_IPS {
+                tracing::warn!("SynFloodDetector: MAX_TRACKED_IPS reached, dropping new IP tracking");
+                return Ok(None);
+            }
+        }
 
         // 엔트리 획득 또는 생성
         let counter = state.entry(src_ip).or_insert_with(|| SynCounter {
             total_tcp: 0,
             syn_only: 0,
             window_start: now,
+            alerted: false,
         });
 
         // 윈도우 만료 확인
@@ -203,6 +226,7 @@ impl Detector for SynFloodDetector {
             counter.total_tcp = 0;
             counter.syn_only = 0;
             counter.window_start = now;
+            counter.alerted = false; // 새 윈도우에서는 다시 알림 가능
         }
 
         // 카운터 업데이트
@@ -213,8 +237,13 @@ impl Detector for SynFloodDetector {
 
         // 탐지 조건 확인
         if counter.total_tcp >= self.config.min_packets {
+            // u64 → f64 변환: 비율 계산 목적이므로 정밀도 손실 허용
+            #[allow(clippy::cast_precision_loss)]
             let ratio = counter.syn_only as f64 / counter.total_tcp as f64;
-            if ratio > self.config.threshold_ratio {
+            if ratio > self.config.threshold_ratio && !counter.alerted {
+                // 중복 알림 방지를 위해 플래그 설정
+                counter.alerted = true;
+
                 // Alert 생성
                 let alert = Alert {
                     id: uuid::Uuid::new_v4().to_string(),
@@ -308,10 +337,27 @@ impl Detector for PortScanDetector {
         // try_lock으로 non-blocking 상태 업데이트
         let mut state = match self.state.try_lock() {
             Ok(s) => s,
-            Err(_) => return Ok(None), // 락 획득 실패 시 스킵
+            Err(_) => {
+                tracing::debug!("PortScanDetector: lock contention, skipping detection");
+                return Ok(None);
+            }
         };
 
         let now = Instant::now();
+
+        // 최대 엔트리 수 제한 (IP 스푸핑 기반 DoS 방지)
+        if state.len() >= MAX_TRACKED_IPS && !state.contains_key(&src_ip) {
+            // 만료된 엔트리 정리 시도
+            state.retain(|_, tracker| {
+                now.duration_since(tracker.window_start).as_secs() < self.config.window_secs
+            });
+
+            // 정리 후에도 초과하면 새 엔트리 거부
+            if state.len() >= MAX_TRACKED_IPS {
+                tracing::warn!("PortScanDetector: MAX_TRACKED_IPS reached, dropping new IP tracking");
+                return Ok(None);
+            }
+        }
 
         // 엔트리 획득 또는 생성
         let tracker = state.entry(src_ip).or_insert_with(|| PortTracker {
@@ -523,7 +569,7 @@ mod tests {
             protocol: ironpost_ebpf_common::PROTO_TCP,
             action: ironpost_ebpf_common::ACTION_PASS,
             tcp_flags: TCP_SYN,
-            _pad: [0; 3],
+            _pad: [0; 1],
         };
 
         let log_entry = packet_event_to_log_entry(&event);
@@ -558,7 +604,7 @@ mod tests {
             protocol: ironpost_ebpf_common::PROTO_UDP,
             action: ironpost_ebpf_common::ACTION_PASS,
             tcp_flags: 0,
-            _pad: [0; 3],
+            _pad: [0; 1],
         };
 
         let log_entry = packet_event_to_log_entry(&event);
@@ -896,7 +942,7 @@ mod tests {
                 protocol: ironpost_ebpf_common::PROTO_TCP,
                 action: ironpost_ebpf_common::ACTION_PASS,
                 tcp_flags: TCP_SYN,
-                _pad: [0; 3],
+                _pad: [0; 1],
             };
 
             detector.analyze(&event).unwrap();
@@ -937,7 +983,7 @@ mod tests {
                 protocol: ironpost_ebpf_common::PROTO_TCP,
                 action: ironpost_ebpf_common::ACTION_PASS,
                 tcp_flags: TCP_SYN,
-                _pad: [0; 3],
+                _pad: [0; 1],
             };
 
             detector.analyze(&event).unwrap();

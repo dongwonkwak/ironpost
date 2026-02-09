@@ -26,6 +26,19 @@ use serde::{Deserialize, Serialize};
 use ironpost_core::config::EbpfConfig;
 use ironpost_core::error::IronpostError;
 
+// =============================================================================
+// 입력 검증 상수
+// =============================================================================
+
+/// 룰 파일 최대 크기 (10MB)
+const MAX_RULES_FILE_SIZE: u64 = 10 * 1024 * 1024;
+/// 최대 룰 개수
+const MAX_RULES_COUNT: usize = 10_000;
+/// 룰 ID 최대 길이
+const MAX_RULE_ID_LEN: usize = 256;
+/// 룰 설명 최대 길이
+const MAX_DESCRIPTION_LEN: usize = 1024;
+
 /// 필터링 룰 액션
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -97,30 +110,110 @@ impl EngineConfig {
     /// TOML 파일에서 필터링 룰을 로드합니다.
     ///
     /// 파일이 존재하지 않으면 빈 Vec을 반환합니다.
+    ///
+    /// # 입력 검증
+    /// - 파일 크기: 최대 10MB
+    /// - 룰 개수: 최대 10,000개
+    /// - 룰 ID: 비어있지 않고, 중복되지 않으며, 최대 256자
+    /// - 설명: 최대 1024자
     pub async fn load_rules(path: impl AsRef<Path>) -> Result<Vec<FilterRule>, IronpostError> {
         use ironpost_core::error::ConfigError;
+        use std::collections::HashSet;
 
         let path = path.as_ref();
 
         // 파일이 존재하지 않으면 빈 Vec 반환
-        match tokio::fs::read_to_string(path).await {
-            Ok(content) => {
-                // TOML 파싱
-                let rules_file: RulesFile =
-                    toml::from_str(&content).map_err(|e| ConfigError::ParseFailed {
-                        reason: format!("failed to parse rules file: {}", e),
-                    })?;
-                Ok(rules_file.rules)
+        match tokio::fs::metadata(path).await {
+            Ok(metadata) => {
+                // 파일 크기 검증
+                if metadata.len() > MAX_RULES_FILE_SIZE {
+                    return Err(ConfigError::ParseFailed {
+                        reason: format!(
+                            "rules file too large: {} bytes (max: {} bytes)",
+                            metadata.len(),
+                            MAX_RULES_FILE_SIZE
+                        ),
+                    }
+                    .into());
+                }
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 // 파일이 없으면 빈 벡터 반환
-                Ok(Vec::new())
+                return Ok(Vec::new());
             }
             Err(e) => {
                 // 다른 I/O 에러는 전파
-                Err(e.into())
+                return Err(e.into());
             }
         }
+
+        let content = tokio::fs::read_to_string(path).await?;
+
+        // TOML 파싱
+        let rules_file: RulesFile =
+            toml::from_str(&content).map_err(|e| ConfigError::ParseFailed {
+                reason: format!("failed to parse rules file: {}", e),
+            })?;
+
+        // 룰 개수 검증
+        if rules_file.rules.len() > MAX_RULES_COUNT {
+            return Err(ConfigError::ParseFailed {
+                reason: format!(
+                    "too many rules: {} (max: {})",
+                    rules_file.rules.len(),
+                    MAX_RULES_COUNT
+                ),
+            }
+            .into());
+        }
+
+        // 룰 내용 검증
+        let mut seen_ids = HashSet::new();
+        for rule in &rules_file.rules {
+            // 빈 ID 검증
+            if rule.id.is_empty() {
+                return Err(ConfigError::ParseFailed {
+                    reason: "rule ID cannot be empty".to_owned(),
+                }
+                .into());
+            }
+
+            // ID 길이 검증
+            if rule.id.len() > MAX_RULE_ID_LEN {
+                return Err(ConfigError::ParseFailed {
+                    reason: format!(
+                        "rule ID '{}' too long: {} chars (max: {})",
+                        rule.id,
+                        rule.id.len(),
+                        MAX_RULE_ID_LEN
+                    ),
+                }
+                .into());
+            }
+
+            // 중복 ID 검증
+            if !seen_ids.insert(&rule.id) {
+                return Err(ConfigError::ParseFailed {
+                    reason: format!("duplicate rule ID: '{}'", rule.id),
+                }
+                .into());
+            }
+
+            // 설명 길이 검증
+            if rule.description.len() > MAX_DESCRIPTION_LEN {
+                return Err(ConfigError::ParseFailed {
+                    reason: format!(
+                        "rule '{}' description too long: {} chars (max: {})",
+                        rule.id,
+                        rule.description.len(),
+                        MAX_DESCRIPTION_LEN
+                    ),
+                }
+                .into());
+            }
+        }
+
+        Ok(rules_file.rules)
     }
 
     /// 룰을 추가합니다.
