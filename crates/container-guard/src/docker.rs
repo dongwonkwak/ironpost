@@ -298,11 +298,12 @@ impl DockerClient for BollardDockerClient {
         validate_container_id(id)?;
 
         let details = self.docker.inspect_container(id, None).await.map_err(|e| {
-            if e.to_string().contains("404") {
-                ContainerGuardError::ContainerNotFound(id.to_owned())
-            } else {
-                ContainerGuardError::DockerApi(format!("inspect container failed: {e}"))
+            if let bollard::errors::Error::DockerResponseServerError { status_code, .. } = &e
+                && *status_code == 404
+            {
+                return ContainerGuardError::ContainerNotFound(id.to_owned());
             }
+            ContainerGuardError::DockerApi(format!("inspect container failed: {e}"))
         })?;
 
         let container_id = details.id.unwrap_or_default();

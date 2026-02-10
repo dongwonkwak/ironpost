@@ -31,7 +31,7 @@ NetworkDisconnect = { networks = ["bridge", "host"] }
 ### 1. critical-network-isolate.toml
 - **Severity Threshold**: Critical
 - **Action**: Disconnect from networks
-- **Target**: All containers
+- **Target**: Containers with names matching `compromised-*` or `suspicious-*`
 - **Use Case**: Immediate network isolation for critical security incidents
 
 ### 2. high-web-pause.toml

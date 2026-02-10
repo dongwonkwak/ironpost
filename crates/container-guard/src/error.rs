@@ -83,6 +83,10 @@ pub enum ContainerGuardError {
     #[error("container not found: {0}")]
     ContainerNotFound(String),
 
+    /// 잘못된 컨테이너 ID
+    #[error("invalid container id: {0}")]
+    InvalidContainerId(String),
+
     /// 설정 에러
     #[error("config error: {field}: {reason}")]
     Config {
@@ -116,6 +120,9 @@ impl From<ContainerGuardError> for IronpostError {
             ContainerGuardError::ContainerNotFound(id) => {
                 IronpostError::Container(ContainerError::NotFound(id.clone()))
             }
+            ContainerGuardError::InvalidContainerId(msg) => IronpostError::Container(
+                ContainerError::DockerApi(format!("invalid container id: {}", msg)),
+            ),
             ContainerGuardError::PolicyLoad { .. }
             | ContainerGuardError::PolicyValidation { .. } => {
                 IronpostError::Container(ContainerError::PolicyViolation(err.to_string()))

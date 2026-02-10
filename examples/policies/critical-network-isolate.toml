@@ -11,9 +11,9 @@ severity_threshold = "Critical"
 priority = 1
 
 [target_filter]
-# WARNING: Empty filters match ALL containers. Always specify explicit patterns
-# in production to prevent isolating unrelated services.
-# Example: target only containers matching these name/image patterns.
+# Target containers with names matching these patterns.
+# WARNING: Empty filters would match ALL containers - always specify explicit
+# patterns in production to prevent isolating unrelated services.
 container_names = ["compromised-*", "suspicious-*"]
 image_patterns = []
 

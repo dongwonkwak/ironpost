@@ -60,12 +60,13 @@ async fn main() -> Result<()> {
     tokio::signal::ctrl_c().await?;
     tracing::info!("shutdown signal received");
 
-    // 우아한 종료
-    if let Err(e) = container_guard.stop().await {
-        tracing::error!(error = %e, "failed to stop container guard");
-    }
+    // 우아한 종료: producer(log-pipeline)를 먼저 정지하여 송신을 멈춘 뒤
+    // consumer(container-guard)를 정지하는 순서로 처리
     if let Err(e) = log_pipeline.stop().await {
         tracing::error!(error = %e, "failed to stop log pipeline");
+    }
+    if let Err(e) = container_guard.stop().await {
+        tracing::error!(error = %e, "failed to stop container guard");
     }
 
     tracing::info!("ironpost-daemon shut down");

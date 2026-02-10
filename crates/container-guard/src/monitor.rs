@@ -54,13 +54,28 @@ impl<D: DockerClient> DockerMonitor<D> {
         let containers = self.docker.list_containers().await?;
         let count = containers.len();
 
+        // 캐시 크기를 제한하여 메모리 사용량이 예기치 않게 커지는 것을 방지합니다.
+        let cached = usize::min(count, MAX_CACHED_CONTAINERS);
+        if count > MAX_CACHED_CONTAINERS {
+            warn!(
+                total = count,
+                cached = cached,
+                max = MAX_CACHED_CONTAINERS,
+                "container inventory truncated to respect MAX_CACHED_CONTAINERS"
+            );
+        }
+
         self.containers.clear();
-        for container in containers {
+        for container in containers.into_iter().take(MAX_CACHED_CONTAINERS) {
             self.containers.insert(container.id.clone(), container);
         }
 
         self.last_poll = Some(Instant::now());
-        debug!(count = count, "refreshed container inventory");
+        debug!(
+            count = count,
+            cached = cached,
+            "refreshed container inventory"
+        );
         Ok(count)
     }
 
@@ -88,20 +103,38 @@ impl<D: DockerClient> DockerMonitor<D> {
         &mut self,
         container_id: &str,
     ) -> Result<ContainerInfo, ContainerGuardError> {
+        // Reject empty container ID to prevent matching any container via starts_with("")
+        if container_id.is_empty() {
+            return Err(ContainerGuardError::InvalidContainerId(
+                "container ID cannot be empty".to_owned(),
+            ));
+        }
+
         // Check cache first
         if let Some(container) = self.containers.get(container_id) {
             return Ok(container.clone());
         }
 
-        // Try to find by partial ID match
-        let found = self
+        // Try to find by partial ID match, but only if the provided ID is non-empty.
+        // This avoids the case where an empty string would match every cached ID via
+        // `starts_with("")` and return an arbitrary container, bypassing DockerClient
+        // validation.
+        let matches: Vec<_> = self
             .containers
             .iter()
-            .find(|(id, _)| id.starts_with(container_id))
-            .map(|(_, c)| c.clone());
+            .filter(|(id, _)| id.starts_with(container_id))
+            .collect();
 
-        if let Some(container) = found {
-            return Ok(container);
+        match matches.len() {
+            0 => {} // Fall through to Docker API call
+            1 => return Ok(matches[0].1.clone()),
+            _ => {
+                return Err(ContainerGuardError::InvalidContainerId(format!(
+                    "ambiguous container ID '{}': matches {} containers",
+                    container_id,
+                    matches.len()
+                )));
+            }
         }
 
         // Not in cache, try Docker API directly
@@ -434,9 +467,12 @@ mod tests {
         );
         monitor.refresh().await.unwrap();
 
-        // "abc" matches both - should return first match
-        let container = monitor.get_container("abc").await.unwrap();
-        assert!(container.name == "web-1" || container.name == "web-2");
+        // "abc" matches both containers - should return ambiguous error
+        let result = monitor.get_container("abc").await;
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("ambiguous"));
+        assert!(err_msg.contains("matches 2 containers"));
     }
 
     #[tokio::test]

@@ -211,10 +211,11 @@ impl<D: DockerClient> Pipeline for ContainerGuard<D> {
                             mon.all_containers().into_iter().cloned().collect()
                         };
 
+                        // Evaluate policies for all containers using a single snapshot/lock
+                        let engine = policy_engine.lock().await;
+
                         for container in &containers {
-                            if let Some(policy_match) =
-                                policy_engine.lock().await.evaluate(&alert, container)
-                            {
+                            if let Some(policy_match) = engine.evaluate(&alert, container) {
                                 info!(
                                     container_id = %container.id,
                                     container_name = %container.name,
