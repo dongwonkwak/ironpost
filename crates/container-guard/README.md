@@ -14,7 +14,7 @@ Alert-driven Docker container isolation based on security policies.
 - **Alert-driven isolation**: Responds to security alerts from log analysis and network detection modules
 - **Policy-based enforcement**: TOML-defined policies with glob pattern matching for container names and images
 - **Multiple isolation actions**: Pause, stop, or network disconnect
-- **Retry logic with exponential backoff**: Configurable retry attempts and timeout for isolation actions
+- **Retry logic with linear backoff**: Configurable retry attempts and timeout for isolation actions
 - **Zero-downtime policy updates**: Runtime policy changes via `Arc<Mutex<PolicyEngine>>`
 - **Docker API abstraction**: Testable via `DockerClient` trait with mock implementation
 - **Container inventory caching**: TTL-based caching to reduce Docker API calls
