@@ -336,3 +336,175 @@ fn spawn_action_logger(
         }
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn test_write_pid_file_creates_parent_directory() {
+        // Given: A path with non-existent parent directory
+        let temp_dir = std::env::temp_dir();
+        let test_dir = temp_dir.join(format!("ironpost_test_{}", std::process::id()));
+        let pid_file = test_dir.join("subdir").join("test.pid");
+
+        // When: Writing PID file
+        let result = write_pid_file(&pid_file);
+
+        // Then: Should succeed and create parent directory
+        assert!(
+            result.is_ok(),
+            "write_pid_file should create parent directory"
+        );
+        assert!(pid_file.exists(), "PID file should exist");
+
+        // Verify content
+        let content = fs::read_to_string(&pid_file).expect("should read PID file");
+        let pid = std::process::id();
+        assert_eq!(
+            content.trim(),
+            pid.to_string(),
+            "PID file should contain current process ID"
+        );
+
+        // Cleanup
+        let _ = fs::remove_dir_all(&test_dir);
+    }
+
+    #[test]
+    fn test_write_pid_file_fails_if_already_exists() {
+        // Given: An existing PID file
+        let temp_dir = std::env::temp_dir();
+        let pid_file = temp_dir.join(format!("ironpost_test_dup_{}.pid", std::process::id()));
+        fs::write(&pid_file, "12345").expect("should write initial PID file");
+
+        // When: Attempting to write PID file again
+        let result = write_pid_file(&pid_file);
+
+        // Then: Should fail with appropriate error
+        assert!(
+            result.is_err(),
+            "write_pid_file should fail when file already exists"
+        );
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("already exists"),
+            "error should mention file already exists, got: {}",
+            err_msg
+        );
+        assert!(
+            err_msg.contains("12345"),
+            "error should show existing PID, got: {}",
+            err_msg
+        );
+
+        // Cleanup
+        let _ = fs::remove_file(&pid_file);
+    }
+
+    #[test]
+    fn test_remove_pid_file_succeeds() {
+        // Given: An existing PID file
+        let temp_dir = std::env::temp_dir();
+        let pid_file = temp_dir.join(format!("ironpost_test_remove_{}.pid", std::process::id()));
+        fs::write(&pid_file, "99999").expect("should write PID file");
+        assert!(pid_file.exists(), "PID file should exist before removal");
+
+        // When: Removing PID file
+        remove_pid_file(&pid_file);
+
+        // Then: File should be removed
+        assert!(!pid_file.exists(), "PID file should be removed");
+    }
+
+    #[test]
+    fn test_remove_pid_file_handles_nonexistent_gracefully() {
+        // Given: A non-existent PID file
+        let temp_dir = std::env::temp_dir();
+        let pid_file = temp_dir.join(format!("ironpost_test_nonexist_{}.pid", std::process::id()));
+        assert!(
+            !pid_file.exists(),
+            "PID file should not exist before test"
+        );
+
+        // When: Attempting to remove non-existent file
+        // Then: Should not panic (logs warning internally)
+        remove_pid_file(&pid_file);
+    }
+
+    #[test]
+    fn test_write_pid_file_correct_pid_format() {
+        // Given: A test path
+        let temp_dir = std::env::temp_dir();
+        let pid_file = temp_dir.join(format!("ironpost_test_format_{}.pid", std::process::id()));
+
+        // When: Writing PID file
+        write_pid_file(&pid_file).expect("should write PID file");
+
+        // Then: Content should be parseable as u32
+        let content = fs::read_to_string(&pid_file).expect("should read PID file");
+        let parsed_pid = content
+            .trim()
+            .parse::<u32>()
+            .expect("PID should be valid u32");
+        assert_eq!(
+            parsed_pid,
+            std::process::id(),
+            "parsed PID should match current process ID"
+        );
+
+        // Cleanup
+        let _ = fs::remove_file(&pid_file);
+    }
+
+    #[tokio::test]
+    async fn test_spawn_action_logger_receives_events() {
+        // Given: A channel and action logger
+        let (action_tx, action_rx) = mpsc::channel(16);
+        let (shutdown_tx, shutdown_rx) = broadcast::channel(1);
+
+        let task = spawn_action_logger(action_rx, shutdown_rx);
+
+        // When: Sending an action event
+        let action = ActionEvent {
+            id: uuid::Uuid::new_v4().to_string(),
+            metadata: ironpost_core::event::EventMetadata {
+                timestamp: std::time::SystemTime::now(),
+                source_module: "test".to_string(),
+                trace_id: uuid::Uuid::new_v4().to_string(),
+            },
+            action_type: "isolate".to_string(),
+            target: "container123".to_string(),
+            success: true,
+        };
+        action_tx.send(action).await.expect("should send action");
+
+        // Give it time to process
+        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+
+        // Then: Shutdown gracefully
+        let _ = shutdown_tx.send(());
+        let _ = tokio::time::timeout(tokio::time::Duration::from_secs(1), task).await;
+    }
+
+    #[tokio::test]
+    async fn test_spawn_action_logger_shutdown_signal() {
+        // Given: A running action logger
+        let (_action_tx, action_rx) = mpsc::channel::<ActionEvent>(16);
+        let (shutdown_tx, shutdown_rx) = broadcast::channel(1);
+
+        let task = spawn_action_logger(action_rx, shutdown_rx);
+
+        // When: Sending shutdown signal
+        let _ = shutdown_tx.send(());
+
+        // Then: Task should complete quickly
+        let result =
+            tokio::time::timeout(tokio::time::Duration::from_millis(100), task).await;
+        assert!(
+            result.is_ok(),
+            "action logger should shut down within timeout"
+        );
+    }
+}

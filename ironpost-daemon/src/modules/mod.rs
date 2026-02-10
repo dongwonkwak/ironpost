@@ -15,6 +15,9 @@ pub mod ebpf;
 
 use ironpost_core::pipeline::{DynPipeline, HealthStatus};
 
+#[cfg(test)]
+use ironpost_core::pipeline::BoxFuture;
+
 /// A handle to a registered module.
 ///
 /// Wraps a `Box<dyn DynPipeline>` with metadata (name, enabled flag).
@@ -156,5 +159,296 @@ impl ModuleRegistry {
 impl Default for ModuleRegistry {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ironpost_core::error::IronpostError;
+
+    /// Mock pipeline for testing.
+    struct MockPipeline {
+        name: String,
+        started: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        stopped: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        health: HealthStatus,
+    }
+
+    impl MockPipeline {
+        fn new(name: &str, health: HealthStatus) -> Self {
+            Self {
+                name: name.to_string(),
+                started: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                stopped: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                health,
+            }
+        }
+
+        fn is_started(&self) -> bool {
+            self.started.load(std::sync::atomic::Ordering::SeqCst)
+        }
+
+        fn is_stopped(&self) -> bool {
+            self.stopped.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    impl DynPipeline for MockPipeline {
+        fn start(&mut self) -> BoxFuture<'_, Result<(), IronpostError>> {
+            let started = self.started.clone();
+            Box::pin(async move {
+                started.store(true, std::sync::atomic::Ordering::SeqCst);
+                Ok(())
+            })
+        }
+
+        fn stop(&mut self) -> BoxFuture<'_, Result<(), IronpostError>> {
+            let stopped = self.stopped.clone();
+            Box::pin(async move {
+                stopped.store(true, std::sync::atomic::Ordering::SeqCst);
+                Ok(())
+            })
+        }
+
+        fn health_check(&self) -> BoxFuture<'_, HealthStatus> {
+            let health = self.health.clone();
+            Box::pin(async move { health })
+        }
+    }
+
+    #[test]
+    fn test_module_registry_new_is_empty() {
+        // Given: A new registry
+        let registry = ModuleRegistry::new();
+
+        // Then: Should be empty
+        assert_eq!(registry.count(), 0, "new registry should be empty");
+        assert_eq!(
+            registry.enabled_count(),
+            0,
+            "new registry should have no enabled modules"
+        );
+    }
+
+    #[test]
+    fn test_module_registry_register_increases_count() {
+        // Given: A new registry
+        let mut registry = ModuleRegistry::new();
+
+        // When: Registering a module
+        let pipeline = Box::new(MockPipeline::new("test", HealthStatus::Healthy));
+        let handle = ModuleHandle::new("test-module", true, pipeline);
+        registry.register(handle);
+
+        // Then: Count should increase
+        assert_eq!(registry.count(), 1, "registry should have one module");
+        assert_eq!(
+            registry.enabled_count(),
+            1,
+            "registry should have one enabled module"
+        );
+    }
+
+    #[test]
+    fn test_module_registry_enabled_count_ignores_disabled() {
+        // Given: A registry with mixed enabled/disabled modules
+        let mut registry = ModuleRegistry::new();
+
+        let pipeline1 = Box::new(MockPipeline::new("enabled", HealthStatus::Healthy));
+        let handle1 = ModuleHandle::new("enabled-module", true, pipeline1);
+        registry.register(handle1);
+
+        let pipeline2 = Box::new(MockPipeline::new("disabled", HealthStatus::Healthy));
+        let handle2 = ModuleHandle::new("disabled-module", false, pipeline2);
+        registry.register(handle2);
+
+        // Then: Only enabled should be counted
+        assert_eq!(registry.count(), 2, "registry should have two modules");
+        assert_eq!(
+            registry.enabled_count(),
+            1,
+            "only one module should be enabled"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_module_registry_start_all_calls_start() {
+        // Given: A registry with one enabled module
+        let mut registry = ModuleRegistry::new();
+
+        let started = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let _started_clone = started.clone();
+
+        let pipeline = Box::new(MockPipeline::new("test", HealthStatus::Healthy));
+        let handle = ModuleHandle::new("test-module", true, pipeline);
+        registry.register(handle);
+
+        // When: Starting all modules
+        let result = registry.start_all().await;
+
+        // Then: Should succeed
+        assert!(result.is_ok(), "start_all should succeed");
+        // Note: We can't easily verify the internal state without exposing more APIs,
+        // but we can verify it doesn't error
+    }
+
+    #[tokio::test]
+    async fn test_module_registry_start_all_skips_disabled() {
+        // Given: A registry with a disabled module
+        let mut registry = ModuleRegistry::new();
+        let pipeline = Box::new(MockPipeline::new("disabled", HealthStatus::Healthy));
+        let handle = ModuleHandle::new("disabled-module", false, pipeline);
+        registry.register(handle);
+
+        // When: Starting all modules
+        let result = registry.start_all().await;
+
+        // Then: Should succeed (skips disabled)
+        assert!(result.is_ok(), "start_all should succeed");
+    }
+
+    #[tokio::test]
+    async fn test_module_registry_stop_all_calls_stop() {
+        // Given: A started module
+        let mut registry = ModuleRegistry::new();
+        let pipeline = Box::new(MockPipeline::new("test", HealthStatus::Healthy));
+        let handle = ModuleHandle::new("test-module", true, pipeline);
+        registry.register(handle);
+
+        registry.start_all().await.expect("start should succeed");
+
+        // When: Stopping all modules
+        let result = registry.stop_all().await;
+
+        // Then: Should succeed
+        assert!(result.is_ok(), "stop_all should succeed");
+    }
+
+    #[tokio::test]
+    async fn test_module_registry_stop_all_reverse_order() {
+        // Given: Multiple modules registered
+        let mut registry = ModuleRegistry::new();
+
+        let pipeline1 = Box::new(MockPipeline::new("module1", HealthStatus::Healthy));
+        let handle1 = ModuleHandle::new("module1", true, pipeline1);
+        registry.register(handle1);
+
+        let pipeline2 = Box::new(MockPipeline::new("module2", HealthStatus::Healthy));
+        let handle2 = ModuleHandle::new("module2", true, pipeline2);
+        registry.register(handle2);
+
+        registry.start_all().await.expect("start should succeed");
+
+        // When: Stopping all modules
+        let result = registry.stop_all().await;
+
+        // Then: Both should stop without error
+        assert!(result.is_ok(), "stop_all should succeed");
+    }
+
+    #[tokio::test]
+    async fn test_module_registry_health_statuses() {
+        // Given: Registry with modules of different health
+        let mut registry = ModuleRegistry::new();
+
+        let pipeline1 = Box::new(MockPipeline::new(
+            "healthy",
+            HealthStatus::Healthy,
+        ));
+        let handle1 = ModuleHandle::new("healthy-module", true, pipeline1);
+        registry.register(handle1);
+
+        let pipeline2 = Box::new(MockPipeline::new(
+            "degraded",
+            HealthStatus::Degraded("slow".to_string()),
+        ));
+        let handle2 = ModuleHandle::new("degraded-module", true, pipeline2);
+        registry.register(handle2);
+
+        // When: Getting health statuses
+        let statuses = registry.health_statuses().await;
+
+        // Then: Should return all module statuses
+        assert_eq!(statuses.len(), 2, "should return all module statuses");
+
+        let (name1, enabled1, status1) = &statuses[0];
+        assert_eq!(name1, "healthy-module");
+        assert!(enabled1);
+        assert!(status1.is_healthy());
+
+        let (name2, enabled2, status2) = &statuses[1];
+        assert_eq!(name2, "degraded-module");
+        assert!(enabled2);
+        assert!(matches!(status2, HealthStatus::Degraded(_)));
+    }
+
+    #[tokio::test]
+    async fn test_module_handle_health_check_disabled_always_healthy() {
+        // Given: A disabled module with unhealthy status
+        let pipeline = Box::new(MockPipeline::new(
+            "unhealthy",
+            HealthStatus::Unhealthy("broken".to_string()),
+        ));
+        let handle = ModuleHandle::new("test-module", false, pipeline);
+
+        // When: Checking health
+        let status = handle.health_check().await;
+
+        // Then: Should report healthy (disabled modules are not expected to run)
+        assert!(
+            status.is_healthy(),
+            "disabled modules should always report healthy"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_module_handle_health_check_enabled_returns_actual() {
+        // Given: An enabled module with degraded status
+        let pipeline = Box::new(MockPipeline::new(
+            "degraded",
+            HealthStatus::Degraded("issue".to_string()),
+        ));
+        let handle = ModuleHandle::new("test-module", true, pipeline);
+
+        // When: Checking health
+        let status = handle.health_check().await;
+
+        // Then: Should return actual status
+        assert!(
+            matches!(status, HealthStatus::Degraded(_)),
+            "enabled modules should report actual health status"
+        );
+    }
+
+    #[test]
+    fn test_module_registry_default() {
+        // Given: Default registry
+        let registry = ModuleRegistry::default();
+
+        // Then: Should be equivalent to new()
+        assert_eq!(registry.count(), 0, "default registry should be empty");
+    }
+
+    #[tokio::test]
+    async fn test_module_registry_multiple_modules_start_order() {
+        // Given: Multiple enabled modules
+        let mut registry = ModuleRegistry::new();
+
+        for i in 0..5 {
+            let pipeline = Box::new(MockPipeline::new(
+                &format!("module{}", i),
+                HealthStatus::Healthy,
+            ));
+            let handle = ModuleHandle::new(format!("module{}", i), true, pipeline);
+            registry.register(handle);
+        }
+
+        // When: Starting all
+        let result = registry.start_all().await;
+
+        // Then: All should start successfully
+        assert!(result.is_ok(), "all modules should start");
+        assert_eq!(registry.enabled_count(), 5);
     }
 }

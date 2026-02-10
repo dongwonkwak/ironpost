@@ -171,3 +171,250 @@ impl Render for ConfigValidationReport {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_config_report_render_text_full_config() {
+        let report = ConfigReport {
+            source: "test.toml".to_owned(),
+            section: None,
+            config_toml: "[general]\nlog_level = \"info\"".to_owned(),
+        };
+
+        let mut buffer = Vec::new();
+        report
+            .render_text(&mut buffer)
+            .expect("text rendering should succeed");
+
+        let output = String::from_utf8(buffer).expect("valid UTF-8");
+        assert!(output.contains("Configuration"), "should contain header");
+        assert!(
+            output.contains("test.toml"),
+            "should contain source filename"
+        );
+        assert!(
+            output.contains("log_level"),
+            "should contain config content"
+        );
+    }
+
+    #[test]
+    fn test_config_report_render_text_specific_section() {
+        let report = ConfigReport {
+            source: "/etc/ironpost.toml".to_owned(),
+            section: Some("ebpf".to_owned()),
+            config_toml: "interface = \"eth0\"".to_owned(),
+        };
+
+        let mut buffer = Vec::new();
+        report
+            .render_text(&mut buffer)
+            .expect("text rendering should succeed");
+
+        let output = String::from_utf8(buffer).expect("valid UTF-8");
+        assert!(output.contains("[ebpf]"), "should show section name");
+        assert!(output.contains("interface"), "should show config content");
+    }
+
+    #[test]
+    fn test_config_report_json_serialization() {
+        let report = ConfigReport {
+            source: "test.toml".to_owned(),
+            section: Some("log_pipeline".to_owned()),
+            config_toml: "enabled = true".to_owned(),
+        };
+
+        let json = serde_json::to_string(&report).expect("JSON serialization should succeed");
+        let parsed: serde_json::Value = serde_json::from_str(&json).expect("should parse JSON");
+
+        assert_eq!(parsed["source"].as_str(), Some("test.toml"));
+        assert_eq!(parsed["section"].as_str(), Some("log_pipeline"));
+        // config_toml is skipped in serialization
+        assert!(
+            parsed.get("config_toml").is_none(),
+            "config_toml should be skipped"
+        );
+    }
+
+    #[test]
+    fn test_config_validation_report_valid() {
+        let report = ConfigValidationReport {
+            source: "ironpost.toml".to_owned(),
+            valid: true,
+            errors: Vec::new(),
+        };
+
+        let mut buffer = Vec::new();
+        report
+            .render_text(&mut buffer)
+            .expect("text rendering should succeed");
+
+        let output = String::from_utf8(buffer).expect("valid UTF-8");
+        assert!(output.contains("VALID"), "should show valid status");
+        assert!(!output.contains("Error:"), "should not show errors");
+    }
+
+    #[test]
+    fn test_config_validation_report_invalid_single_error() {
+        let report = ConfigValidationReport {
+            source: "bad.toml".to_owned(),
+            valid: false,
+            errors: vec!["missing required field: interface".to_owned()],
+        };
+
+        let mut buffer = Vec::new();
+        report
+            .render_text(&mut buffer)
+            .expect("text rendering should succeed");
+
+        let output = String::from_utf8(buffer).expect("valid UTF-8");
+        assert!(output.contains("INVALID"), "should show invalid status");
+        assert!(
+            output.contains("missing required field"),
+            "should show error message"
+        );
+    }
+
+    #[test]
+    fn test_config_validation_report_invalid_multiple_errors() {
+        let report = ConfigValidationReport {
+            source: "bad.toml".to_owned(),
+            valid: false,
+            errors: vec![
+                "error 1: invalid port".to_owned(),
+                "error 2: missing section".to_owned(),
+                "error 3: invalid type".to_owned(),
+            ],
+        };
+
+        let mut buffer = Vec::new();
+        report
+            .render_text(&mut buffer)
+            .expect("text rendering should succeed");
+
+        let output = String::from_utf8(buffer).expect("valid UTF-8");
+        assert!(output.contains("error 1"), "should show first error");
+        assert!(output.contains("error 2"), "should show second error");
+        assert!(output.contains("error 3"), "should show third error");
+    }
+
+    #[test]
+    fn test_config_validation_report_json_valid() {
+        let report = ConfigValidationReport {
+            source: "test.toml".to_owned(),
+            valid: true,
+            errors: Vec::new(),
+        };
+
+        let json = serde_json::to_string(&report).expect("JSON serialization should succeed");
+        let parsed: serde_json::Value = serde_json::from_str(&json).expect("should parse JSON");
+
+        assert_eq!(parsed["valid"].as_bool(), Some(true));
+        assert_eq!(
+            parsed["errors"].as_array().expect("should be array").len(),
+            0
+        );
+    }
+
+    #[test]
+    fn test_config_validation_report_json_invalid() {
+        let report = ConfigValidationReport {
+            source: "bad.toml".to_owned(),
+            valid: false,
+            errors: vec!["error message".to_owned()],
+        };
+
+        let json = serde_json::to_string(&report).expect("JSON serialization should succeed");
+        let parsed: serde_json::Value = serde_json::from_str(&json).expect("should parse JSON");
+
+        assert_eq!(parsed["valid"].as_bool(), Some(false));
+        assert_eq!(
+            parsed["errors"].as_array().expect("should be array").len(),
+            1
+        );
+    }
+
+    #[test]
+    fn test_config_report_empty_section() {
+        let report = ConfigReport {
+            source: "test.toml".to_owned(),
+            section: None,
+            config_toml: String::new(),
+        };
+
+        let mut buffer = Vec::new();
+        report
+            .render_text(&mut buffer)
+            .expect("empty config should render");
+
+        let output = String::from_utf8(buffer).expect("valid UTF-8");
+        assert!(output.contains("Configuration"), "should have header");
+    }
+
+    #[test]
+    fn test_config_report_unicode_in_source_path() {
+        let report = ConfigReport {
+            source: "/path/to/設定.toml".to_owned(),
+            section: None,
+            config_toml: "test = true".to_owned(),
+        };
+
+        let mut buffer = Vec::new();
+        report
+            .render_text(&mut buffer)
+            .expect("unicode path should render");
+
+        let output = String::from_utf8(buffer).expect("valid UTF-8");
+        assert!(output.contains("設定.toml"), "should handle unicode paths");
+    }
+
+    #[test]
+    fn test_config_validation_report_long_error_message() {
+        let long_error = "a".repeat(500);
+        let report = ConfigValidationReport {
+            source: "test.toml".to_owned(),
+            valid: false,
+            errors: vec![long_error.clone()],
+        };
+
+        let mut buffer = Vec::new();
+        report
+            .render_text(&mut buffer)
+            .expect("long error should render");
+
+        let output = String::from_utf8(buffer).expect("valid UTF-8");
+        assert!(
+            output.contains(&long_error),
+            "should handle long error messages"
+        );
+    }
+
+    #[test]
+    fn test_config_report_multiline_toml() {
+        let multiline_toml = r#"
+[general]
+log_level = "info"
+
+[ebpf]
+enabled = true
+interface = "eth0"
+"#;
+        let report = ConfigReport {
+            source: "test.toml".to_owned(),
+            section: None,
+            config_toml: multiline_toml.to_owned(),
+        };
+
+        let mut buffer = Vec::new();
+        report
+            .render_text(&mut buffer)
+            .expect("multiline config should render");
+
+        let output = String::from_utf8(buffer).expect("valid UTF-8");
+        assert!(output.contains("[general]"), "should show all sections");
+        assert!(output.contains("[ebpf]"), "should show all sections");
+    }
+}

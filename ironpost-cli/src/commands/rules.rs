@@ -218,3 +218,354 @@ impl Render for RuleValidationReport {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_rule_list_report_render_text_empty() {
+        let report = RuleListReport {
+            total: 0,
+            rules: Vec::new(),
+        };
+
+        let mut buffer = Vec::new();
+        report
+            .render_text(&mut buffer)
+            .expect("text rendering should succeed");
+
+        let output = String::from_utf8(buffer).expect("valid UTF-8");
+        assert!(output.contains("Detection Rules"), "should have header");
+        assert!(output.contains("0 total"), "should show zero count");
+    }
+
+    #[test]
+    fn test_rule_list_report_render_text_single_rule() {
+        let report = RuleListReport {
+            total: 1,
+            rules: vec![RuleEntry {
+                id: "rule-001".to_owned(),
+                title: "Test Rule".to_owned(),
+                severity: "High".to_owned(),
+                status: "enabled".to_owned(),
+                tags: vec!["test".to_owned(), "security".to_owned()],
+            }],
+        };
+
+        let mut buffer = Vec::new();
+        report
+            .render_text(&mut buffer)
+            .expect("text rendering should succeed");
+
+        let output = String::from_utf8(buffer).expect("valid UTF-8");
+        assert!(output.contains("rule-001"), "should show rule ID");
+        assert!(output.contains("Test Rule"), "should show title");
+        assert!(output.contains("High"), "should show severity");
+        assert!(output.contains("enabled"), "should show status");
+        assert!(output.contains("test"), "should show tags");
+    }
+
+    #[test]
+    fn test_rule_list_report_render_text_multiple_rules() {
+        let report = RuleListReport {
+            total: 3,
+            rules: vec![
+                RuleEntry {
+                    id: "rule-001".to_owned(),
+                    title: "Rule 1".to_owned(),
+                    severity: "Critical".to_owned(),
+                    status: "enabled".to_owned(),
+                    tags: vec![],
+                },
+                RuleEntry {
+                    id: "rule-002".to_owned(),
+                    title: "Rule 2".to_owned(),
+                    severity: "Medium".to_owned(),
+                    status: "disabled".to_owned(),
+                    tags: vec!["test".to_owned()],
+                },
+                RuleEntry {
+                    id: "rule-003".to_owned(),
+                    title: "Rule 3".to_owned(),
+                    severity: "Low".to_owned(),
+                    status: "test".to_owned(),
+                    tags: vec!["experimental".to_owned()],
+                },
+            ],
+        };
+
+        let mut buffer = Vec::new();
+        report
+            .render_text(&mut buffer)
+            .expect("text rendering should succeed");
+
+        let output = String::from_utf8(buffer).expect("valid UTF-8");
+        assert!(output.contains("rule-001"), "should show first rule");
+        assert!(output.contains("rule-002"), "should show second rule");
+        assert!(output.contains("rule-003"), "should show third rule");
+    }
+
+    #[test]
+    fn test_rule_list_report_json_serialization() {
+        let report = RuleListReport {
+            total: 1,
+            rules: vec![RuleEntry {
+                id: "test-id".to_owned(),
+                title: "Test".to_owned(),
+                severity: "High".to_owned(),
+                status: "enabled".to_owned(),
+                tags: vec!["tag1".to_owned()],
+            }],
+        };
+
+        let json = serde_json::to_string(&report).expect("JSON serialization should succeed");
+        let parsed: serde_json::Value = serde_json::from_str(&json).expect("should parse JSON");
+
+        assert_eq!(parsed["total"].as_u64(), Some(1));
+        assert_eq!(
+            parsed["rules"].as_array().expect("should be array").len(),
+            1
+        );
+    }
+
+    #[test]
+    fn test_rule_entry_json_structure() {
+        let entry = RuleEntry {
+            id: "rule-id".to_owned(),
+            title: "Rule Title".to_owned(),
+            severity: "Critical".to_owned(),
+            status: "enabled".to_owned(),
+            tags: vec!["tag1".to_owned(), "tag2".to_owned()],
+        };
+
+        let json = serde_json::to_string(&entry).expect("JSON serialization should succeed");
+        let parsed: serde_json::Value = serde_json::from_str(&json).expect("should parse JSON");
+
+        assert_eq!(parsed["id"].as_str(), Some("rule-id"));
+        assert_eq!(parsed["title"].as_str(), Some("Rule Title"));
+        assert_eq!(parsed["severity"].as_str(), Some("Critical"));
+        assert_eq!(parsed["status"].as_str(), Some("enabled"));
+        assert_eq!(parsed["tags"].as_array().expect("should be array").len(), 2);
+    }
+
+    #[test]
+    fn test_rule_validation_report_render_text_valid() {
+        let report = RuleValidationReport {
+            path: "/etc/ironpost/rules".to_owned(),
+            total_files: 5,
+            valid: 5,
+            invalid: 0,
+            errors: Vec::new(),
+        };
+
+        let mut buffer = Vec::new();
+        report
+            .render_text(&mut buffer)
+            .expect("text rendering should succeed");
+
+        let output = String::from_utf8(buffer).expect("valid UTF-8");
+        assert!(output.contains("Rule Validation"), "should have header");
+        assert!(output.contains("5 valid"), "should show valid count");
+        assert!(output.contains("0 invalid"), "should show invalid count");
+    }
+
+    #[test]
+    fn test_rule_validation_report_render_text_invalid() {
+        let report = RuleValidationReport {
+            path: "/rules".to_owned(),
+            total_files: 3,
+            valid: 1,
+            invalid: 2,
+            errors: vec![
+                RuleError {
+                    file: "rule1.yaml".to_owned(),
+                    error: "missing field: title".to_owned(),
+                },
+                RuleError {
+                    file: "rule2.yaml".to_owned(),
+                    error: "invalid severity level".to_owned(),
+                },
+            ],
+        };
+
+        let mut buffer = Vec::new();
+        report
+            .render_text(&mut buffer)
+            .expect("text rendering should succeed");
+
+        let output = String::from_utf8(buffer).expect("valid UTF-8");
+        assert!(output.contains("2 invalid"), "should show invalid count");
+        assert!(output.contains("rule1.yaml"), "should show error file");
+        assert!(
+            output.contains("missing field"),
+            "should show error message"
+        );
+        assert!(output.contains("rule2.yaml"), "should show second error");
+    }
+
+    #[test]
+    fn test_rule_validation_report_json_valid() {
+        let report = RuleValidationReport {
+            path: "/rules".to_owned(),
+            total_files: 10,
+            valid: 10,
+            invalid: 0,
+            errors: Vec::new(),
+        };
+
+        let json = serde_json::to_string(&report).expect("JSON serialization should succeed");
+        let parsed: serde_json::Value = serde_json::from_str(&json).expect("should parse JSON");
+
+        assert_eq!(parsed["total_files"].as_u64(), Some(10));
+        assert_eq!(parsed["valid"].as_u64(), Some(10));
+        assert_eq!(parsed["invalid"].as_u64(), Some(0));
+        assert_eq!(
+            parsed["errors"].as_array().expect("should be array").len(),
+            0
+        );
+    }
+
+    #[test]
+    fn test_rule_validation_report_json_invalid() {
+        let report = RuleValidationReport {
+            path: "/rules".to_owned(),
+            total_files: 2,
+            valid: 0,
+            invalid: 2,
+            errors: vec![RuleError {
+                file: "bad.yaml".to_owned(),
+                error: "parse error".to_owned(),
+            }],
+        };
+
+        let json = serde_json::to_string(&report).expect("JSON serialization should succeed");
+        let parsed: serde_json::Value = serde_json::from_str(&json).expect("should parse JSON");
+
+        assert_eq!(parsed["invalid"].as_u64(), Some(2));
+        assert_eq!(
+            parsed["errors"].as_array().expect("should be array").len(),
+            1
+        );
+    }
+
+    #[test]
+    fn test_rule_error_json_structure() {
+        let error = RuleError {
+            file: "test.yaml".to_owned(),
+            error: "test error message".to_owned(),
+        };
+
+        let json = serde_json::to_string(&error).expect("JSON serialization should succeed");
+        let parsed: serde_json::Value = serde_json::from_str(&json).expect("should parse JSON");
+
+        assert_eq!(parsed["file"].as_str(), Some("test.yaml"));
+        assert_eq!(parsed["error"].as_str(), Some("test error message"));
+    }
+
+    #[test]
+    fn test_rule_entry_empty_tags() {
+        let entry = RuleEntry {
+            id: "rule-1".to_owned(),
+            title: "No Tags Rule".to_owned(),
+            severity: "Medium".to_owned(),
+            status: "enabled".to_owned(),
+            tags: Vec::new(),
+        };
+
+        let mut buffer = Vec::new();
+        let report = RuleListReport {
+            total: 1,
+            rules: vec![entry],
+        };
+
+        report
+            .render_text(&mut buffer)
+            .expect("should render empty tags");
+
+        let output = String::from_utf8(buffer).expect("valid UTF-8");
+        assert!(output.contains("rule-1"), "should show rule");
+    }
+
+    #[test]
+    fn test_rule_entry_long_title() {
+        let long_title = "a".repeat(100);
+        let entry = RuleEntry {
+            id: "rule-long".to_owned(),
+            title: long_title.clone(),
+            severity: "Low".to_owned(),
+            status: "enabled".to_owned(),
+            tags: vec![],
+        };
+
+        let json = serde_json::to_string(&entry).expect("should serialize long title");
+        assert!(json.contains(&long_title), "should preserve long title");
+    }
+
+    #[test]
+    fn test_rule_validation_report_many_errors() {
+        let errors: Vec<RuleError> = (0..50)
+            .map(|i| RuleError {
+                file: format!("rule{}.yaml", i),
+                error: format!("error {}", i),
+            })
+            .collect();
+
+        let report = RuleValidationReport {
+            path: "/rules".to_owned(),
+            total_files: 50,
+            valid: 0,
+            invalid: 50,
+            errors,
+        };
+
+        let mut buffer = Vec::new();
+        report
+            .render_text(&mut buffer)
+            .expect("should render many errors");
+
+        let output = String::from_utf8(buffer).expect("valid UTF-8");
+        assert!(output.contains("50 invalid"), "should show count");
+        assert!(output.contains("rule0.yaml"), "should show first error");
+        assert!(output.contains("rule49.yaml"), "should show last error");
+    }
+
+    #[test]
+    fn test_rule_list_report_unicode_content() {
+        let report = RuleListReport {
+            total: 1,
+            rules: vec![RuleEntry {
+                id: "unicode-rule".to_owned(),
+                title: "検出ルール 日本語".to_owned(),
+                severity: "High".to_owned(),
+                status: "enabled".to_owned(),
+                tags: vec!["日本".to_owned()],
+            }],
+        };
+
+        let mut buffer = Vec::new();
+        report
+            .render_text(&mut buffer)
+            .expect("should render unicode");
+
+        let output = String::from_utf8(buffer).expect("valid UTF-8");
+        assert!(output.contains("検出ルール"), "should handle unicode");
+    }
+
+    #[test]
+    fn test_rule_entry_all_status_values() {
+        let statuses = ["enabled", "disabled", "test"];
+        for status in statuses {
+            let entry = RuleEntry {
+                id: format!("rule-{}", status),
+                title: "Test".to_owned(),
+                severity: "Medium".to_owned(),
+                status: status.to_owned(),
+                tags: vec![],
+            };
+
+            let json = serde_json::to_string(&entry).expect("should serialize");
+            assert!(json.contains(status), "should preserve status: {}", status);
+        }
+    }
+}

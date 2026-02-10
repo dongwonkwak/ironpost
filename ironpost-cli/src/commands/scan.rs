@@ -254,3 +254,330 @@ impl Render for ScanReport {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_severity_valid_lowercase() {
+        let result = parse_severity("info");
+        assert!(result.is_ok(), "should parse 'info'");
+        assert!(matches!(result.expect("ok"), Severity::Info));
+    }
+
+    #[test]
+    fn test_parse_severity_valid_uppercase() {
+        let result = parse_severity("CRITICAL");
+        assert!(result.is_ok(), "should parse 'CRITICAL'");
+        assert!(matches!(result.expect("ok"), Severity::Critical));
+    }
+
+    #[test]
+    fn test_parse_severity_all_levels() {
+        let levels = [
+            ("info", Severity::Info),
+            ("low", Severity::Low),
+            ("medium", Severity::Medium),
+            ("high", Severity::High),
+            ("critical", Severity::Critical),
+        ];
+
+        for (input, expected) in levels {
+            let result = parse_severity(input).expect("should parse valid severity");
+            assert_eq!(
+                format!("{:?}", result),
+                format!("{:?}", expected),
+                "severity mismatch for {}",
+                input
+            );
+        }
+    }
+
+    #[test]
+    fn test_parse_severity_invalid() {
+        let result = parse_severity("invalid");
+        assert!(result.is_err(), "should reject invalid severity");
+        let err = result.expect_err("should be error");
+        let err_str = format!("{}", err);
+        assert!(
+            err_str.contains("invalid severity"),
+            "error should mention invalid severity"
+        );
+    }
+
+    #[test]
+    fn test_parse_severity_empty_string() {
+        let result = parse_severity("");
+        assert!(result.is_err(), "should reject empty string");
+    }
+
+    #[test]
+    fn test_parse_sbom_format_cyclonedx() {
+        let result = parse_sbom_format("cyclonedx");
+        assert!(result.is_ok(), "should parse 'cyclonedx'");
+        assert!(matches!(result.expect("ok"), SbomFormat::CycloneDx));
+    }
+
+    #[test]
+    fn test_parse_sbom_format_spdx() {
+        let result = parse_sbom_format("spdx");
+        assert!(result.is_ok(), "should parse 'spdx'");
+        assert!(matches!(result.expect("ok"), SbomFormat::Spdx));
+    }
+
+    #[test]
+    fn test_parse_sbom_format_case_insensitive() {
+        let result = parse_sbom_format("CycloneDX");
+        assert!(result.is_ok(), "should parse case-insensitive");
+        assert!(matches!(result.expect("ok"), SbomFormat::CycloneDx));
+    }
+
+    #[test]
+    fn test_parse_sbom_format_invalid() {
+        let result = parse_sbom_format("invalid");
+        assert!(result.is_err(), "should reject invalid format");
+        let err = result.expect_err("should be error");
+        let err_str = format!("{}", err);
+        assert!(
+            err_str.contains("invalid SBOM format"),
+            "error should mention format"
+        );
+    }
+
+    #[test]
+    fn test_severity_level_ordering() {
+        assert!(severity_level(&Severity::Info) < severity_level(&Severity::Low));
+        assert!(severity_level(&Severity::Low) < severity_level(&Severity::Medium));
+        assert!(severity_level(&Severity::Medium) < severity_level(&Severity::High));
+        assert!(severity_level(&Severity::High) < severity_level(&Severity::Critical));
+    }
+
+    #[test]
+    fn test_severity_level_values() {
+        assert_eq!(severity_level(&Severity::Info), 0);
+        assert_eq!(severity_level(&Severity::Low), 1);
+        assert_eq!(severity_level(&Severity::Medium), 2);
+        assert_eq!(severity_level(&Severity::High), 3);
+        assert_eq!(severity_level(&Severity::Critical), 4);
+    }
+
+    #[test]
+    fn test_scan_report_render_text_no_vulnerabilities() {
+        let report = ScanReport {
+            path: "/test/path".to_owned(),
+            lockfiles_scanned: 2,
+            total_packages: 50,
+            vulnerabilities: VulnSummary::default(),
+            findings: Vec::new(),
+        };
+
+        let mut buffer = Vec::new();
+        report
+            .render_text(&mut buffer)
+            .expect("text rendering should succeed");
+
+        let output = String::from_utf8(buffer).expect("valid UTF-8");
+        assert!(output.contains("/test/path"), "should show scan path");
+        assert!(output.contains("50"), "should show package count");
+        assert!(
+            output.contains("No vulnerabilities found"),
+            "should show clean message"
+        );
+    }
+
+    #[test]
+    fn test_scan_report_render_text_with_findings() {
+        let report = ScanReport {
+            path: "/test".to_owned(),
+            lockfiles_scanned: 1,
+            total_packages: 10,
+            vulnerabilities: VulnSummary {
+                critical: 1,
+                high: 2,
+                medium: 0,
+                low: 0,
+                info: 0,
+                total: 3,
+            },
+            findings: vec![
+                FindingEntry {
+                    cve_id: "CVE-2024-0001".to_owned(),
+                    package: "vulnerable-pkg".to_owned(),
+                    version: "1.0.0".to_owned(),
+                    severity: "Critical".to_owned(),
+                    fixed_version: Some("1.0.1".to_owned()),
+                    description: "Test vulnerability".to_owned(),
+                },
+                FindingEntry {
+                    cve_id: "CVE-2024-0002".to_owned(),
+                    package: "another-pkg".to_owned(),
+                    version: "2.0.0".to_owned(),
+                    severity: "High".to_owned(),
+                    fixed_version: None,
+                    description: "Another test".to_owned(),
+                },
+            ],
+        };
+
+        let mut buffer = Vec::new();
+        report
+            .render_text(&mut buffer)
+            .expect("text rendering should succeed");
+
+        let output = String::from_utf8(buffer).expect("valid UTF-8");
+        assert!(output.contains("CVE-2024-0001"), "should show CVE ID");
+        assert!(
+            output.contains("vulnerable-pkg"),
+            "should show package name"
+        );
+        assert!(
+            output.contains("N/A"),
+            "should show N/A for missing fixed version"
+        );
+    }
+
+    #[test]
+    fn test_scan_report_json_serialization() {
+        let report = ScanReport {
+            path: "/test".to_owned(),
+            lockfiles_scanned: 1,
+            total_packages: 5,
+            vulnerabilities: VulnSummary {
+                critical: 1,
+                high: 0,
+                medium: 0,
+                low: 0,
+                info: 0,
+                total: 1,
+            },
+            findings: vec![],
+        };
+
+        let json = serde_json::to_string(&report).expect("JSON serialization should succeed");
+        let parsed: serde_json::Value = serde_json::from_str(&json).expect("should parse JSON");
+
+        assert_eq!(parsed["path"].as_str(), Some("/test"));
+        assert_eq!(parsed["lockfiles_scanned"].as_u64(), Some(1));
+        assert_eq!(parsed["total_packages"].as_u64(), Some(5));
+        assert_eq!(parsed["vulnerabilities"]["total"].as_u64(), Some(1));
+    }
+
+    #[test]
+    fn test_vuln_summary_default() {
+        let summary = VulnSummary::default();
+        assert_eq!(summary.critical, 0);
+        assert_eq!(summary.high, 0);
+        assert_eq!(summary.medium, 0);
+        assert_eq!(summary.low, 0);
+        assert_eq!(summary.info, 0);
+        assert_eq!(summary.total, 0);
+    }
+
+    #[test]
+    fn test_finding_entry_json_structure() {
+        let finding = FindingEntry {
+            cve_id: "CVE-2024-1234".to_owned(),
+            package: "test-package".to_owned(),
+            version: "1.0.0".to_owned(),
+            severity: "High".to_owned(),
+            fixed_version: Some("1.0.1".to_owned()),
+            description: "Test description".to_owned(),
+        };
+
+        let json = serde_json::to_string(&finding).expect("JSON serialization should succeed");
+        let parsed: serde_json::Value = serde_json::from_str(&json).expect("should parse JSON");
+
+        assert_eq!(parsed["cve_id"].as_str(), Some("CVE-2024-1234"));
+        assert_eq!(parsed["package"].as_str(), Some("test-package"));
+        assert_eq!(parsed["version"].as_str(), Some("1.0.0"));
+        assert_eq!(parsed["severity"].as_str(), Some("High"));
+        assert_eq!(parsed["fixed_version"].as_str(), Some("1.0.1"));
+    }
+
+    #[test]
+    fn test_scan_report_render_text_all_severity_levels() {
+        let report = ScanReport {
+            path: "/test".to_owned(),
+            lockfiles_scanned: 1,
+            total_packages: 100,
+            vulnerabilities: VulnSummary {
+                critical: 1,
+                high: 2,
+                medium: 3,
+                low: 4,
+                info: 5,
+                total: 15,
+            },
+            findings: Vec::new(),
+        };
+
+        let mut buffer = Vec::new();
+        report
+            .render_text(&mut buffer)
+            .expect("rendering should succeed");
+
+        let output = String::from_utf8(buffer).expect("valid UTF-8");
+        assert!(output.contains("C:1"), "should show critical count");
+        assert!(output.contains("H:2"), "should show high count");
+        assert!(output.contains("M:3"), "should show medium count");
+        assert!(output.contains("L:4"), "should show low count");
+        assert!(output.contains("I:5"), "should show info count");
+    }
+
+    #[test]
+    fn test_scan_report_large_package_count() {
+        let report = ScanReport {
+            path: "/large/project".to_owned(),
+            lockfiles_scanned: 10,
+            total_packages: 10000,
+            vulnerabilities: VulnSummary::default(),
+            findings: Vec::new(),
+        };
+
+        let mut buffer = Vec::new();
+        report
+            .render_text(&mut buffer)
+            .expect("large count should render");
+
+        let output = String::from_utf8(buffer).expect("valid UTF-8");
+        assert!(
+            output.contains("10000"),
+            "should handle large package counts"
+        );
+    }
+
+    #[test]
+    fn test_finding_entry_with_unicode_package_name() {
+        let finding = FindingEntry {
+            cve_id: "CVE-2024-0001".to_owned(),
+            package: "パッケージ-日本語".to_owned(),
+            version: "1.0.0".to_owned(),
+            severity: "Medium".to_owned(),
+            fixed_version: None,
+            description: "Unicode test".to_owned(),
+        };
+
+        let json = serde_json::to_string(&finding).expect("should serialize unicode");
+        assert!(json.contains("パッケージ"), "should preserve unicode");
+    }
+
+    #[test]
+    fn test_scan_report_empty_path() {
+        let report = ScanReport {
+            path: String::new(),
+            lockfiles_scanned: 0,
+            total_packages: 0,
+            vulnerabilities: VulnSummary::default(),
+            findings: Vec::new(),
+        };
+
+        let mut buffer = Vec::new();
+        report
+            .render_text(&mut buffer)
+            .expect("empty path should render");
+
+        let output = String::from_utf8(buffer).expect("valid UTF-8");
+        assert!(output.contains("Scan:"), "should have header");
+    }
+}

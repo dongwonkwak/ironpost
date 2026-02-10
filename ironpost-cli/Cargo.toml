@@ -25,3 +25,6 @@ libc = "0.2"
 # eBPF engine is Linux-only
 [target.'cfg(target_os = "linux")'.dependencies]
 ironpost-ebpf-engine = { path = "../crates/ebpf-engine" }
+
+[dev-dependencies]
+tempfile = "3.14"

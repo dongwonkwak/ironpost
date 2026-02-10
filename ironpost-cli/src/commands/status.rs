@@ -239,3 +239,347 @@ impl Render for StatusReport {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_status_report_render_text_daemon_running() {
+        let report = StatusReport {
+            daemon_running: true,
+            uptime_secs: Some(3600),
+            modules: Vec::new(),
+        };
+
+        let mut buffer = Vec::new();
+        report
+            .render_text(&mut buffer)
+            .expect("text rendering should succeed");
+
+        let output = String::from_utf8(buffer).expect("valid UTF-8");
+        assert!(output.contains("running"), "should show running status");
+        assert!(output.contains("3600s"), "should show uptime");
+    }
+
+    #[test]
+    fn test_status_report_render_text_daemon_stopped() {
+        let report = StatusReport {
+            daemon_running: false,
+            uptime_secs: None,
+            modules: Vec::new(),
+        };
+
+        let mut buffer = Vec::new();
+        report
+            .render_text(&mut buffer)
+            .expect("text rendering should succeed");
+
+        let output = String::from_utf8(buffer).expect("valid UTF-8");
+        assert!(output.contains("not running"), "should show stopped status");
+    }
+
+    #[test]
+    fn test_status_report_render_text_with_modules() {
+        let report = StatusReport {
+            daemon_running: true,
+            uptime_secs: Some(100),
+            modules: vec![
+                ModuleStatus {
+                    name: "ebpf-engine".to_owned(),
+                    enabled: true,
+                    health: "running".to_owned(),
+                    details: Some("interface=eth0".to_owned()),
+                },
+                ModuleStatus {
+                    name: "log-pipeline".to_owned(),
+                    enabled: true,
+                    health: "running".to_owned(),
+                    details: None,
+                },
+            ],
+        };
+
+        let mut buffer = Vec::new();
+        report
+            .render_text(&mut buffer)
+            .expect("text rendering should succeed");
+
+        let output = String::from_utf8(buffer).expect("valid UTF-8");
+        assert!(output.contains("ebpf-engine"), "should show first module");
+        assert!(output.contains("log-pipeline"), "should show second module");
+        assert!(output.contains("interface=eth0"), "should show details");
+    }
+
+    #[test]
+    fn test_status_report_json_serialization() {
+        let report = StatusReport {
+            daemon_running: true,
+            uptime_secs: Some(500),
+            modules: vec![ModuleStatus {
+                name: "test-module".to_owned(),
+                enabled: true,
+                health: "running".to_owned(),
+                details: Some("test=value".to_owned()),
+            }],
+        };
+
+        let json = serde_json::to_string(&report).expect("JSON serialization should succeed");
+        let parsed: serde_json::Value = serde_json::from_str(&json).expect("should parse JSON");
+
+        assert_eq!(parsed["daemon_running"].as_bool(), Some(true));
+        assert_eq!(parsed["uptime_secs"].as_u64(), Some(500));
+        assert_eq!(
+            parsed["modules"].as_array().expect("should be array").len(),
+            1
+        );
+    }
+
+    #[test]
+    fn test_module_status_json_structure() {
+        let module = ModuleStatus {
+            name: "test".to_owned(),
+            enabled: true,
+            health: "running".to_owned(),
+            details: Some("key=value".to_owned()),
+        };
+
+        let json = serde_json::to_string(&module).expect("JSON serialization should succeed");
+        let parsed: serde_json::Value = serde_json::from_str(&json).expect("should parse JSON");
+
+        assert_eq!(parsed["name"].as_str(), Some("test"));
+        assert_eq!(parsed["enabled"].as_bool(), Some(true));
+        assert_eq!(parsed["health"].as_str(), Some("running"));
+        assert_eq!(parsed["details"].as_str(), Some("key=value"));
+    }
+
+    #[test]
+    fn test_module_status_without_details() {
+        let module = ModuleStatus {
+            name: "test".to_owned(),
+            enabled: false,
+            health: "stopped".to_owned(),
+            details: None,
+        };
+
+        let json = serde_json::to_string(&module).expect("JSON serialization should succeed");
+        let parsed: serde_json::Value = serde_json::from_str(&json).expect("should parse JSON");
+
+        assert!(
+            parsed.get("details").is_none(),
+            "details should be skipped when None"
+        );
+    }
+
+    #[test]
+    fn test_status_report_daemon_running_no_uptime() {
+        let report = StatusReport {
+            daemon_running: true,
+            uptime_secs: None,
+            modules: Vec::new(),
+        };
+
+        let mut buffer = Vec::new();
+        report
+            .render_text(&mut buffer)
+            .expect("text rendering should succeed");
+
+        let output = String::from_utf8(buffer).expect("valid UTF-8");
+        assert!(output.contains("unknown"), "should show unknown uptime");
+    }
+
+    #[test]
+    fn test_status_report_all_modules_enabled() {
+        let report = StatusReport {
+            daemon_running: true,
+            uptime_secs: Some(1000),
+            modules: vec![
+                ModuleStatus {
+                    name: "ebpf-engine".to_owned(),
+                    enabled: true,
+                    health: "running".to_owned(),
+                    details: None,
+                },
+                ModuleStatus {
+                    name: "log-pipeline".to_owned(),
+                    enabled: true,
+                    health: "running".to_owned(),
+                    details: None,
+                },
+                ModuleStatus {
+                    name: "container-guard".to_owned(),
+                    enabled: true,
+                    health: "running".to_owned(),
+                    details: None,
+                },
+                ModuleStatus {
+                    name: "sbom-scanner".to_owned(),
+                    enabled: true,
+                    health: "running".to_owned(),
+                    details: None,
+                },
+            ],
+        };
+
+        let mut buffer = Vec::new();
+        report
+            .render_text(&mut buffer)
+            .expect("text rendering should succeed");
+
+        let output = String::from_utf8(buffer).expect("valid UTF-8");
+        assert!(output.contains("ebpf-engine"));
+        assert!(output.contains("log-pipeline"));
+        assert!(output.contains("container-guard"));
+        assert!(output.contains("sbom-scanner"));
+    }
+
+    #[test]
+    fn test_status_report_mixed_health_states() {
+        let report = StatusReport {
+            daemon_running: true,
+            uptime_secs: Some(50),
+            modules: vec![
+                ModuleStatus {
+                    name: "module1".to_owned(),
+                    enabled: true,
+                    health: "running".to_owned(),
+                    details: None,
+                },
+                ModuleStatus {
+                    name: "module2".to_owned(),
+                    enabled: false,
+                    health: "stopped".to_owned(),
+                    details: None,
+                },
+                ModuleStatus {
+                    name: "module3".to_owned(),
+                    enabled: true,
+                    health: "degraded".to_owned(),
+                    details: Some("warning: high memory usage".to_owned()),
+                },
+            ],
+        };
+
+        let mut buffer = Vec::new();
+        report
+            .render_text(&mut buffer)
+            .expect("text rendering should succeed");
+
+        let output = String::from_utf8(buffer).expect("valid UTF-8");
+        assert!(output.contains("running"));
+        assert!(output.contains("stopped"));
+        assert!(output.contains("degraded"));
+    }
+
+    #[test]
+    fn test_check_daemon_status_no_pid_file() {
+        let (running, uptime) = check_daemon_status("/nonexistent/path/to/pid/file.pid");
+        assert!(!running, "should report not running when PID file missing");
+        assert!(uptime.is_none(), "uptime should be None");
+    }
+
+    #[test]
+    fn test_status_report_large_uptime() {
+        let report = StatusReport {
+            daemon_running: true,
+            uptime_secs: Some(86400 * 30), // 30 days
+            modules: Vec::new(),
+        };
+
+        let mut buffer = Vec::new();
+        report
+            .render_text(&mut buffer)
+            .expect("text rendering should succeed");
+
+        let output = String::from_utf8(buffer).expect("valid UTF-8");
+        assert!(output.contains("2592000s"), "should handle large uptime");
+    }
+
+    #[test]
+    fn test_module_status_long_details() {
+        let long_details = "key1=value1, key2=value2, key3=value3, ".repeat(10);
+        let module = ModuleStatus {
+            name: "test".to_owned(),
+            enabled: true,
+            health: "running".to_owned(),
+            details: Some(long_details.clone()),
+        };
+
+        let report = StatusReport {
+            daemon_running: true,
+            uptime_secs: Some(100),
+            modules: vec![module],
+        };
+
+        let mut buffer = Vec::new();
+        report
+            .render_text(&mut buffer)
+            .expect("long details should render");
+
+        let output = String::from_utf8(buffer).expect("valid UTF-8");
+        assert!(output.contains("key1=value1"), "should handle long details");
+    }
+
+    #[test]
+    fn test_status_report_unicode_module_name() {
+        let report = StatusReport {
+            daemon_running: true,
+            uptime_secs: Some(100),
+            modules: vec![ModuleStatus {
+                name: "モジュール-日本語".to_owned(),
+                enabled: true,
+                health: "running".to_owned(),
+                details: None,
+            }],
+        };
+
+        let mut buffer = Vec::new();
+        report
+            .render_text(&mut buffer)
+            .expect("unicode module name should render");
+
+        let output = String::from_utf8(buffer).expect("valid UTF-8");
+        assert!(output.contains("モジュール"), "should handle unicode");
+    }
+
+    #[test]
+    fn test_status_report_empty_modules() {
+        let report = StatusReport {
+            daemon_running: false,
+            uptime_secs: None,
+            modules: Vec::new(),
+        };
+
+        let json = serde_json::to_string(&report).expect("JSON serialization should succeed");
+        let parsed: serde_json::Value = serde_json::from_str(&json).expect("should parse JSON");
+
+        assert_eq!(
+            parsed["modules"].as_array().expect("should be array").len(),
+            0
+        );
+    }
+
+    #[test]
+    fn test_module_status_disabled_module() {
+        let module = ModuleStatus {
+            name: "disabled-module".to_owned(),
+            enabled: false,
+            health: "stopped".to_owned(),
+            details: None,
+        };
+
+        let report = StatusReport {
+            daemon_running: true,
+            uptime_secs: Some(100),
+            modules: vec![module],
+        };
+
+        let mut buffer = Vec::new();
+        report
+            .render_text(&mut buffer)
+            .expect("disabled module should render");
+
+        let output = String::from_utf8(buffer).expect("valid UTF-8");
+        assert!(output.contains("no"), "should show 'no' for disabled");
+    }
+}

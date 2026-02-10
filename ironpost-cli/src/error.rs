@@ -75,3 +75,130 @@ impl From<ironpost_log_pipeline::LogPipelineError> for CliError {
         Self::Rule(e.to_string())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_exit_code_config_error() {
+        let err = CliError::Config("test error".to_owned());
+        assert_eq!(err.exit_code(), 2, "config error should return exit code 2");
+    }
+
+    #[test]
+    fn test_exit_code_daemon_unavailable() {
+        let err = CliError::DaemonUnavailable("test error".to_owned());
+        assert_eq!(
+            err.exit_code(),
+            3,
+            "daemon unavailable should return exit code 3"
+        );
+    }
+
+    #[test]
+    fn test_exit_code_scan_error() {
+        let err = CliError::Scan("vulnerabilities found".to_owned());
+        assert_eq!(err.exit_code(), 4, "scan error should return exit code 4");
+    }
+
+    #[test]
+    fn test_exit_code_io_error() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");
+        let err = CliError::Io(io_err);
+        assert_eq!(err.exit_code(), 10, "io error should return exit code 10");
+    }
+
+    #[test]
+    fn test_exit_code_command_error() {
+        let err = CliError::Command("test error".to_owned());
+        assert_eq!(
+            err.exit_code(),
+            1,
+            "command error should return exit code 1"
+        );
+    }
+
+    #[test]
+    fn test_exit_code_json_serialize_error() {
+        let json_err = serde_json::from_str::<serde_json::Value>("{invalid json")
+            .expect_err("should fail parsing");
+        let err = CliError::JsonSerialize(json_err);
+        assert_eq!(
+            err.exit_code(),
+            1,
+            "json serialize error should return exit code 1"
+        );
+    }
+
+    #[test]
+    fn test_exit_code_rule_error() {
+        let err = CliError::Rule("invalid rule".to_owned());
+        assert_eq!(err.exit_code(), 1, "rule error should return exit code 1");
+    }
+
+    #[test]
+    fn test_error_display_config() {
+        let err = CliError::Config("invalid TOML syntax".to_owned());
+        let display_str = format!("{}", err);
+        assert!(
+            display_str.contains("configuration error"),
+            "should include error context"
+        );
+        assert!(
+            display_str.contains("invalid TOML syntax"),
+            "should include error message"
+        );
+    }
+
+    #[test]
+    fn test_error_display_command() {
+        let err = CliError::Command("execution failed".to_owned());
+        let display_str = format!("{}", err);
+        assert_eq!(display_str, "execution failed");
+    }
+
+    #[test]
+    fn test_error_display_scan() {
+        let err = CliError::Scan("found 5 vulnerabilities".to_owned());
+        let display_str = format!("{}", err);
+        assert!(display_str.contains("scan error"));
+        assert!(display_str.contains("found 5 vulnerabilities"));
+    }
+
+    #[test]
+    fn test_from_io_error() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "access denied");
+        let cli_err: CliError = io_err.into();
+        match cli_err {
+            CliError::Io(e) => {
+                assert_eq!(e.kind(), std::io::ErrorKind::PermissionDenied);
+            }
+            _ => panic!("expected Io error variant"),
+        }
+    }
+
+    #[test]
+    fn test_from_core_error() {
+        use ironpost_core::error::ConfigError;
+        let config_err = ConfigError::FileNotFound {
+            path: "test.toml".to_owned(),
+        };
+        let core_err = IronpostError::Config(config_err);
+        let cli_err: CliError = core_err.into();
+        match cli_err {
+            CliError::Core(_) => {}
+            _ => panic!("expected Core error variant"),
+        }
+    }
+
+    #[test]
+    fn test_error_debug_format() {
+        let err = CliError::Config("test".to_owned());
+        let debug_str = format!("{:?}", err);
+        assert!(
+            debug_str.contains("Config"),
+            "debug format should show variant name"
+        );
+    }
+}
