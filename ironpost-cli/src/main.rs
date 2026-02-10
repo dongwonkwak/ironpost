@@ -1,5 +1,10 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use std::sync::Arc;
+
+use ironpost_container_guard::{
+    BollardDockerClient, DockerClient, IsolationAction, IsolationExecutor,
+};
 
 /// Ironpost CLI — 통합 보안 모니터링 명령줄 도구
 #[derive(Parser)]
@@ -137,17 +142,9 @@ async fn main() -> Result<()> {
                 tracing::info!("log rules: not yet implemented");
             }
         },
-        Commands::Container { action } => match action {
-            ContainerAction::List => {
-                tracing::info!("container list: not yet implemented");
-            }
-            ContainerAction::Isolate { container_id } => {
-                tracing::info!(id = %container_id, "container isolate: not yet implemented");
-            }
-            ContainerAction::Release { container_id } => {
-                tracing::info!(id = %container_id, "container release: not yet implemented");
-            }
-        },
+        Commands::Container { action } => {
+            handle_container_command(action).await?;
+        }
         Commands::Sbom { action } => match action {
             SbomAction::Generate { path } => {
                 tracing::info!(path = %path, "sbom generate: not yet implemented");
@@ -156,6 +153,72 @@ async fn main() -> Result<()> {
                 tracing::info!(path = %sbom_path, "sbom scan: not yet implemented");
             }
         },
+    }
+
+    Ok(())
+}
+
+async fn handle_container_command(action: ContainerAction) -> Result<()> {
+    let docker = Arc::new(
+        BollardDockerClient::connect_local()
+            .map_err(|e| anyhow::anyhow!("failed to connect to docker: {}", e))?,
+    );
+
+    match action {
+        ContainerAction::List => {
+            let containers = docker
+                .list_containers()
+                .await
+                .map_err(|e| anyhow::anyhow!("failed to list containers: {}", e))?;
+
+            println!("Container List:");
+            println!(
+                "{:<12} {:<30} {:<40} {:<10}",
+                "ID", "Name", "Image", "Status"
+            );
+            println!("{}", "-".repeat(92));
+
+            for container in containers {
+                let short_id = if container.id.len() > 12 {
+                    &container.id[..12]
+                } else {
+                    &container.id
+                };
+                println!(
+                    "{:<12} {:<30} {:<40} {:<10}",
+                    short_id, container.name, container.image, container.status
+                );
+            }
+        }
+        ContainerAction::Isolate { container_id } => {
+            println!("Isolating container: {}", container_id);
+
+            let (action_tx, _action_rx) = tokio::sync::mpsc::channel(16);
+            let executor = IsolationExecutor::new(
+                Arc::clone(&docker),
+                action_tx,
+                std::time::Duration::from_secs(30),
+                3,
+                std::time::Duration::from_millis(100),
+            );
+
+            executor
+                .execute(&container_id, &IsolationAction::Pause, "cli-manual")
+                .await
+                .map_err(|e| anyhow::anyhow!("failed to isolate container: {}", e))?;
+
+            println!("✓ Container {} isolated (paused)", container_id);
+        }
+        ContainerAction::Release { container_id } => {
+            println!("Releasing container: {}", container_id);
+
+            docker
+                .unpause_container(&container_id)
+                .await
+                .map_err(|e| anyhow::anyhow!("failed to release container: {}", e))?;
+
+            println!("✓ Container {} released (unpaused)", container_id);
+        }
     }
 
     Ok(())

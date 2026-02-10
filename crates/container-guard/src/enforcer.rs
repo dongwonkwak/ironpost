@@ -1,1 +1,3 @@
-//! 정책 실행 — 격리, 네트워크 차단, 컨테이너 중지 등 액션 수행
+// Legacy module, superseded by isolation.rs and guard.rs.
+// Intentionally left empty and not part of the public API; safe to remove
+// once all internal references and tooling no longer depend on its presence.

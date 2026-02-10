@@ -1,0 +1,20 @@
+# Medium Severity Database Container Stop Policy
+#
+# This policy stops database containers when Medium severity alerts
+# are detected. Stopping containers is a more aggressive action but
+# ensures complete isolation.
+
+id = "medium-database-stop"
+name = "Medium Alert - Stop Database Containers"
+description = "Stop database containers on Medium severity alerts"
+enabled = false  # Disabled by default - enable with caution
+severity_threshold = "Medium"
+priority = 20
+
+[target_filter]
+# Target database containers
+container_names = ["db-*", "postgres-*", "mysql-*", "mongo-*", "redis-*"]
+image_patterns = ["postgres:*", "mysql:*", "mariadb:*", "mongo:*", "redis:*"]
+
+[action]
+Stop = []

@@ -1,0 +1,20 @@
+# High Severity Web Container Pause Policy
+#
+# This policy pauses web containers (nginx, apache) when High severity
+# alerts are detected. Pausing allows forensics while preventing further damage.
+
+id = "high-web-pause"
+name = "High Alert - Pause Web Containers"
+description = "Pause web server containers on High severity alerts"
+enabled = true
+severity_threshold = "High"
+priority = 10
+
+[target_filter]
+# Target containers with "web-" prefix in name
+container_names = ["web-*", "nginx-*", "apache-*"]
+# Target nginx and apache images
+image_patterns = ["nginx:*", "httpd:*", "apache:*"]
+
+[action]
+Pause = []

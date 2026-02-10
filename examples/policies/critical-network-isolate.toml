@@ -1,0 +1,21 @@
+# Critical Alert Network Isolation Policy
+#
+# This policy isolates containers from all networks when a Critical severity
+# alert is detected. Useful for immediate containment of compromised containers.
+
+id = "critical-network-isolate"
+name = "Critical Alert - Network Isolation"
+description = "Disconnect container from all networks on Critical alerts"
+enabled = true
+severity_threshold = "Critical"
+priority = 1
+
+[target_filter]
+# Target containers with names matching these patterns.
+# WARNING: Empty filters would match ALL containers - always specify explicit
+# patterns in production to prevent isolating unrelated services.
+container_names = ["compromised-*", "suspicious-*"]
+image_patterns = []
+
+[action]
+NetworkDisconnect = { networks = ["bridge", "host"] }

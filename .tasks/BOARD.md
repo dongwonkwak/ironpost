@@ -1,5 +1,5 @@
 # Ironpost 태스크 보드
-> 최종 업데이트: 2026-02-09
+> 최종 업데이트: 2026-02-10
 
 ## 진행 요약
 | Phase | 전체 | 완료 | 진행중 | 대기 | 진행률 |
@@ -8,7 +8,7 @@
 | 1-core | 6 | 6 | 0 | 0 | ✅ |
 | 2-ebpf | 5 | 5 | 0 | 6 | ✅ (설계+구현+리뷰+수정 완료) |
 | 3-log | 12 | 13 | 0 | 5 | ✅ (설계+구현+리뷰+수정 완료) |
-| 4-container | - | - | - | - | ⏳ |
+| 4-container | 17 | 17 | 0 | 0 | ✅ (설계+구현+테스트+리뷰 완료, 202 tests) |
 | 5-sbom | - | - | - | - | ⏳ |
 | 6-polish | - | - | - | - | ⏳ |
 
@@ -16,7 +16,7 @@
 - 없음
 
 ## 현재 진행중
-- 없음 (Phase 3 완료, 문서화 완료)
+- 없음 (Phase 4 문서화 완료)
 
 ## Phase 3 설계 완료 항목
 - [x] `.knowledge/log-pipeline-design.md` -- 전체 설계 문서
@@ -77,7 +77,57 @@
   - ✅ High 3건 수정 완료 (H1, H2, H4, H5 중 핵심 4건)
   - ✅ Medium 1건 수정 완료 (M3)
 
+## Phase 4 설계+스캐폴딩 완료 항목 (Phase 4-A)
+- [x] T4-A1: `.knowledge/container-guard-design.md` -- 전체 설계 문서
+- [x] T4-A2: `Cargo.toml` -- bollard, ironpost-core, tokio, thiserror, tracing, serde, uuid
+- [x] T4-A3: `error.rs` -- ContainerGuardError (8 variants) + IronpostError 변환
+- [x] T4-A4: `config.rs` -- ContainerGuardConfig + Builder + from_core() + validate()
+- [x] T4-A5: `event.rs` -- ContainerEvent + ContainerEventKind + Event trait 구현
+- [x] T4-A6: `docker.rs` -- DockerClient trait + BollardDockerClient + MockDockerClient
+- [x] T4-A7: `policy.rs` -- SecurityPolicy + TargetFilter + PolicyEngine + glob 매칭
+- [x] T4-A8: `isolation.rs` -- IsolationAction + IsolationExecutor (재시도 + 타임아웃)
+- [x] T4-A9: `monitor.rs` -- DockerMonitor (폴링 + 캐싱 + partial ID 조회)
+- [x] T4-A10: `guard.rs` -- ContainerGuard (Pipeline trait) + ContainerGuardBuilder
+- [x] T4-A11: `lib.rs` -- 모듈 re-export
+
+## Phase 4 구현 완료 (Phase 4-B)
+- [x] T4-B1: TOML 정책 파일 로딩 (2026-02-10, load_policy_from_file + load_policies_from_dir)
+- [x] T4-B2: 컨테이너 모니터링 (2026-02-10, poll-based monitoring with cache)
+- [x] T4-B3: 컨테이너-알림 매핑 (2026-02-10, policy evaluation in guard loop)
+- [x] T4-B4: 통합 테스트 (2026-02-10, 98 unit/integration tests)
+- [x] T4-B5: 기본 구현 완료 (2026-02-10, retry + timeout + action events)
+
+## Phase 4 테스트 강화 (Phase 4-C)
+- [x] T4-C1: 엣지 케이스, 통합 테스트, 격리 엔진 테스트 추가 (2026-02-10, 75분, 174 tests total)
+- [x] T4-C2: 추가 엣지 케이스 및 통합 테스트 (2026-02-10, 18:20-19:15, 55분, 202 tests total)
+
+## Phase 4 리뷰
+- [x] T4-D1: 초기 코드 리뷰 (2026-02-10) -- `.reviews/phase-4-container-guard.md`
+  - Critical 5건, High 7건, Medium 8건, Low 9건 (총 29건)
+  - 주요: 무제한 캐시(C1), 파일 크기 미제한(C2), 정책 수 미제한(C3), 재시작 불가(C4), 전체 컨테이너 격리 위험(H3)
+- [x] T4-D2: rustc/clippy 경고 제거 + 초기 리뷰 수정 반영 (2026-02-10)
+  - C1, C2, C3, C5, H1, H2, H5 수정 완료
+- [x] T4-D3: 재리뷰 (2026-02-10) -- `.reviews/phase-4-container-guard.md` (덮어씀)
+  - 초기 리뷰 11건 resolved, 새로운 발견 16건
+  - Critical 2건 (NEW-C1: stop/restart 불가, NEW-C2: canonicalize TOCTOU)
+  - High 6건 (H3,H4,H6,NEW-H1,NEW-H2,NEW-H3)
+  - Medium 11건, Low 10건 (총 27건)
+  - 수정 대기
+
+## Phase 4 문서화 (Phase 4-E)
+- [x] T4-E1: container-guard 문서화 (2026-02-10, 19:45-21:30, 105분)
+  - Doc comments 작성 (config, error, event, docker 모듈)
+  - README.md 재작성 (480+ 라인, 아키텍처/정책/예시/제한사항 전체 포함)
+  - docs/architecture.md 업데이트 (container-guard 섹션 추가)
+
 ## 최근 완료
+- [P4] T4-E1: container-guard 문서화 완료 (doc comments + 480+ lines README + architecture.md, 2026-02-10 21:30, 105분)
+- [P4] T4-D3: container-guard 재리뷰 완료 (27건 발견, 11건 resolved, 2026-02-10)
+- [P4] T4-D2: container-guard 초기 리뷰 수정 반영 (C1-C5,H1,H2,H5 수정, 2026-02-10)
+- [P4] T4-D1: container-guard 코드 리뷰 완료 (29건 발견, 2026-02-10)
+- [P4] T4-C2: container-guard 추가 엣지 케이스 테스트 (28 new tests, 202 total, 2026-02-10 19:15, 55분)
+- [P4] T4-C1: container-guard 테스트 강화 완료 (76 new tests, 174 total, 2026-02-10 16:45, 75분)
+- [P4] Phase 4-B: container-guard 구현 완료 (TOML 정책 로딩, 98 tests, 2026-02-10)
 - [P3] T3-9: 통합 테스트 추가 완료 (6개 통합 시나리오, 280 total tests, 2026-02-09 14:10)
 - [P3] T3-8: 추가 수정 사항 완료 (로그 주입 경로 + 재시작 지원 + IP 추출, 2026-02-09 23:55)
 - [P3] T3-7: 리뷰 지적사항 반영 완료 (Critical 10건 + High 3건 수정, 2026-02-09)
