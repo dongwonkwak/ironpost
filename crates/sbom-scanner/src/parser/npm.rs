@@ -22,8 +22,8 @@ use std::path::Path;
 use serde::Deserialize;
 
 /// NPM lockfile 파싱 시 최대 허용 패키지 수 (DoS 방지)
-/// scanner.rs의 max_packages 설정과 동일한 값을 사용합니다.
-const MAX_NPM_PACKAGES: usize = 50_000;
+/// scanner.rs의 max_packages 설정에서 허용하는 최대값(500,000)에 맞춥니다.
+const MAX_NPM_PACKAGES: usize = 500_000;
 
 /// 패키지 이름 최대 길이 (512자)
 const MAX_PACKAGE_NAME_LEN: usize = 512;

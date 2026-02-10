@@ -213,7 +213,14 @@ guard.start().await?;
 **주요 API**:
 ```rust
 // 스캐너 빌드
-let (mut scanner, alert_rx) = SbomScannerBuilder::new(config)
+let (mut scanner, alert_rx) = SbomScannerBuilder::new()
+    .config(config)
+    .build()?;
+
+// 또는 외부 sender 사용
+let (alert_tx, alert_rx) = mpsc::channel(100);
+let (mut scanner, _) = SbomScannerBuilder::new()
+    .config(config)
     .alert_sender(alert_tx)
     .build()?;
 
@@ -297,7 +304,7 @@ for finding in findings {
 2. 각 CVE의 `affected_ranges`에 대해 버전 비교:
    - SemVer 파싱 시도 (`semver` crate)
    - 성공: 정확한 범위 매칭 (`version >= introduced && version < fixed`)
-   - 실패: 문자열 비교 fallback (lexicographic, 제한적)
+   - 실패: 보수적으로 매칭하지 않음 (오탐 방지, 단 누락 가능성 있음)
 3. `severity >= min_severity` 필터링
 4. 매칭된 CVE → `ScanFinding` → `AlertEvent` 변환
 

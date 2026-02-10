@@ -228,7 +228,7 @@ Lockfile parsing, SBOM generation, and CVE vulnerability scanning.
   - Per-ecosystem JSON files (cargo.json, npm.json)
   - Entry validation (field length limits, affected ranges capping)
   - 1M entry limit with 50MB per-file limit
-- **VulnMatcher**: SemVer-based version range matching with string fallback
+- **VulnMatcher**: SemVer-based version range matching (conservative for non-SemVer)
   - Matches package versions against CVE affected ranges
   - Severity-based filtering (Critical, High, Medium, Low, Info)
 
@@ -273,7 +273,7 @@ Lockfile parsing, SBOM generation, and CVE vulnerability scanning.
 - Single-level directory scan (not recursive)
 - String version comparison fallback may produce false negatives (non-SemVer versions)
 - Restart limitation: `stop()` prevents `start()` on same instance (rebuild required)
-- No graceful shutdown: Periodic scan task aborts immediately
+- Periodic scan task termination: Uses `JoinHandle::abort()` for immediate shutdown
 
 **Performance**:
 - Lockfile parsing: O(n) where n = package count

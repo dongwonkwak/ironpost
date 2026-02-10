@@ -44,8 +44,9 @@ pub trait LockfileParser: Send + Sync {
 
 /// Lockfile 탐지기
 ///
-/// 디렉토리를 재귀적으로 스캔하여 지원되는 lockfile을 찾습니다.
+/// 지정된 디렉토리에서 지원되는 lockfile을 파일명 기반으로 찾습니다.
 /// 등록된 파서 목록을 기반으로 파일 이름 매칭을 수행합니다.
+/// (참고: 실제 디렉토리 순회는 scanner.rs에서 단일 레벨로 수행됨)
 pub struct LockfileDetector {
     /// 알려진 lockfile 파일명 목록
     known_filenames: Vec<(String, Ecosystem)>,
