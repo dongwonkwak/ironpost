@@ -131,12 +131,24 @@ async fn test_e2e_with_vuln_db() {
     assert_eq!(finding.vulnerability.severity, Severity::Critical);
 
     // Should receive alert event
-    let alert_event = tokio::time::timeout(Duration::from_millis(500), alert_rx.recv())
-        .await
-        .expect("should receive alert within timeout")
-        .expect("alert channel should not be closed");
+    // Note: Directory contains both Cargo.lock and package-lock.json, so we may receive
+    // alerts in any order. Collect alerts until we find the Cargo CVE.
+    let mut cargo_alert = None;
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(500);
 
-    assert!(alert_event.alert.title.contains("CVE-2024-TEST-0001"));
+    while tokio::time::Instant::now() < deadline {
+        match tokio::time::timeout_at(deadline, alert_rx.recv()).await {
+            Ok(Some(event)) if event.alert.title.contains("CVE-2024-TEST-0001") => {
+                cargo_alert = Some(event);
+                break;
+            }
+            Ok(Some(_)) => continue, // Different alert, keep looking
+            Ok(None) => panic!("alert channel closed unexpectedly"),
+            Err(_) => break, // Timeout
+        }
+    }
+
+    let alert_event = cargo_alert.expect("should receive CVE-2024-TEST-0001 alert");
     assert_eq!(alert_event.severity, Severity::Critical);
 
     // Verify metrics
