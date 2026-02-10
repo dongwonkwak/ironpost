@@ -20,6 +20,8 @@ pub const MODULE_EBPF: &str = "ebpf-engine";
 pub const MODULE_LOG_PIPELINE: &str = "log-pipeline";
 /// 컨테이너 가드 모듈명
 pub const MODULE_CONTAINER_GUARD: &str = "container-guard";
+/// SBOM 스캐너 모듈명
+pub const MODULE_SBOM_SCANNER: &str = "sbom-scanner";
 
 // --- 이벤트 타입 상수 ---
 
@@ -31,6 +33,8 @@ pub const EVENT_TYPE_LOG: &str = "log";
 pub const EVENT_TYPE_ALERT: &str = "alert";
 /// 액션 이벤트 타입
 pub const EVENT_TYPE_ACTION: &str = "action";
+/// 스캔 이벤트 타입
+pub const EVENT_TYPE_SCAN: &str = "scan";
 
 /// 이벤트 메타데이터 — 모든 이벤트에 공통으로 포함되는 추적 정보
 ///
