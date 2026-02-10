@@ -17,6 +17,7 @@ use crate::types::{PackageGraph, SbomDocument, SbomFormat};
 /// SBOM 문서 생성기
 ///
 /// 설정된 형식(CycloneDX 또는 SPDX)에 따라 JSON SBOM 문서를 생성합니다.
+#[derive(Clone, Copy)]
 pub struct SbomGenerator {
     /// 출력 형식
     format: SbomFormat,

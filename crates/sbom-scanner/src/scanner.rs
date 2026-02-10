@@ -113,138 +113,20 @@ impl SbomScanner {
     pub async fn scan_once(&self) -> Result<Vec<ScanResult>, SbomScannerError> {
         let mut all_results = Vec::new();
 
+        let ctx = ScanContext {
+            parsers: &self.parsers,
+            generator: &self.generator,
+            matcher: &self.matcher,
+            alert_tx: &self.alert_tx,
+            max_file_size: self.config.max_file_size,
+            max_packages: self.config.max_packages,
+            scans_completed: &self.scans_completed,
+            vulns_found: &self.vulns_found,
+        };
+
         for scan_dir in &self.config.scan_dirs {
-            let dir_path = std::path::Path::new(scan_dir);
-
-            // 디렉토리에서 lockfile 탐색 (blocking I/O)
-            let lockfiles = {
-                let dir = dir_path.to_path_buf();
-                let detector = LockfileDetector::new();
-                let max_file_size = self.config.max_file_size;
-                tokio::task::spawn_blocking(move || {
-                    discover_lockfiles(&dir, &detector, max_file_size)
-                })
-                .await
-                .map_err(|e| SbomScannerError::Channel(format!("spawn_blocking failed: {e}")))?
-            }?;
-
-            for (path, content) in &lockfiles {
-                // 적합한 파서 찾기
-                let file_path = std::path::Path::new(path);
-                let parser = match self.parsers.iter().find(|p| p.can_parse(file_path)) {
-                    Some(p) => p,
-                    None => {
-                        debug!(path = %path, "no parser found for lockfile, skipping");
-                        continue;
-                    }
-                };
-
-                // 패키지 그래프 파싱
-                let graph = match parser.parse(content, path) {
-                    Ok(g) => g,
-                    Err(e) => {
-                        warn!(path = %path, error = %e, "failed to parse lockfile, skipping");
-                        continue;
-                    }
-                };
-
-                if graph.package_count() > self.config.max_packages {
-                    warn!(
-                        path = %path,
-                        packages = graph.package_count(),
-                        max = self.config.max_packages,
-                        "too many packages, skipping"
-                    );
-                    continue;
-                }
-
-                // SBOM 생성
-                let sbom_doc = match self.generator.generate(&graph) {
-                    Ok(doc) => Some(doc),
-                    Err(e) => {
-                        warn!(path = %path, error = %e, "failed to generate SBOM");
-                        None
-                    }
-                };
-
-                // 취약점 스캔
-                let findings = if let Some(ref matcher) = self.matcher {
-                    match matcher.scan(&graph) {
-                        Ok(f) => f,
-                        Err(e) => {
-                            warn!(path = %path, error = %e, "vulnerability scan failed");
-                            Vec::new()
-                        }
-                    }
-                } else {
-                    debug!("no vuln db loaded, skipping vulnerability scan");
-                    Vec::new()
-                };
-
-                let finding_count = findings.len();
-
-                let result = ScanResult {
-                    scan_id: uuid::Uuid::new_v4().to_string(),
-                    source_file: path.clone(),
-                    ecosystem: graph.ecosystem,
-                    total_packages: graph.package_count(),
-                    findings,
-                    sbom_document: sbom_doc,
-                    scanned_at: SystemTime::now(),
-                };
-
-                // AlertEvent 전송
-                for finding in &result.findings {
-                    let alert = Alert {
-                        id: uuid::Uuid::new_v4().to_string(),
-                        title: format!(
-                            "{}: {} in {}",
-                            finding.vulnerability.cve_id,
-                            finding.vulnerability.description,
-                            finding.vulnerability.package,
-                        ),
-                        description: format!(
-                            "Package {} version {} is affected by {}. Fixed in: {}",
-                            finding.vulnerability.package,
-                            finding.vulnerability.affected_version,
-                            finding.vulnerability.cve_id,
-                            finding
-                                .vulnerability
-                                .fixed_version
-                                .as_deref()
-                                .unwrap_or("N/A"),
-                        ),
-                        severity: finding.vulnerability.severity,
-                        rule_name: "sbom_vuln_scan".to_owned(),
-                        source_ip: None,
-                        target_ip: None,
-                        created_at: SystemTime::now(),
-                    };
-
-                    let alert_event = AlertEvent::new(alert, finding.vulnerability.severity);
-
-                    if let Err(e) = self.alert_tx.try_send(alert_event) {
-                        warn!(
-                            cve = %finding.vulnerability.cve_id,
-                            error = %e,
-                            "failed to send alert event (channel full or closed)"
-                        );
-                    }
-                }
-
-                self.scans_completed.fetch_add(1, Ordering::Relaxed);
-                let vulns_u64 = u64::try_from(finding_count).unwrap_or(u64::MAX);
-                self.vulns_found.fetch_add(vulns_u64, Ordering::Relaxed);
-
-                info!(
-                    path = %path,
-                    packages = graph.package_count(),
-                    findings = finding_count,
-                    "scan completed"
-                );
-
-                all_results.push(result);
-            }
+            let results = scan_directory(scan_dir, &ctx)?;
+            all_results.extend(results);
         }
 
         Ok(all_results)
@@ -257,18 +139,20 @@ impl Pipeline for SbomScanner {
             return Err(ironpost_core::error::PipelineError::AlreadyRunning.into());
         }
 
+        if self.state == ScannerState::Stopped {
+            return Err(IronpostError::Sbom(ironpost_core::error::SbomError::ScanFailed(
+                "cannot restart stopped scanner, create a new instance".to_owned(),
+            )));
+        }
+
         info!("starting sbom scanner");
 
         // VulnDb 로드 (blocking I/O)
+        // TOCTOU 방지: exists() 체크 없이 직접 로드 시도, 에러 핸들링으로 처리
         let vuln_db_path = self.config.vuln_db_path.clone();
         let db_result = tokio::task::spawn_blocking(move || {
             let path = std::path::Path::new(&vuln_db_path);
-            if path.exists() {
-                VulnDb::load_from_dir(path)
-            } else {
-                tracing::warn!(path = %vuln_db_path, "vuln db directory not found");
-                Ok(VulnDb::empty())
-            }
+            VulnDb::load_from_dir(path)
         })
         .await
         .map_err(|e| {
@@ -292,6 +176,7 @@ impl Pipeline for SbomScanner {
                 ));
             }
             Err(e) => {
+                // 디렉토리 미존재 등의 에러는 경고만 출력하고 계속 진행 (SBOM 전용 모드)
                 warn!(error = %e, "failed to load vulnerability database, running in degraded mode");
             }
         }
@@ -327,125 +212,27 @@ impl Pipeline for SbomScanner {
 
                     info!("starting periodic scan");
 
-                    // 각 스캔 디렉토리 순회
+                    let ctx = ScanContext {
+                        parsers: &parsers,
+                        generator: &generator,
+                        matcher: &matcher_opt,
+                        alert_tx: &alert_tx,
+                        max_file_size,
+                        max_packages,
+                        scans_completed: &scans_completed,
+                        vulns_found: &vulns_found,
+                    };
+
+                    // 각 스캔 디렉토리 순회 (공유 scan_directory 함수 사용)
                     for scan_dir in &scan_dirs {
-                        let dir_path = std::path::Path::new(scan_dir);
-
-                        // lockfile 탐색
-                        let lockfiles_result = {
-                            let dir = dir_path.to_path_buf();
-                            let detector = LockfileDetector::new();
-                            tokio::task::spawn_blocking(move || {
-                                discover_lockfiles(&dir, &detector, max_file_size)
-                            })
-                            .await
-                        };
-
-                        let lockfiles = match lockfiles_result {
-                            Ok(Ok(files)) => files,
-                            Ok(Err(e)) => {
-                                warn!(dir = %scan_dir, error = %e, "failed to discover lockfiles");
-                                continue;
+                        // scan_directory는 동기 함수이므로 직접 호출
+                        match scan_directory(scan_dir, &ctx) {
+                            Ok(_) => {
+                                info!(dir = %scan_dir, "periodic scan completed");
                             }
                             Err(e) => {
-                                warn!(error = %e, "spawn_blocking failed");
-                                continue;
+                                warn!(dir = %scan_dir, error = %e, "periodic scan failed");
                             }
-                        };
-
-                        for (path, content) in &lockfiles {
-                            let file_path = std::path::Path::new(path);
-                            let parser = match parsers.iter().find(|p| p.can_parse(file_path)) {
-                                Some(p) => p,
-                                None => {
-                                    debug!(path = %path, "no parser found");
-                                    continue;
-                                }
-                            };
-
-                            // 패키지 그래프 파싱
-                            let graph = match parser.parse(content, path) {
-                                Ok(g) => g,
-                                Err(e) => {
-                                    warn!(path = %path, error = %e, "parse failed");
-                                    continue;
-                                }
-                            };
-
-                            if graph.package_count() > max_packages {
-                                warn!(path = %path, packages = graph.package_count(), "too many packages");
-                                continue;
-                            }
-
-                            // SBOM 생성
-                            let _sbom_doc = match generator.generate(&graph) {
-                                Ok(doc) => Some(doc),
-                                Err(e) => {
-                                    warn!(path = %path, error = %e, "SBOM generation failed");
-                                    None
-                                }
-                            };
-
-                            // 취약점 스캔
-                            let findings = if let Some(ref matcher) = matcher_opt {
-                                match matcher.scan(&graph) {
-                                    Ok(f) => f,
-                                    Err(e) => {
-                                        warn!(path = %path, error = %e, "vulnerability scan failed");
-                                        Vec::new()
-                                    }
-                                }
-                            } else {
-                                Vec::new()
-                            };
-
-                            let finding_count = findings.len();
-
-                            // AlertEvent 전송
-                            for finding in &findings {
-                                let alert = Alert {
-                                    id: uuid::Uuid::new_v4().to_string(),
-                                    title: format!(
-                                        "{}: {} in {}",
-                                        finding.vulnerability.cve_id,
-                                        finding.vulnerability.description,
-                                        finding.vulnerability.package,
-                                    ),
-                                    description: format!(
-                                        "Package {} version {} is affected by {}. Fixed in: {}",
-                                        finding.vulnerability.package,
-                                        finding.vulnerability.affected_version,
-                                        finding.vulnerability.cve_id,
-                                        finding
-                                            .vulnerability
-                                            .fixed_version
-                                            .as_deref()
-                                            .unwrap_or("N/A"),
-                                    ),
-                                    severity: finding.vulnerability.severity,
-                                    rule_name: "sbom_vuln_scan".to_owned(),
-                                    source_ip: None,
-                                    target_ip: None,
-                                    created_at: SystemTime::now(),
-                                };
-
-                                let alert_event = AlertEvent::new(alert, finding.vulnerability.severity);
-
-                                if let Err(e) = alert_tx.try_send(alert_event) {
-                                    warn!(cve = %finding.vulnerability.cve_id, error = %e, "failed to send alert");
-                                }
-                            }
-
-                            scans_completed.fetch_add(1, Ordering::Relaxed);
-                            let vulns_u64 = u64::try_from(finding_count).unwrap_or(u64::MAX);
-                            vulns_found.fetch_add(vulns_u64, Ordering::Relaxed);
-
-                            info!(
-                                path = %path,
-                                packages = graph.package_count(),
-                                findings = finding_count,
-                                "periodic scan completed"
-                            );
                         }
                     }
                 }
@@ -583,6 +370,155 @@ impl Default for SbomScannerBuilder {
     }
 }
 
+/// 스캔 컨텍스트 (공유 scan_directory 함수용 파라미터 그룹)
+struct ScanContext<'a> {
+    parsers: &'a [Box<dyn LockfileParser>],
+    generator: &'a SbomGenerator,
+    matcher: &'a Option<VulnMatcher>,
+    alert_tx: &'a mpsc::Sender<AlertEvent>,
+    max_file_size: usize,
+    max_packages: usize,
+    scans_completed: &'a AtomicU64,
+    vulns_found: &'a AtomicU64,
+}
+
+/// 단일 디렉토리에서 스캔을 수행합니다 (공유 로직).
+///
+/// scan_once와 periodic 태스크 모두에서 사용됩니다.
+fn scan_directory(
+    scan_dir: &str,
+    ctx: &ScanContext,
+) -> Result<Vec<ScanResult>, SbomScannerError> {
+    let mut results = Vec::new();
+    let dir_path = std::path::Path::new(scan_dir);
+
+    // 디렉토리에서 lockfile 탐색
+    let lockfiles = {
+        let detector = LockfileDetector::new();
+        discover_lockfiles(dir_path, &detector, ctx.max_file_size)?
+    };
+
+    for (path, content) in &lockfiles {
+        // 적합한 파서 찾기
+        let file_path = std::path::Path::new(path);
+        let parser = match ctx.parsers.iter().find(|p| p.can_parse(file_path)) {
+            Some(p) => p,
+            None => {
+                debug!(path = %path, "no parser found for lockfile, skipping");
+                continue;
+            }
+        };
+
+        // 패키지 그래프 파싱
+        let graph = match parser.parse(content, path) {
+            Ok(g) => g,
+            Err(e) => {
+                warn!(path = %path, error = %e, "failed to parse lockfile, skipping");
+                continue;
+            }
+        };
+
+        if graph.package_count() > ctx.max_packages {
+            warn!(
+                path = %path,
+                packages = graph.package_count(),
+                max = ctx.max_packages,
+                "too many packages, skipping"
+            );
+            continue;
+        }
+
+        // SBOM 생성
+        let sbom_doc = match ctx.generator.generate(&graph) {
+            Ok(doc) => Some(doc),
+            Err(e) => {
+                warn!(path = %path, error = %e, "failed to generate SBOM");
+                None
+            }
+        };
+
+        // 취약점 스캔
+        let findings = if let Some(m) = ctx.matcher {
+            match m.scan(&graph) {
+                Ok(f) => f,
+                Err(e) => {
+                    warn!(path = %path, error = %e, "vulnerability scan failed");
+                    Vec::new()
+                }
+            }
+        } else {
+            debug!("no vuln db loaded, skipping vulnerability scan");
+            Vec::new()
+        };
+
+        let finding_count = findings.len();
+
+        let result = ScanResult {
+            scan_id: uuid::Uuid::new_v4().to_string(),
+            source_file: path.clone(),
+            ecosystem: graph.ecosystem,
+            total_packages: graph.package_count(),
+            findings,
+            sbom_document: sbom_doc,
+            scanned_at: SystemTime::now(),
+        };
+
+        // AlertEvent 전송
+        for finding in &result.findings {
+            let alert = Alert {
+                id: uuid::Uuid::new_v4().to_string(),
+                title: format!(
+                    "{}: {} in {}",
+                    finding.vulnerability.cve_id,
+                    finding.vulnerability.description,
+                    finding.vulnerability.package,
+                ),
+                description: format!(
+                    "Package {} version {} is affected by {}. Fixed in: {}",
+                    finding.vulnerability.package,
+                    finding.vulnerability.affected_version,
+                    finding.vulnerability.cve_id,
+                    finding
+                        .vulnerability
+                        .fixed_version
+                        .as_deref()
+                        .unwrap_or("N/A"),
+                ),
+                severity: finding.vulnerability.severity,
+                rule_name: "sbom_vuln_scan".to_owned(),
+                source_ip: None,
+                target_ip: None,
+                created_at: SystemTime::now(),
+            };
+
+            let alert_event = AlertEvent::new(alert, finding.vulnerability.severity);
+
+            if let Err(e) = ctx.alert_tx.try_send(alert_event) {
+                warn!(
+                    cve = %finding.vulnerability.cve_id,
+                    error = %e,
+                    "failed to send alert event (channel full or closed)"
+                );
+            }
+        }
+
+        ctx.scans_completed.fetch_add(1, Ordering::Relaxed);
+        let vulns_u64 = u64::try_from(finding_count).unwrap_or(u64::MAX);
+        ctx.vulns_found.fetch_add(vulns_u64, Ordering::Relaxed);
+
+        info!(
+            path = %path,
+            packages = graph.package_count(),
+            findings = finding_count,
+            "scan completed"
+        );
+
+        results.push(result);
+    }
+
+    Ok(results)
+}
+
 /// 디렉토리에서 lockfile을 탐색하고 내용을 읽습니다 (동기 I/O).
 ///
 /// `tokio::task::spawn_blocking` 내에서 호출되어야 합니다.
@@ -593,16 +529,21 @@ fn discover_lockfiles(
 ) -> Result<Vec<(String, String)>, SbomScannerError> {
     let mut results = Vec::new();
 
-    if !dir.exists() {
-        tracing::warn!(dir = %dir.display(), "scan directory does not exist");
-        return Ok(results);
-    }
-
+    // TOCTOU 방지: exists() 체크 없이 직접 read_dir 시도, 에러 핸들링으로 처리
     // 재귀 없이 1단계만 탐색 (깊은 탐색은 향후 확장)
-    let entries = std::fs::read_dir(dir).map_err(|e| SbomScannerError::Io {
-        path: dir.display().to_string(),
-        source: e,
-    })?;
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            tracing::warn!(dir = %dir.display(), "scan directory does not exist");
+            return Ok(results);
+        }
+        Err(e) => {
+            return Err(SbomScannerError::Io {
+                path: dir.display().to_string(),
+                source: e,
+            });
+        }
+    };
 
     for entry in entries {
         let entry = match entry {

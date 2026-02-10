@@ -212,4 +212,159 @@ checksum = "ghi789"
         // serde has source -> not root
         assert!(!graph.root_packages.contains(&"serde".to_owned()));
     }
+
+    // Edge case tests
+
+    #[test]
+    fn parse_malformed_toml_missing_brackets() {
+        let parser = CargoLockParser;
+        let malformed = r#"
+package
+name = "test"
+version = "1.0.0"
+"#;
+        let result = parser.parse(malformed, "Cargo.lock");
+        assert!(result.is_err());
+        match result {
+            Err(SbomScannerError::LockfileParse { path, .. }) => {
+                assert_eq!(path, "Cargo.lock");
+            }
+            _ => panic!("expected LockfileParse error"),
+        }
+    }
+
+    #[test]
+    fn parse_corrupted_toml_invalid_syntax() {
+        let parser = CargoLockParser;
+        let corrupted = "[[package]]\nname = 'unclosed string";
+        let result = parser.parse(corrupted, "/path/to/Cargo.lock");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_cargo_lock_with_very_long_package_name() {
+        let parser = CargoLockParser;
+        let long_name = "a".repeat(1000);
+        let lockfile = format!(
+            r#"
+[[package]]
+name = "{}"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+"#,
+            long_name
+        );
+        let graph = parser.parse(&lockfile, "Cargo.lock").unwrap();
+        assert_eq!(graph.packages.len(), 1);
+        assert_eq!(graph.packages[0].name.len(), 1000);
+    }
+
+    #[test]
+    fn parse_cargo_lock_with_very_long_version() {
+        let parser = CargoLockParser;
+        let long_version = "1.".to_owned() + &"0".repeat(500);
+        let lockfile = format!(
+            r#"
+[[package]]
+name = "test-pkg"
+version = "{}"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+"#,
+            long_version
+        );
+        let graph = parser.parse(&lockfile, "Cargo.lock").unwrap();
+        assert_eq!(graph.packages.len(), 1);
+        assert_eq!(graph.packages[0].version, long_version);
+    }
+
+    #[test]
+    fn parse_cargo_lock_duplicate_packages() {
+        let parser = CargoLockParser;
+        let lockfile = r#"
+[[package]]
+name = "duplicate-pkg"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
+name = "duplicate-pkg"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+"#;
+        let graph = parser.parse(lockfile, "Cargo.lock").unwrap();
+        // Both versions should be parsed
+        assert_eq!(graph.packages.len(), 2);
+        let versions: Vec<&str> = graph.packages.iter().map(|p| p.version.as_str()).collect();
+        assert!(versions.contains(&"1.0.0"));
+        assert!(versions.contains(&"2.0.0"));
+    }
+
+    #[test]
+    fn parse_cargo_lock_no_packages() {
+        let parser = CargoLockParser;
+        let lockfile = "# Empty lockfile\n";
+        let graph = parser.parse(lockfile, "Cargo.lock").unwrap();
+        assert_eq!(graph.packages.len(), 0);
+        assert_eq!(graph.root_packages.len(), 0);
+    }
+
+    #[test]
+    fn parse_cargo_lock_special_characters_in_name() {
+        let parser = CargoLockParser;
+        let lockfile = r#"
+[[package]]
+name = "pkg-with_special.chars"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+"#;
+        let graph = parser.parse(lockfile, "Cargo.lock").unwrap();
+        assert_eq!(graph.packages.len(), 1);
+        assert_eq!(graph.packages[0].name, "pkg-with_special.chars");
+    }
+
+    #[test]
+    fn parse_cargo_lock_dependency_with_version_spec() {
+        let parser = CargoLockParser;
+        let lockfile = r#"
+[[package]]
+name = "my-app"
+version = "0.1.0"
+dependencies = [
+    "serde 1.0.204",
+    "tokio 1.38.0 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+"#;
+        let graph = parser.parse(lockfile, "Cargo.lock").unwrap();
+        assert_eq!(graph.packages.len(), 1);
+        // Dependencies should have names extracted (without version)
+        assert_eq!(graph.packages[0].dependencies, vec!["serde", "tokio"]);
+    }
+
+    #[test]
+    fn parse_cargo_lock_no_dependencies_field() {
+        let parser = CargoLockParser;
+        let lockfile = r#"
+[[package]]
+name = "standalone"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+"#;
+        let graph = parser.parse(lockfile, "Cargo.lock").unwrap();
+        assert_eq!(graph.packages.len(), 1);
+        assert!(graph.packages[0].dependencies.is_empty());
+    }
+
+    #[test]
+    fn parse_cargo_lock_unicode_in_name() {
+        let parser = CargoLockParser;
+        let lockfile = r#"
+[[package]]
+name = "日本語-パッケージ"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+"#;
+        let graph = parser.parse(lockfile, "Cargo.lock").unwrap();
+        assert_eq!(graph.packages.len(), 1);
+        assert_eq!(graph.packages[0].name, "日本語-パッケージ");
+    }
 }

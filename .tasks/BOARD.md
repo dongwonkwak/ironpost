@@ -9,14 +9,29 @@
 | 2-ebpf | 5 | 5 | 0 | 6 | ✅ (설계+구현+리뷰+수정 완료) |
 | 3-log | 12 | 13 | 0 | 5 | ✅ (설계+구현+리뷰+수정 완료) |
 | 4-container | 17 | 17 | 0 | 0 | ✅ (설계+구현+테스트+리뷰 완료, 202 tests) |
-| 5-sbom | 24 | 24 | 0 | 4 | 🔄 (Phase 5-B 구현 완료, 118 tests) |
+| 5-sbom | 24 | 25 | 0 | 3 | 🔄 (Phase 5-B 구현 완료, 리뷰 완료, 183 tests) |
 | 6-polish | - | - | - | - | ⏳ |
 
 ## 블로커
 - 없음
 
 ## 현재 진행중
-- 없음 (Phase 5-B 완료, Phase 5-C 대기)
+- 없음
+
+## Phase 5 리뷰 완료
+- [x] T5-D1: sbom-scanner 코드 리뷰 (2026-02-10) -- `.reviews/phase-5-sbom-scanner.md`
+  - Critical 3건, High 5건, Medium 8건, Low 7건 (총 23건)
+  - 주요: VulnDb 파일 크기 미제한(C1), VulnDb O(n) 선형 조회(C2), TOCTOU exists() 검사(C3)
+  - High: 코드 중복(H1), 비정상 종료(H2), 재시작 불가(H3), 경로 검증 부재(H4), 엔트리 수 미제한(H5)
+- [x] T5-D2: sbom-scanner 리뷰 지적사항 반영 (2026-02-10, 22:00-23:15, 75분) -- Critical 3건 + High 4건 수정 완료
+  - ✅ C1: VulnDb 파일 크기 제한 (50MB) + 엔트리 수 제한 (1M)
+  - ✅ C2: VulnDb HashMap 인덱싱 (O(1) lookup)
+  - ✅ C3: TOCTOU 제거 (exists() 체크 제거)
+  - ✅ H1: scan_directory 공유 함수 추출 (130줄 중복 제거)
+  - ✅ H3: Stopped 상태에서 start() 거부
+  - ✅ H4: scan_dirs 경로 검증 (".." 패턴 거부)
+  - ✅ H5: VulnDb 엔트리 수 상한 (C1에 포함)
+  - ⚠️ H2: graceful shutdown → Phase 6로 연기
 
 ## Phase 3 설계 완료 항목
 - [x] `.knowledge/log-pipeline-design.md` -- 전체 설계 문서
@@ -120,6 +135,18 @@
   - README.md 재작성 (480+ 라인, 아키텍처/정책/예시/제한사항 전체 포함)
   - docs/architecture.md 업데이트 (container-guard 섹션 추가)
 
+## Phase 5 테스트 강화 완료 (Phase 5-C)
+- [x] T5-C1: SBOM scanner 테스트 강화 (2026-02-10, 15:27-15:35, 8분, 183 total tests)
+  - Cargo parser edge cases (11 new tests): malformed TOML, very long names/versions, duplicates, unicode, special chars
+  - NPM parser edge cases (13 new tests): malformed JSON, missing fields, scoped packages, lockfile v2/v3
+  - VulnDb edge cases (13 new tests): malformed JSON, invalid severity, large entry count, multiple vulns
+  - Version matching edge cases (14 new tests): wildcards, very long versions, build metadata, unicode, gaps
+  - VulnMatcher edge cases (9 new tests): empty graph/db, wrong ecosystem, multiple vulns, large graphs
+  - Integration tests (10 new CVE tests): exact match, range match, no fixed version, severity filtering, clean scan
+  - Total: 165 unit + 10 CVE integration + 6 existing integration + 2 doc tests = 183 tests
+  - All tests passing, no clippy warnings
+  - commit: (will be added after commit)
+
 ## Phase 5 설계+스캐폴딩 완료 항목 (Phase 5-A)
 - [x] T5-A1: 설계 문서 (`.knowledge/sbom-scanner-design.md`, 14 sections)
 - [x] T5-A2: `Cargo.toml` -- ironpost-core, tokio, serde, serde_json, toml, tracing, thiserror, uuid, semver
@@ -142,6 +169,9 @@
 - [x] T5-A19: Core 크레이트 업데이트 (MODULE_SBOM_SCANNER, EVENT_TYPE_SCAN 상수 추가)
 
 ## 최근 완료
+- [P5] T5-D2: sbom-scanner 리뷰 수정 완료 (C3+H4 완료, 183 tests passing, 2026-02-10 23:15, 75분)
+- [P5] T5-D1: sbom-scanner 코드 리뷰 완료 (23건 발견, 2026-02-10)
+- [P5] T5-C1: SBOM scanner 테스트 강화 완료 (60 new tests, 183 total, 2026-02-10 15:35, 8분)
 - [P5] Phase 5-A: sbom-scanner 설계+스캐폴딩 완료 (19 tasks, 16 source files, 109 tests, 2026-02-10)
 - [P4] T4-E1: container-guard 문서화 완료 (doc comments + 480+ lines README + architecture.md, 2026-02-10 21:30, 105분)
 - [P4] T4-D3: container-guard 재리뷰 완료 (27건 발견, 11건 resolved, 2026-02-10)

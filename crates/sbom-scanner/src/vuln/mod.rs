@@ -347,4 +347,277 @@ mod tests {
         assert_eq!(result.finding_count(), 0);
         assert_eq!(result.severity_counts().total(), 0);
     }
+
+    // Additional edge case tests
+
+    #[test]
+    fn scan_empty_package_graph() {
+        let db = Arc::new(sample_db());
+        let matcher = VulnMatcher::new(db, Severity::Info);
+        let empty_graph = PackageGraph {
+            source_file: "empty.lock".to_owned(),
+            ecosystem: Ecosystem::Cargo,
+            packages: vec![],
+            root_packages: vec![],
+        };
+        let findings = matcher.scan(&empty_graph).unwrap();
+        assert_eq!(findings.len(), 0);
+    }
+
+    #[test]
+    fn scan_with_empty_vuln_db() {
+        let empty_db = Arc::new(VulnDb::empty());
+        let matcher = VulnMatcher::new(empty_db, Severity::Info);
+        let findings = matcher.scan(&sample_graph()).unwrap();
+        assert_eq!(findings.len(), 0);
+    }
+
+    #[test]
+    fn scan_wrong_ecosystem_no_match() {
+        let db = Arc::new(sample_db());
+        let matcher = VulnMatcher::new(db, Severity::Info);
+        let npm_graph = PackageGraph {
+            source_file: "package-lock.json".to_owned(),
+            ecosystem: Ecosystem::Npm,
+            packages: vec![Package {
+                name: "vulnerable-pkg".to_owned(), // Same name but NPM
+                version: "0.1.3".to_owned(),
+                ecosystem: Ecosystem::Npm,
+                purl: "pkg:npm/vulnerable-pkg@0.1.3".to_owned(),
+                checksum: None,
+                dependencies: vec![],
+            }],
+            root_packages: vec![],
+        };
+        let findings = matcher.scan(&npm_graph).unwrap();
+        // Should not match Cargo vulnerability
+        assert_eq!(findings.len(), 0);
+    }
+
+    #[test]
+    fn scan_version_outside_range() {
+        let db = Arc::new(sample_db());
+        let matcher = VulnMatcher::new(db, Severity::Info);
+        let safe_graph = PackageGraph {
+            source_file: "Cargo.lock".to_owned(),
+            ecosystem: Ecosystem::Cargo,
+            packages: vec![Package {
+                name: "vulnerable-pkg".to_owned(),
+                version: "0.2.0".to_owned(), // Fixed version
+                ecosystem: Ecosystem::Cargo,
+                purl: "pkg:cargo/vulnerable-pkg@0.2.0".to_owned(),
+                checksum: None,
+                dependencies: vec![],
+            }],
+            root_packages: vec![],
+        };
+        let findings = matcher.scan(&safe_graph).unwrap();
+        assert_eq!(findings.len(), 0);
+    }
+
+    #[test]
+    fn scan_multiple_vulnerabilities_same_package() {
+        let db = Arc::new(VulnDb::from_entries(vec![
+            VulnDbEntry {
+                cve_id: "CVE-2024-0001".to_owned(),
+                package: "multi-vuln".to_owned(),
+                ecosystem: Ecosystem::Cargo,
+                affected_ranges: vec![VersionRange {
+                    introduced: Some("1.0.0".to_owned()),
+                    fixed: Some("2.0.0".to_owned()),
+                }],
+                fixed_version: Some("2.0.0".to_owned()),
+                severity: Severity::High,
+                description: "First vuln".to_owned(),
+                published: "2024-01-01".to_owned(),
+            },
+            VulnDbEntry {
+                cve_id: "CVE-2024-0002".to_owned(),
+                package: "multi-vuln".to_owned(),
+                ecosystem: Ecosystem::Cargo,
+                affected_ranges: vec![VersionRange {
+                    introduced: Some("1.0.0".to_owned()),
+                    fixed: Some("1.5.0".to_owned()),
+                }],
+                fixed_version: Some("1.5.0".to_owned()),
+                severity: Severity::Critical,
+                description: "Second vuln".to_owned(),
+                published: "2024-01-15".to_owned(),
+            },
+        ]));
+        let matcher = VulnMatcher::new(db, Severity::Info);
+        let graph = PackageGraph {
+            source_file: "Cargo.lock".to_owned(),
+            ecosystem: Ecosystem::Cargo,
+            packages: vec![Package {
+                name: "multi-vuln".to_owned(),
+                version: "1.2.0".to_owned(),
+                ecosystem: Ecosystem::Cargo,
+                purl: "pkg:cargo/multi-vuln@1.2.0".to_owned(),
+                checksum: None,
+                dependencies: vec![],
+            }],
+            root_packages: vec![],
+        };
+        let findings = matcher.scan(&graph).unwrap();
+        // Both vulnerabilities should match
+        assert_eq!(findings.len(), 2);
+    }
+
+    #[test]
+    fn severity_counts_all_levels() {
+        let result = ScanResult {
+            scan_id: "test".to_owned(),
+            source_file: "test".to_owned(),
+            ecosystem: Ecosystem::Cargo,
+            total_packages: 0,
+            findings: vec![
+                ScanFinding {
+                    vulnerability: Vulnerability {
+                        cve_id: "C1".to_owned(),
+                        package: "a".to_owned(),
+                        affected_version: "1.0".to_owned(),
+                        fixed_version: None,
+                        severity: Severity::Critical,
+                        description: String::new(),
+                    },
+                    matched_package: Package {
+                        name: "a".to_owned(),
+                        version: "1.0".to_owned(),
+                        ecosystem: Ecosystem::Cargo,
+                        purl: String::new(),
+                        checksum: None,
+                        dependencies: vec![],
+                    },
+                    scan_source: "test".to_owned(),
+                },
+                ScanFinding {
+                    vulnerability: Vulnerability {
+                        cve_id: "H1".to_owned(),
+                        package: "b".to_owned(),
+                        affected_version: "1.0".to_owned(),
+                        fixed_version: None,
+                        severity: Severity::High,
+                        description: String::new(),
+                    },
+                    matched_package: Package {
+                        name: "b".to_owned(),
+                        version: "1.0".to_owned(),
+                        ecosystem: Ecosystem::Cargo,
+                        purl: String::new(),
+                        checksum: None,
+                        dependencies: vec![],
+                    },
+                    scan_source: "test".to_owned(),
+                },
+                ScanFinding {
+                    vulnerability: Vulnerability {
+                        cve_id: "M1".to_owned(),
+                        package: "c".to_owned(),
+                        affected_version: "1.0".to_owned(),
+                        fixed_version: None,
+                        severity: Severity::Medium,
+                        description: String::new(),
+                    },
+                    matched_package: Package {
+                        name: "c".to_owned(),
+                        version: "1.0".to_owned(),
+                        ecosystem: Ecosystem::Cargo,
+                        purl: String::new(),
+                        checksum: None,
+                        dependencies: vec![],
+                    },
+                    scan_source: "test".to_owned(),
+                },
+                ScanFinding {
+                    vulnerability: Vulnerability {
+                        cve_id: "L1".to_owned(),
+                        package: "d".to_owned(),
+                        affected_version: "1.0".to_owned(),
+                        fixed_version: None,
+                        severity: Severity::Low,
+                        description: String::new(),
+                    },
+                    matched_package: Package {
+                        name: "d".to_owned(),
+                        version: "1.0".to_owned(),
+                        ecosystem: Ecosystem::Cargo,
+                        purl: String::new(),
+                        checksum: None,
+                        dependencies: vec![],
+                    },
+                    scan_source: "test".to_owned(),
+                },
+                ScanFinding {
+                    vulnerability: Vulnerability {
+                        cve_id: "I1".to_owned(),
+                        package: "e".to_owned(),
+                        affected_version: "1.0".to_owned(),
+                        fixed_version: None,
+                        severity: Severity::Info,
+                        description: String::new(),
+                    },
+                    matched_package: Package {
+                        name: "e".to_owned(),
+                        version: "1.0".to_owned(),
+                        ecosystem: Ecosystem::Cargo,
+                        purl: String::new(),
+                        checksum: None,
+                        dependencies: vec![],
+                    },
+                    scan_source: "test".to_owned(),
+                },
+            ],
+            sbom_document: None,
+            scanned_at: SystemTime::now(),
+        };
+
+        let counts = result.severity_counts();
+        assert_eq!(counts.critical, 1);
+        assert_eq!(counts.high, 1);
+        assert_eq!(counts.medium, 1);
+        assert_eq!(counts.low, 1);
+        assert_eq!(counts.info, 1);
+        assert_eq!(counts.total(), 5);
+    }
+
+    #[test]
+    fn matcher_min_severity_critical() {
+        let db = Arc::new(sample_db());
+        let matcher = VulnMatcher::new(db, Severity::Critical);
+        let findings = matcher.scan(&sample_graph()).unwrap();
+        // Only Critical findings, sample_db has High and Low
+        for finding in &findings {
+            assert_eq!(finding.vulnerability.severity, Severity::Critical);
+        }
+    }
+
+    #[test]
+    fn scan_very_large_package_graph() {
+        let db = Arc::new(sample_db());
+        let matcher = VulnMatcher::new(db, Severity::Info);
+
+        // Generate large package list
+        let packages: Vec<Package> = (0..1000)
+            .map(|i| Package {
+                name: format!("pkg-{}", i),
+                version: "1.0.0".to_owned(),
+                ecosystem: Ecosystem::Cargo,
+                purl: format!("pkg:cargo/pkg-{}@1.0.0", i),
+                checksum: None,
+                dependencies: vec![],
+            })
+            .collect();
+
+        let large_graph = PackageGraph {
+            source_file: "Cargo.lock".to_owned(),
+            ecosystem: Ecosystem::Cargo,
+            packages,
+            root_packages: vec![],
+        };
+
+        // Should complete without panic
+        let findings = matcher.scan(&large_graph).unwrap();
+        assert!(findings.is_empty()); // No matches in sample_db
+    }
 }

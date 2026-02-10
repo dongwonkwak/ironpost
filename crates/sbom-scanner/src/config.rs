@@ -159,6 +159,33 @@ impl SbomScannerConfig {
             });
         }
 
+        // 경로 순회 공격 방어: ".." 패턴 검증
+        for scan_dir in &self.scan_dirs {
+            if scan_dir.is_empty() {
+                return Err(SbomScannerError::Config {
+                    field: "scan_dirs".to_owned(),
+                    reason: "scan directory path must not be empty".to_owned(),
+                });
+            }
+
+            if scan_dir.contains("..") {
+                return Err(SbomScannerError::Config {
+                    field: "scan_dirs".to_owned(),
+                    reason: format!(
+                        "scan directory '{}' contains path traversal pattern '..'",
+                        scan_dir
+                    ),
+                });
+            }
+        }
+
+        if self.enabled && self.vuln_db_path.contains("..") {
+            return Err(SbomScannerError::Config {
+                field: "vuln_db_path".to_owned(),
+                reason: "vuln_db_path contains path traversal pattern '..'".to_owned(),
+            });
+        }
+
         Ok(())
     }
 }

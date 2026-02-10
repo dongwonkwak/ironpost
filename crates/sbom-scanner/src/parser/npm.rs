@@ -245,4 +245,197 @@ mod tests {
             "debug"
         );
     }
+
+    // Edge case tests
+
+    #[test]
+    fn parse_malformed_json_syntax_error() {
+        let parser = NpmLockParser;
+        let malformed = r#"{ "packages": { "invalid json syntax"#;
+        let result = parser.parse(malformed, "package-lock.json");
+        assert!(result.is_err());
+        match result {
+            Err(SbomScannerError::LockfileParse { path, .. }) => {
+                assert_eq!(path, "package-lock.json");
+            }
+            _ => panic!("expected LockfileParse error"),
+        }
+    }
+
+    #[test]
+    fn parse_corrupted_json_truncated() {
+        let parser = NpmLockParser;
+        let corrupted = r#"{ "packages": { "node_modules/lodash": { "version": "4.17"#;
+        let result = parser.parse(corrupted, "package-lock.json");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_empty_json_object() {
+        let parser = NpmLockParser;
+        let empty = "{}";
+        let graph = parser.parse(empty, "package-lock.json").unwrap();
+        assert_eq!(graph.packages.len(), 0);
+        assert_eq!(graph.root_packages.len(), 0);
+    }
+
+    #[test]
+    fn parse_package_lock_very_long_package_name() {
+        let parser = NpmLockParser;
+        let long_name = "a".repeat(2000);
+        let json = format!(
+            r#"{{
+  "packages": {{
+    "node_modules/{}": {{
+      "version": "1.0.0"
+    }}
+  }}
+}}"#,
+            long_name
+        );
+        let graph = parser.parse(&json, "package-lock.json").unwrap();
+        assert_eq!(graph.packages.len(), 1);
+        assert_eq!(graph.packages[0].name.len(), 2000);
+    }
+
+    #[test]
+    fn parse_package_lock_very_long_version() {
+        let parser = NpmLockParser;
+        let long_version = "1.0.0-beta.".to_owned() + &"0".repeat(1000);
+        let json = format!(
+            r#"{{
+  "packages": {{
+    "node_modules/test-pkg": {{
+      "version": "{}"
+    }}
+  }}
+}}"#,
+            long_version
+        );
+        let graph = parser.parse(&json, "package-lock.json").unwrap();
+        assert_eq!(graph.packages.len(), 1);
+        assert_eq!(graph.packages[0].version, long_version);
+    }
+
+    #[test]
+    fn parse_package_lock_duplicate_packages() {
+        let parser = NpmLockParser;
+        let json = r#"{
+  "packages": {
+    "node_modules/lodash": {
+      "version": "4.17.20"
+    },
+    "node_modules/express/node_modules/lodash": {
+      "version": "4.17.21"
+    }
+  }
+}"#;
+        let graph = parser.parse(json, "package-lock.json").unwrap();
+        // Both versions should be parsed (nested dependencies)
+        assert_eq!(graph.packages.len(), 2);
+    }
+
+    #[test]
+    fn parse_package_lock_missing_version_skipped() {
+        let parser = NpmLockParser;
+        let json = r#"{
+  "packages": {
+    "node_modules/no-version": {},
+    "node_modules/valid": {
+      "version": "1.0.0"
+    }
+  }
+}"#;
+        let graph = parser.parse(json, "package-lock.json").unwrap();
+        // Only package with version should be included
+        assert_eq!(graph.packages.len(), 1);
+        assert_eq!(graph.packages[0].name, "valid");
+    }
+
+    #[test]
+    fn parse_package_lock_scoped_package_name() {
+        let parser = NpmLockParser;
+        let json = r#"{
+  "packages": {
+    "node_modules/@types/node": {
+      "version": "20.0.0"
+    }
+  }
+}"#;
+        let graph = parser.parse(json, "package-lock.json").unwrap();
+        assert_eq!(graph.packages.len(), 1);
+        assert_eq!(graph.packages[0].name, "@types/node");
+    }
+
+    #[test]
+    fn parse_package_lock_root_entry_extracted() {
+        let parser = NpmLockParser;
+        let json = r#"{
+  "packages": {
+    "": {
+      "name": "my-root-app",
+      "version": "1.0.0"
+    }
+  }
+}"#;
+        let graph = parser.parse(json, "package-lock.json").unwrap();
+        assert_eq!(graph.root_packages, vec!["my-root-app"]);
+        // Root entry should not appear in packages
+        assert_eq!(graph.packages.len(), 0);
+    }
+
+    #[test]
+    fn parse_package_lock_unicode_in_package_name() {
+        let parser = NpmLockParser;
+        let json = r#"{
+  "packages": {
+    "node_modules/测试-包": {
+      "version": "1.0.0"
+    }
+  }
+}"#;
+        let graph = parser.parse(json, "package-lock.json").unwrap();
+        assert_eq!(graph.packages.len(), 1);
+        assert_eq!(graph.packages[0].name, "测试-包");
+    }
+
+    #[test]
+    fn parse_package_lock_lockfile_version_2() {
+        let parser = NpmLockParser;
+        let json = r#"{
+  "name": "test-app",
+  "lockfileVersion": 2,
+  "packages": {
+    "node_modules/lodash": {
+      "version": "4.17.21"
+    }
+  }
+}"#;
+        let graph = parser.parse(json, "package-lock.json").unwrap();
+        assert_eq!(graph.packages.len(), 1);
+    }
+
+    #[test]
+    fn parse_package_lock_empty_dependencies() {
+        let parser = NpmLockParser;
+        let json = r#"{
+  "packages": {
+    "node_modules/no-deps": {
+      "version": "1.0.0",
+      "dependencies": {}
+    }
+  }
+}"#;
+        let graph = parser.parse(json, "package-lock.json").unwrap();
+        assert_eq!(graph.packages.len(), 1);
+        assert!(graph.packages[0].dependencies.is_empty());
+    }
+
+    #[test]
+    fn parse_package_lock_no_packages_field() {
+        let parser = NpmLockParser;
+        let json = r#"{ "name": "app", "lockfileVersion": 3 }"#;
+        let graph = parser.parse(json, "package-lock.json").unwrap();
+        assert_eq!(graph.packages.len(), 0);
+    }
 }
