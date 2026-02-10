@@ -1,0 +1,26 @@
+# Network Port Scan Detection Rule
+# Detects port scanning activity based on connection patterns
+
+id: network_scan
+title: Network Port Scan Detected
+description: Detected multiple connection attempts to different ports from the same source, indicating a port scan
+severity: Medium
+status: enabled
+
+detection:
+  conditions:
+    - field: source
+      value: ebpf
+    - field: event_type
+      value: packet
+
+  threshold:
+    field: src_ip
+    count: 20
+    timeframe: 60  # 1 minute
+
+tags:
+  - network
+  - reconnaissance
+  - scan
+  - attack

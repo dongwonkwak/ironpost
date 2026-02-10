@@ -2,14 +2,28 @@
 name = "ironpost-log-pipeline"
 version = "0.1.0"
 edition = "2024"
-description = "Ironpost 로그 수집·파싱·분석·저장 파이프라인"
+description = "Ironpost 로그 수집/파싱/룰 매칭/알림 파이프라인"
 
 [dependencies]
 ironpost-core = { path = "../core" }
 tokio = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 tracing = { workspace = true }
+thiserror = { workspace = true }
 bytes = { workspace = true }
-nom = "8"
-redis = { version = "0.27", features = ["tokio-comp"] }
-sqlx = { version = "0.8", features = ["runtime-tokio", "postgres"] }
+uuid = { workspace = true }
+
+# YAML rule parsing
+serde_yaml = "0.9"
+
+# Regex for rule matching
+regex = "1"
+
+# Timestamp parsing
+chrono = { version = "0.4", features = ["serde"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util", "macros"] }
+tempfile = "3"
+proptest = "1"

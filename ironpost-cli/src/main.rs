@@ -19,7 +19,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// eBPF 엔진 관련 명령
+    /// eBPF 엔진 관련 명령 (Linux 전용)
+    #[cfg(target_os = "linux")]
     Ebpf {
         #[command(subcommand)]
         action: EbpfAction,
@@ -41,6 +42,7 @@ enum Commands {
     },
 }
 
+#[cfg(target_os = "linux")]
 #[derive(Subcommand)]
 enum EbpfAction {
     /// eBPF 엔진 상태 확인
@@ -105,8 +107,9 @@ async fn main() -> Result<()> {
 
     tracing::info!(config = %cli.config, "ironpost-cli starting");
 
-    match cli.command {
-        Commands::Ebpf { action } => match action {
+    #[cfg(target_os = "linux")]
+    if let Commands::Ebpf { action } = &cli.command {
+        match action {
             EbpfAction::Status => {
                 tracing::info!("ebpf status: not yet implemented");
             }
@@ -116,7 +119,13 @@ async fn main() -> Result<()> {
             EbpfAction::Stats => {
                 tracing::info!("ebpf stats: not yet implemented");
             }
-        },
+        }
+        return Ok(());
+    }
+
+    match cli.command {
+        #[cfg(target_os = "linux")]
+        Commands::Ebpf { .. } => unreachable!(),
         Commands::Log { action } => match action {
             LogAction::Status => {
                 tracing::info!("log pipeline status: not yet implemented");

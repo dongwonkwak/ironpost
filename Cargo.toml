@@ -12,10 +12,10 @@ members = [
     "ironpost-daemon",
     "xtask",
 ]
+# macOS에서는 eBPF 관련 크레이트 제외 (Linux 전용)
+# Linux에서 전체 빌드 시: cargo build --workspace
 default-members = [
     "crates/core",
-    "crates/ebpf-engine",
-    "crates/ebpf-engine/ebpf-common",
     "crates/log-pipeline",
     "crates/container-guard",
     "crates/sbom-scanner",
