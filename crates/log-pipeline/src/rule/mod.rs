@@ -305,9 +305,7 @@ impl ironpost_core::pipeline::Detector for RuleEngine {
             }
 
             let matched = self.matcher.matches(rule, entry).map_err(|e| {
-                IronpostError::Detection(ironpost_core::error::DetectionError::Rule(
-                    e.to_string(),
-                ))
+                IronpostError::Detection(ironpost_core::error::DetectionError::Rule(e.to_string()))
             })?;
 
             if matched {
@@ -398,10 +396,7 @@ mod tests {
     #[test]
     fn extract_group_key_unknown_returns_none() {
         let entry = sample_entry();
-        assert_eq!(
-            RuleEngine::extract_group_key(&entry, "nonexistent"),
-            None
-        );
+        assert_eq!(RuleEngine::extract_group_key(&entry, "nonexistent"), None);
     }
 
     #[test]
