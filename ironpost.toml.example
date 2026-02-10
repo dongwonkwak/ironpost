@@ -1,0 +1,138 @@
+# =============================================================================
+# Ironpost Configuration File
+# =============================================================================
+#
+# This is the unified configuration file for the ironpost security monitoring
+# platform. Each section controls a specific module.
+#
+# Configuration loading priority (highest to lowest):
+#   1. CLI arguments (--log-level, --config, etc.)
+#   2. Environment variables (IRONPOST_{SECTION}_{FIELD})
+#   3. This configuration file (ironpost.toml)
+#   4. Built-in defaults
+#
+# To validate this file:
+#   ironpost-cli config validate --config ironpost.toml
+
+# =============================================================================
+# [general] -- Daemon-level settings
+# =============================================================================
+[general]
+# Log verbosity level: trace, debug, info, warn, error
+log_level = "info"
+
+# Log output format: "json" for structured logs, "pretty" for human-readable
+log_format = "json"
+
+# Directory for persistent data (vuln DB, state files, etc.)
+data_dir = "/var/lib/ironpost"
+
+# PID file path (prevents duplicate daemon instances)
+pid_file = "/var/run/ironpost.pid"
+
+# =============================================================================
+# [ebpf] -- eBPF XDP Network Packet Engine (Linux only)
+# =============================================================================
+# Captures network packets via XDP programs, detects anomalies (SYN flood,
+# port scan), and forwards PacketEvents to the log pipeline.
+#
+# Requires: Linux kernel 5.7+, CAP_BPF or root privileges
+# Ignored on non-Linux platforms.
+[ebpf]
+# Enable/disable the eBPF engine
+enabled = false
+
+# Network interface to attach XDP program to
+interface = "eth0"
+
+# XDP attach mode: "native" (driver), "skb" (generic), "hw" (hardware offload)
+# Use "skb" for maximum compatibility, "native" for best performance
+xdp_mode = "skb"
+
+# Ring buffer size for kernel-to-userspace event transfer (bytes)
+# Larger values reduce event loss under high packet rates
+ring_buffer_size = 262144  # 256 KB
+
+# Maximum entries in the IP blocklist eBPF map
+blocklist_max_entries = 10000
+
+# =============================================================================
+# [log_pipeline] -- Log Collection, Parsing, and Detection
+# =============================================================================
+# Collects logs from multiple sources, parses them (syslog RFC 5424, JSON),
+# matches against YAML detection rules, and generates AlertEvents.
+[log_pipeline]
+# Enable/disable the log pipeline
+enabled = true
+
+# Log collection sources: "syslog", "file"
+sources = ["syslog", "file"]
+
+# Syslog UDP/TCP receiver bind address
+syslog_bind = "0.0.0.0:514"
+
+# File paths to watch for new log entries
+watch_paths = ["/var/log/syslog"]
+
+# Number of log entries to accumulate before processing as a batch
+batch_size = 100
+
+# Maximum seconds between batch flushes (even if batch_size not reached)
+flush_interval_secs = 5
+
+# --- Storage (future: PostgreSQL/Redis for log persistence) ---
+[log_pipeline.storage]
+postgres_url = "postgresql://localhost:5432/ironpost"
+redis_url = "redis://localhost:6379"
+
+# How many days to retain stored logs
+retention_days = 30
+
+# =============================================================================
+# [container] -- Container Guard / Automatic Isolation
+# =============================================================================
+# Monitors Docker containers, evaluates security policies against incoming
+# AlertEvents, and executes isolation actions (pause, stop, network disconnect).
+#
+# Requires: Docker daemon access (socket or TCP)
+[container]
+# Enable/disable the container guard
+enabled = false
+
+# Docker daemon socket path
+docker_socket = "/var/run/docker.sock"
+
+# How often to refresh container inventory (seconds)
+poll_interval_secs = 10
+
+# Directory containing TOML security policy files
+policy_path = "/etc/ironpost/policies"
+
+# Automatically execute isolation actions when policies match
+# WARNING: Set to true only after thorough policy testing
+auto_isolate = false
+
+# =============================================================================
+# [sbom] -- SBOM Generation and Vulnerability Scanning
+# =============================================================================
+# Discovers lockfiles (Cargo.lock, package-lock.json), generates SBOM documents
+# (CycloneDX, SPDX), and scans against a local vulnerability database.
+[sbom]
+# Enable/disable the SBOM scanner
+enabled = false
+
+# Directories to scan for lockfiles (non-recursive, 1 level only)
+scan_dirs = ["."]
+
+# Hours between vulnerability database refresh checks
+vuln_db_update_hours = 24
+
+# Local vulnerability database directory path
+vuln_db_path = "/var/lib/ironpost/vuln-db"
+
+# Minimum severity level for generating alert events
+# Options: info, low, medium, high, critical
+min_severity = "medium"
+
+# SBOM output document format: "cyclonedx" or "spdx"
+output_format = "cyclonedx"

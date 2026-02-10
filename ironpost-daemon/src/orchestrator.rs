@@ -1,0 +1,338 @@
+//! Module orchestration -- assembly, channel wiring, and lifecycle management.
+//!
+//! The [`Orchestrator`] is the central coordinator of `ironpost-daemon`.
+//! It loads configuration, creates inter-module channels, builds enabled
+//! modules, manages startup/shutdown ordering, and runs the main event loop.
+//!
+//! # Startup Order (producers before consumers)
+//!
+//! 1. eBPF Engine (produces PacketEvents)
+//! 2. Log Pipeline (consumes PacketEvents, produces AlertEvents)
+//! 3. SBOM Scanner (produces AlertEvents)
+//! 4. Container Guard (consumes AlertEvents, produces ActionEvents)
+//!
+//! # Shutdown Order (reverse of startup)
+//!
+//! 1. eBPF Engine (stop producing)
+//! 2. SBOM Scanner (stop producing)
+//! 3. Log Pipeline (drain buffer, stop producing alerts)
+//! 4. Container Guard (drain remaining alerts)
+
+use std::path::Path;
+use std::time::Instant;
+
+use anyhow::Result;
+use tokio::sync::{broadcast, mpsc};
+
+use ironpost_core::config::IronpostConfig;
+use ironpost_core::event::{ActionEvent, AlertEvent};
+
+use crate::health::{DaemonHealth, ModuleHealth, aggregate_status};
+use crate::modules::ModuleRegistry;
+
+/// Channel capacity constants.
+const PACKET_CHANNEL_CAPACITY: usize = 1024;
+const ALERT_CHANNEL_CAPACITY: usize = 256;
+
+/// The main daemon orchestrator.
+///
+/// Manages the complete lifecycle of all ironpost modules:
+/// configuration loading, channel wiring, ordered startup,
+/// health monitoring, and graceful shutdown.
+pub struct Orchestrator {
+    /// Loaded and validated configuration.
+    config: IronpostConfig,
+    /// Registry of all module handles (ordered for start/stop).
+    modules: ModuleRegistry,
+    /// Shutdown broadcast sender (signals all background tasks).
+    shutdown_tx: broadcast::Sender<()>,
+    /// Daemon start time (for uptime reporting).
+    #[allow(dead_code)] // Used in health method
+    start_time: Instant,
+    /// Optional action event receiver (for logging/audit).
+    action_rx: Option<mpsc::Receiver<ActionEvent>>,
+}
+
+impl Orchestrator {
+    /// Load configuration and build the orchestrator.
+    ///
+    /// This performs the following steps:
+    /// 1. Load `ironpost.toml` and apply environment variable overrides
+    /// 2. Validate the configuration
+    /// 3. Create inter-module channels
+    /// 4. Initialize enabled modules
+    ///
+    /// # Arguments
+    ///
+    /// * `config_path` - Path to the `ironpost.toml` configuration file
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - Configuration file cannot be read or parsed
+    /// - Configuration validation fails
+    /// - Any enabled module fails to initialize
+    #[allow(dead_code)] // Public API for tests
+    pub async fn build(config_path: &Path) -> Result<Self> {
+        let config = IronpostConfig::load(config_path)
+            .await
+            .map_err(|e| anyhow::anyhow!("failed to load config: {}", e))?;
+        Self::build_from_config(config).await
+    }
+
+    /// Build from an already-loaded configuration.
+    ///
+    /// Useful for testing or when config has already been loaded.
+    pub async fn build_from_config(config: IronpostConfig) -> Result<Self> {
+        config
+            .validate()
+            .map_err(|e| anyhow::anyhow!("config validation failed: {}", e))?;
+
+        tracing::debug!("creating inter-module channels");
+
+        // Create channels
+        let (packet_tx, _packet_rx_for_ebpf) =
+            mpsc::channel::<ironpost_core::event::PacketEvent>(PACKET_CHANNEL_CAPACITY);
+        let (alert_tx, alert_rx) = mpsc::channel::<AlertEvent>(ALERT_CHANNEL_CAPACITY);
+        let (shutdown_tx, _) = broadcast::channel(16);
+
+        let mut modules = ModuleRegistry::new();
+        let mut action_rx = None;
+
+        // Initialize eBPF engine (Linux only)
+        #[cfg(target_os = "linux")]
+        {
+            if let Some((handle, _packet_rx)) = crate::modules::ebpf::init(&config, packet_tx)? {
+                modules.register(handle);
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = packet_tx; // Silence unused warning on non-Linux
+        }
+
+        // Initialize log pipeline
+        // On non-Linux, packet_rx will be None since eBPF is not available
+        #[cfg(target_os = "linux")]
+        let packet_rx_for_pipeline = _packet_rx_for_ebpf;
+        #[cfg(not(target_os = "linux"))]
+        let packet_rx_for_pipeline = None;
+
+        if let Some(handle) =
+            crate::modules::log_pipeline::init(&config, packet_rx_for_pipeline, alert_tx.clone())?
+        {
+            modules.register(handle);
+        }
+
+        // Initialize SBOM scanner
+        if let Some(handle) = crate::modules::sbom_scanner::init(&config, alert_tx.clone())? {
+            modules.register(handle);
+        }
+
+        // Initialize container guard
+        if let Some((handle, rx)) = crate::modules::container_guard::init(&config, alert_rx)? {
+            modules.register(handle);
+            action_rx = Some(rx);
+        }
+
+        tracing::info!(
+            total_modules = modules.count(),
+            enabled_modules = modules.enabled_count(),
+            "orchestrator initialized"
+        );
+
+        Ok(Self {
+            config,
+            modules,
+            shutdown_tx,
+            start_time: Instant::now(),
+            action_rx,
+        })
+    }
+
+    /// Start all enabled modules and enter the main event loop.
+    ///
+    /// This method blocks until a shutdown signal is received.
+    /// Modules are started in dependency order (producers first).
+    ///
+    /// # Shutdown Triggers
+    ///
+    /// - `SIGTERM` (from systemd, Docker, or `kill`)
+    /// - `SIGINT` (Ctrl+C)
+    pub async fn run(&mut self) -> Result<()> {
+        // Write PID file if configured
+        if !self.config.general.pid_file.is_empty() {
+            let path = Path::new(&self.config.general.pid_file);
+            write_pid_file(path)?;
+        }
+
+        // Start all modules
+        tracing::info!("starting all enabled modules");
+        self.modules.start_all().await?;
+
+        // Spawn action logger task
+        let mut action_logger_task = if let Some(action_rx) = self.action_rx.take() {
+            let shutdown_rx = self.shutdown_tx.subscribe();
+            Some(spawn_action_logger(action_rx, shutdown_rx))
+        } else {
+            None
+        };
+
+        // Main event loop
+        tracing::info!("entering main event loop");
+        let signal = wait_for_shutdown_signal().await;
+        tracing::info!(signal = signal, "shutdown signal received");
+
+        // Initiate shutdown
+        tracing::info!("broadcasting shutdown signal to all tasks");
+        let _ = self.shutdown_tx.send(());
+
+        // Wait for action logger to finish
+        if let Some(task) = action_logger_task.take() {
+            let _ = task.await;
+        }
+
+        // Stop all modules
+        self.shutdown().await?;
+
+        // Remove PID file
+        if !self.config.general.pid_file.is_empty() {
+            let path = Path::new(&self.config.general.pid_file);
+            remove_pid_file(path);
+        }
+
+        Ok(())
+    }
+
+    /// Perform graceful shutdown of all modules.
+    ///
+    /// Stops modules in reverse order (consumers first conceptually,
+    /// but actually producers stop first so consumers can drain).
+    async fn shutdown(&mut self) -> Result<()> {
+        tracing::info!("stopping all modules");
+        self.modules.stop_all().await
+    }
+
+    /// Get the current aggregated health status.
+    #[allow(dead_code)] // Future health endpoint
+    pub async fn health(&self) -> DaemonHealth {
+        let statuses = self.modules.health_statuses().await;
+        let modules: Vec<ModuleHealth> = statuses
+            .into_iter()
+            .map(|(name, enabled, status)| ModuleHealth {
+                name,
+                enabled,
+                status,
+            })
+            .collect();
+
+        let overall_status = aggregate_status(&modules);
+        let uptime_secs = self.start_time.elapsed().as_secs();
+
+        DaemonHealth {
+            status: overall_status,
+            uptime_secs,
+            modules,
+        }
+    }
+
+    /// Get a reference to the loaded configuration.
+    #[allow(dead_code)] // Public API for introspection
+    pub fn config(&self) -> &IronpostConfig {
+        &self.config
+    }
+}
+
+/// Wait for a shutdown signal (SIGTERM or SIGINT).
+///
+/// Returns the name of the signal that triggered the shutdown.
+async fn wait_for_shutdown_signal() -> &'static str {
+    use tokio::signal::unix::{SignalKind, signal};
+
+    let mut sigterm = signal(SignalKind::terminate()).expect("failed to install SIGTERM handler");
+    let mut sigint = signal(SignalKind::interrupt()).expect("failed to install SIGINT handler");
+
+    tokio::select! {
+        _ = sigterm.recv() => "SIGTERM",
+        _ = sigint.recv() => "SIGINT",
+    }
+}
+
+/// Write the current process PID to a file.
+///
+/// Used to prevent duplicate daemon instances.
+///
+/// # Errors
+///
+/// Returns an error if the PID file cannot be written.
+fn write_pid_file(path: &Path) -> Result<()> {
+    use std::fs;
+    use std::io::Write;
+
+    // Check if PID file already exists
+    if path.exists() {
+        let existing_pid = fs::read_to_string(path)?;
+        return Err(anyhow::anyhow!(
+            "PID file {} already exists with PID: {}. Is another instance running?",
+            path.display(),
+            existing_pid.trim()
+        ));
+    }
+
+    // Create parent directory if it doesn't exist
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let pid = std::process::id();
+    let mut file = fs::File::create(path)?;
+    writeln!(file, "{}", pid)?;
+
+    tracing::info!(pid = pid, path = %path.display(), "PID file written");
+    Ok(())
+}
+
+/// Remove the PID file on daemon shutdown.
+///
+/// Logs a warning but does not fail if the file cannot be removed.
+fn remove_pid_file(path: &Path) {
+    if let Err(e) = std::fs::remove_file(path) {
+        tracing::warn!(
+            path = %path.display(),
+            error = %e,
+            "failed to remove PID file"
+        );
+    } else {
+        tracing::info!(path = %path.display(), "PID file removed");
+    }
+}
+
+/// Spawn a background task that logs received ActionEvents.
+///
+/// ActionEvents represent completed isolation actions from container-guard.
+/// This task logs them for audit purposes.
+fn spawn_action_logger(
+    mut action_rx: mpsc::Receiver<ActionEvent>,
+    mut shutdown_rx: broadcast::Receiver<()>,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                Some(action) = action_rx.recv() => {
+                    tracing::info!(
+                        action_id = %action.id,
+                        action_type = %action.action_type,
+                        target = %action.target,
+                        success = action.success,
+                        timestamp = ?action.metadata.timestamp,
+                        "isolation action completed"
+                    );
+                }
+                _ = shutdown_rx.recv() => {
+                    tracing::debug!("action logger shutting down");
+                    break;
+                }
+            }
+        }
+    })
+}

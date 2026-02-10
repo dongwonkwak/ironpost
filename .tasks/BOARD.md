@@ -10,19 +10,83 @@
 | 3-log | 12 | 13 | 0 | 5 | ✅ (설계+구현+리뷰+수정 완료) |
 | 4-container | 17 | 17 | 0 | 0 | ✅ (설계+구현+테스트+리뷰 완료, 202 tests) |
 | 5-sbom | 28 | 28 | 0 | 0 | ✅ (Phase 5-E 문서화 완료, 183 tests, README 580+ lines) |
-| 6-polish | - | - | - | - | ⏳ |
+| 6-polish | 11 | 3 | 0 | 8 | ✅ T6-1 daemon 구현 완료, 다음: T6-2 CLI |
 
 ## 블로커
 - 없음
 
 ## 현재 진행중
-- 없음
+- 없음 (T6-1 완료, 다음: T6-2 ironpost-cli 구현)
+
+---
+
+## Phase 6: Integration & Polish
+
+### 필수 (Required) -- 6건
+| ID | 태스크 | 담당 | 예상 | 상태 | 의존성 |
+|----|--------|------|------|------|--------|
+| T6-1 | ironpost-daemon 통합 구현 | architect + implementer | 4h | ✅ (2026-02-10 완료) | 없음 |
+| T6-2 | ironpost-cli 통합 구현 | implementer | 3h | ⏳ | T6-1 |
+| T6-3 | ironpost.toml 통합 설정 파일 | architect + implementer | 2h | ⏳ | T6-1 병행 |
+| T6-4 | 리뷰 미반영 수정 (Phase 2~5 C/H/M) | implementer | 6h | ⏳ | 없음 |
+| T6-5 | 루트 README.md 재작성 | writer | 2h | ⏳ | T6-1, T6-2 |
+| T6-6 | CHANGELOG.md 작성 | writer | 1h | ⏳ | T6-4 |
+
+### T6-4 상세: 리뷰 미반영 수정 사항 (22건)
+
+#### Critical -- 4건 (반드시 수정)
+| 출처 | ID | 설명 | 상태 |
+|------|----|------|------|
+| P4 | NEW-C1 | container-guard stop()/start() 재시작 불가 | ⏳ |
+| P4 | NEW-C2 | canonicalize() TOCTOU -- 루프 밖으로 이동 | ⏳ |
+| P5 | NEW-C1 | VulnDb lookup String 할당 (핫 패스 성능) | ⏳ |
+| P3 | H1 | Detector trait &self vs &mut self 불일치 (core 수정 필요) | ⏳ |
+
+#### High -- 14건 (수정 권장)
+| 출처 | ID | 설명 | 상태 |
+|------|----|------|------|
+| P3 | H4 | Syslog PRI 값 범위 검증 (0-191) | ⏳ |
+| P3 | H5 | 타임스탬프 휴리스틱 불완전 (micro/nanosecond) | ⏳ |
+| P3 | H6 | 파일 경로 순회(path traversal) 검증 | ⏳ |
+| P3 | H7 | SystemTime -> Instant (시계 역행 방어) | ⏳ |
+| P4 | H3 | 와일드카드 필터 임의 컨테이너 격리 | ⏳ |
+| P4 | NEW-H1 | 잘못된 에러 variant (ContainerNotFound -> InvalidInput) | ⏳ |
+| P4 | NEW-H2 | Processing task 별도 DockerMonitor 인스턴스 | ⏳ |
+| P4 | NEW-H3 | `all: true` 실행 중인 컨테이너만 필터 | ⏳ |
+| P4 | H6 | labels 필드 미평가 | ⏳ |
+| P5 | H2 | Graceful shutdown (CancellationToken) | ⏳ |
+| P5 | NEW-H1 | 주기적 태스크 취소 메커니즘 | ⏳ |
+| P5 | NEW-H2 | discover_lockfiles TOCTOU (File::open 패턴) | ⏳ |
+| P5 | NEW-H3 | unix_to_rfc3339 55줄 중복 -> 공유 모듈 | ⏳ |
+| P2 | H3 | RingBuf busy-wait -> adaptive backoff | ⏳ |
+
+#### Medium -- 4건 (선별)
+| 출처 | ID | 설명 | 상태 |
+|------|----|------|------|
+| P3 | M2 | cleanup 주기 시간 기반 변경 | ⏳ |
+| P4 | M5 | 불필요한 enforcer.rs 삭제 | ⏳ |
+| P5 | M9 | Path traversal 검증 (Component::ParentDir) | ⏳ |
+| P2 | M7 | AlertEvent source_module 항상 "log-pipeline" | ⏳ |
+
+### 고도화 (Enhancement) -- 3건
+| ID | 태스크 | 담당 | 예상 | 상태 | 의존성 |
+|----|--------|------|------|------|--------|
+| T6-7 | Docker Compose 원클릭 데모 | implementer + writer | 3h | ⏳ | T6-1 |
+| T6-8 | GitHub Actions CI + 뱃지 | implementer | 2h | ⏳ | 없음 |
+| T6-9 | E2E 시나리오 테스트 | tester | 4h | ⏳ | T6-1, T6-4 |
+
+### 보너스 (Bonus) -- 2건
+| ID | 태스크 | 담당 | 예상 | 상태 | 의존성 |
+|----|--------|------|------|------|--------|
+| T6-10 | 데모 GIF / 공격 시뮬레이션 | writer | 2h | ⏳ | T6-7 |
+| T6-11 | 벤치마크 문서화 | tester + writer | 3h | ⏳ | T6-4 |
+
+---
 
 ## Phase 5 리뷰 완료
 - [x] T5-D1: sbom-scanner 코드 리뷰 (2026-02-10) -- `.reviews/phase-5-sbom-scanner.md`
   - Critical 3건, High 5건, Medium 8건, Low 7건 (총 23건)
   - 주요: VulnDb 파일 크기 미제한(C1), VulnDb O(n) 선형 조회(C2), TOCTOU exists() 검사(C3)
-  - High: 코드 중복(H1), 비정상 종료(H2), 재시작 불가(H3), 경로 검증 부재(H4), 엔트리 수 미제한(H5)
 - [x] T5-D2: sbom-scanner 리뷰 지적사항 반영 (2026-02-10, 22:00-23:15, 75분) -- Critical 3건 + High 4건 수정 완료
   - ✅ C1: VulnDb 파일 크기 제한 (50MB) + 엔트리 수 제한 (1M)
   - ✅ C2: VulnDb HashMap 인덱싱 (O(1) lookup)
@@ -31,7 +95,7 @@
   - ✅ H3: Stopped 상태에서 start() 거부
   - ✅ H4: scan_dirs 경로 검증 (".." 패턴 거부)
   - ✅ H5: VulnDb 엔트리 수 상한 (C1에 포함)
-  - ⚠️ H2: graceful shutdown → Phase 6로 연기
+  - ⚠️ H2: graceful shutdown -> Phase 6로 연기
 - [x] T5-D3: sbom-scanner 재리뷰 (2026-02-10) -- `.reviews/phase-5-sbom-scanner.md` (덮어씀)
   - 이전 수정 7건 모두 검증 완료 (C1-C3, H1, H3-H5)
   - 새로운 발견 21건: Critical 1건, High 3건, Medium 9건, Low 8건
@@ -76,12 +140,12 @@
   - Critical 10건, High 8건, Medium 11건, Low 9건 (총 38건)
   - ✅ Critical 10건 수정 완료 (C1-C10)
   - ✅ High 3건 수정 완료 (H2, H3, H8)
-  - 주요 수정: Arc<Mutex> → AtomicU64, 배치 처리 중복 제거, as 캐스팅 제거, OOM 방어, ReDoS 방어, HashMap 자동 정리
+  - 주요 수정: Arc<Mutex> -> AtomicU64, 배치 처리 중복 제거, as 캐스팅 제거, OOM 방어, ReDoS 방어, HashMap 자동 정리
 
 ## Phase 3 구현 완료 항목 (추가)
 - [x] T3-7: 리뷰 지적사항 반영 (2026-02-09, Critical 10건 + High 3건 수정 완료)
 - [x] T3-8: 추가 수정 사항 (2026-02-09, H-NEW-1/2, M-NEW-1 - 로그 주입/재시작/IP 추출, 25분 소요)
-- [x] T3-9: 통합 테스트 추가 (2026-02-09, 6개 통합 테스트 추가 - collector→pipeline flow/restart/JSON, 총 280 tests)
+- [x] T3-9: 통합 테스트 추가 (2026-02-09, 6개 통합 테스트 추가 - collector->pipeline flow/restart/JSON, 총 280 tests)
 
 ## Phase 2 설계 완료 항목
 - [x] ebpf-common: 공유 `#[repr(C)]` 타입 (BlocklistValue, ProtoStats, PacketEventData)
@@ -156,7 +220,7 @@
 
 ## Phase 5 설계+스캐폴딩 완료 항목 (Phase 5-A)
 - [x] T5-A1: 설계 문서 (`.knowledge/sbom-scanner-design.md`, 14 sections)
-- [x] T5-A2: `Cargo.toml` -- ironpost-core, tokio, serde, serde_json, toml, tracing, thiserror, uuid, semver
+- [x] T5-A2: `Cargo.toml` -- ironpost-core, tokio, serde, serde_json, toml, tracing, thiserror, uuid (workspace), semver
 - [x] T5-A3: `error.rs` -- SbomScannerError (9 variants) + IronpostError 변환 (13 tests)
 - [x] T5-A4: `config.rs` -- SbomScannerConfig + Builder + from_core() + validate() (16 tests)
 - [x] T5-A5: `event.rs` -- ScanEvent + Event trait impl (4 tests)
@@ -176,6 +240,9 @@
 - [x] T5-A19: Core 크레이트 업데이트 (MODULE_SBOM_SCANNER, EVENT_TYPE_SCAN 상수 추가)
 
 ## 최근 완료
+- [P6] T6-C: ironpost-daemon 구현 완료 (8 files, 923 lines, graceful shutdown, 2026-02-10 20:30-22:00, 90분)
+- [P6] T6-B: ironpost-daemon 스캐폴딩 생성 (2026-02-10 19:44, 45분)
+- [P6] T6-A: ironpost-daemon 설계 문서 작성 (419 lines, 2026-02-10 19:14, 30분)
 - [P5] T5-E1: sbom-scanner 문서화 완료 (README 580+ lines + architecture + module-guide, 2026-02-10 16:58, 4분)
 - [P5] T5-D3: sbom-scanner 재리뷰 완료 (21건 발견, 이전 수정 7건 검증, 2026-02-10)
 - [P5] T5-D2: sbom-scanner 리뷰 수정 완료 (C3+H4 완료, 183 tests passing, 2026-02-10 23:15, 75분)
