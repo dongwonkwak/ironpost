@@ -179,7 +179,15 @@ Alert-driven Docker container isolation with policy-based enforcement.
 - Priority-based evaluation (lower priority number = higher priority, first match wins)
 - Runtime policy updates via shared `Arc<Mutex<PolicyEngine>>`
 
-**Configuration**: `[container_guard]` section in `ironpost.toml`
+**Observability and Metrics**:
+- **Low-cardinality action types**: `ActionEvent.action_type` uses fixed enum-based values to prevent metric explosion
+  - `container_pause`, `container_stop`, `container_network_disconnect` (no variable data)
+  - Network lists and other variable data excluded from action_type (appear only in logs)
+  - Implemented via `IsolationAction::action_type_name()` method (distinct from `Display` trait for logging)
+- **Trace ID propagation**: All `ActionEvent` messages preserve `trace_id` from originating `AlertEvent`
+- **Structured logging**: Detailed context (network lists, retry attempts) logged via `tracing` crate
+
+**Configuration**: `[container]` section in `ironpost.toml`
 - `enabled`: Activate the guard
 - `docker_socket`: Docker daemon socket path (default: `/var/run/docker.sock`)
 - `poll_interval_secs`: Container inventory refresh interval (1-3600s)

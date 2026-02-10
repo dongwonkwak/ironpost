@@ -33,6 +33,20 @@ pub enum IsolationAction {
     Stop,
 }
 
+impl IsolationAction {
+    /// 메트릭 태그용 고정된 액션 타입명을 반환합니다.
+    ///
+    /// `Display` 구현과 달리, 가변 데이터(네트워크 목록 등)를 포함하지 않아
+    /// high-cardinality 문제를 방지합니다.
+    pub fn action_type_name(&self) -> &str {
+        match self {
+            Self::NetworkDisconnect { .. } => "network_disconnect",
+            Self::Pause => "pause",
+            Self::Stop => "stop",
+        }
+    }
+}
+
 impl fmt::Display for IsolationAction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -105,7 +119,7 @@ impl<D: DockerClient> IsolationExecutor<D> {
 
         let success = result.is_ok();
         let action_event = ActionEvent::with_trace(
-            format!("container_{action}"),
+            format!("container_{}", action.action_type_name()),
             container_id,
             success,
             trace_id,
@@ -279,6 +293,36 @@ mod tests {
         );
     }
 
+    #[test]
+    fn isolation_action_type_name_is_fixed() {
+        // action_type_name은 메트릭 태그용으로 고정된 값만 반환해야 함 (high-cardinality 방지)
+        assert_eq!(IsolationAction::Pause.action_type_name(), "pause");
+        assert_eq!(IsolationAction::Stop.action_type_name(), "stop");
+
+        // 네트워크 목록과 관계없이 동일한 이름 반환
+        assert_eq!(
+            IsolationAction::NetworkDisconnect {
+                networks: vec!["bridge".to_owned()]
+            }
+            .action_type_name(),
+            "network_disconnect"
+        );
+        assert_eq!(
+            IsolationAction::NetworkDisconnect {
+                networks: vec!["bridge".to_owned(), "host".to_owned(), "custom".to_owned()]
+            }
+            .action_type_name(),
+            "network_disconnect"
+        );
+        assert_eq!(
+            IsolationAction::NetworkDisconnect {
+                networks: Vec::new()
+            }
+            .action_type_name(),
+            "network_disconnect"
+        );
+    }
+
     #[tokio::test]
     async fn executor_pause_success() {
         let client = MockDockerClient::new().with_containers(vec![sample_container()]);
@@ -292,6 +336,7 @@ mod tests {
         let event = action_rx.recv().await.unwrap();
         assert!(event.success);
         assert_eq!(event.target, "abc123def456");
+        assert_eq!(event.action_type, "container_pause");
     }
 
     #[tokio::test]
@@ -306,6 +351,7 @@ mod tests {
 
         let event = action_rx.recv().await.unwrap();
         assert!(event.success);
+        assert_eq!(event.action_type, "container_stop");
     }
 
     #[tokio::test]
@@ -323,6 +369,8 @@ mod tests {
 
         let event = action_rx.recv().await.unwrap();
         assert!(event.success);
+        // action_type은 네트워크 목록과 관계없이 고정된 값이어야 함
+        assert_eq!(event.action_type, "container_network_disconnect");
     }
 
     #[tokio::test]
@@ -424,6 +472,8 @@ mod tests {
 
         let event = action_rx.recv().await.unwrap();
         assert!(event.success);
+        // 여러 네트워크라도 action_type은 동일한 고정 값이어야 함 (high-cardinality 방지)
+        assert_eq!(event.action_type, "container_network_disconnect");
     }
 
     #[tokio::test]
@@ -654,9 +704,9 @@ mod tests {
         assert_eq!(attempt_count.load(Ordering::SeqCst), 3);
     }
 
-    /// Test exponential backoff timing verification
+    /// Test linear backoff timing verification
     #[tokio::test]
-    async fn executor_exponential_backoff_timing() {
+    async fn executor_linear_backoff_timing() {
         let client = MockDockerClient::new()
             .with_containers(vec![sample_container()])
             .with_failing_actions();
