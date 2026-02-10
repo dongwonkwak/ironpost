@@ -163,7 +163,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Build scanner
     let config = SbomScannerConfig::default();
-    let scanner = SbomScannerBuilder::new(config)
+    let (scanner, _) = SbomScannerBuilder::new()
+        .config(config)
         .alert_sender(alert_tx)
         .build()?;
 

@@ -1,7 +1,7 @@
 //! 시맨틱 버전 비교 -- SemVer 범위 매칭
 //!
 //! `semver` 크레이트를 사용하여 패키지 버전이 취약점 영향 범위에 포함되는지 확인합니다.
-//! SemVer가 아닌 버전 문자열은 문자열 비교로 fallback합니다.
+//! SemVer가 아닌 버전 문자열은 보수적으로 매칭하지 않습니다(오탐 방지).
 
 use super::db::VersionRange;
 
@@ -13,7 +13,7 @@ use super::db::VersionRange;
 /// - `fixed`가 None이면 아직 수정되지 않음 (모든 이후 버전이 영향)
 /// - `introduced <= version < fixed`이면 영향받음
 ///
-/// SemVer 파싱이 실패하면 문자열 비교로 fallback합니다.
+/// SemVer 파싱이 실패하면 보수적으로 매칭하지 않습니다(오탐 방지).
 ///
 /// 여러 범위 중 하나라도 매칭되면 `true`를 반환합니다.
 pub fn is_affected(version_str: &str, ranges: &[VersionRange]) -> bool {
@@ -46,8 +46,10 @@ fn is_in_range(version_str: &str, range: &VersionRange) -> bool {
         }
     }
 
-    // 비표준 버전 문자열: 보수적으로 매칭하지 않음 (false positive 방지)
-    // false negative(취약점 누락)보다는 false positive(오탐)가 나은 보안 관점
+    // 비표준 버전 문자열: 보수적으로 매칭하지 않음
+    // 보안 스캐닝에서 일반적으로 false positive(오탐)가 false negative(누락)보다
+    // 선호되지만, 비-SemVer 문자열은 신뢰할 수 있는 비교가 불가능하므로
+    // 오탐을 피하기 위해 매칭하지 않습니다 (단, 실제 취약점 누락 가능성 있음).
     tracing::warn!(
         version = %version_str,
         "non-SemVer version string encountered, conservatively not matching (may miss vulnerability)"

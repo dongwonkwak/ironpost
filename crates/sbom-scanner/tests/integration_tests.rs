@@ -309,9 +309,9 @@ async fn test_max_packages_limit() {
     scanner.stop().await.unwrap();
 }
 
-/// Test concurrent scanning does not panic
+/// Test repeated sequential scans do not panic
 #[tokio::test]
-async fn test_concurrent_scans() {
+async fn test_repeated_sequential_scans() {
     let test_lockfile = fixture_path("Cargo.lock");
     let test_dir = test_lockfile
         .parent()
