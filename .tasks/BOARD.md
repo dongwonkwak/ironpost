@@ -10,13 +10,13 @@
 | 3-log | 12 | 13 | 0 | 5 | ✅ (설계+구현+리뷰+수정 완료) |
 | 4-container | 17 | 17 | 0 | 0 | ✅ (설계+구현+테스트+리뷰 완료, 202 tests) |
 | 5-sbom | 28 | 28 | 0 | 0 | ✅ (Phase 5-E 문서화 완료, 183 tests, README 580+ lines) |
-| 6-polish | 11 | 3 | 0 | 8 | ✅ T6-1 daemon 구현 완료, 다음: T6-2 CLI |
+| 6-polish | 11 | 4 | 0 | 7 | ✅ T6-2 CLI 구현 완료, 다음: T6-3 설정 파일 |
 
 ## 블로커
 - 없음
 
 ## 현재 진행중
-- 없음 (T6-1 완료, 다음: T6-2 ironpost-cli 구현)
+- 없음 (T6-2 완료, 다음: T6-3 ironpost.toml 통합 설정)
 
 ---
 
@@ -26,7 +26,7 @@
 | ID | 태스크 | 담당 | 예상 | 상태 | 의존성 |
 |----|--------|------|------|------|--------|
 | T6-1 | ironpost-daemon 통합 구현 | architect + implementer | 4h | ✅ (2026-02-10 완료) | 없음 |
-| T6-2 | ironpost-cli 통합 구현 | implementer | 3h | ⏳ | T6-1 |
+| T6-2 | ironpost-cli 통합 구현 | implementer | 3h | ✅ (2026-02-10 완료) | T6-1 |
 | T6-3 | ironpost.toml 통합 설정 파일 | architect + implementer | 2h | ⏳ | T6-1 병행 |
 | T6-4 | 리뷰 미반영 수정 (Phase 2~5 C/H/M) | implementer | 6h | ⏳ | 없음 |
 | T6-5 | 루트 README.md 재작성 | writer | 2h | ⏳ | T6-1, T6-2 |
@@ -240,6 +240,7 @@
 - [x] T5-A19: Core 크레이트 업데이트 (MODULE_SBOM_SCANNER, EVENT_TYPE_SCAN 상수 추가)
 
 ## 최근 완료
+- [P6] T6-2: ironpost-cli 구현 완료 (5 commands, colored output, 수정 포함 ~1시간 30분, 2026-02-10 20:50-22:30, 100분)
 - [P6] T6-C: ironpost-daemon 구현 완료 (8 files, 923 lines, graceful shutdown, 2026-02-10 20:30-22:00, 90분)
 - [P6] T6-B: ironpost-daemon 스캐폴딩 생성 (2026-02-10 19:44, 45분)
 - [P6] T6-A: ironpost-daemon 설계 문서 작성 (419 lines, 2026-02-10 19:14, 30분)
