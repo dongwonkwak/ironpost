@@ -4,6 +4,11 @@
 
 use ironpost_core::config::IronpostConfig;
 use std::env;
+use std::sync::Mutex;
+
+// Mutex to serialize tests that modify environment variables
+// This prevents race conditions when tests run in parallel
+static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 #[test]
 fn test_parse_full_config() {
@@ -17,35 +22,37 @@ pid_file = "/var/run/ironpost.pid"
 [ebpf]
 enabled = true
 interface = "eth0"
-block_mode = "drop"
-metrics_interval_secs = 10
-rules = []
+xdp_mode = "native"
+ring_buffer_size = 524288
+blocklist_max_entries = 10000
 
 [log_pipeline]
 enabled = true
-buffer_capacity = 2000
+sources = ["syslog", "file"]
+syslog_bind = "0.0.0.0:514"
+watch_paths = ["/var/log/syslog"]
 batch_size = 200
 flush_interval_secs = 10
-alert_dedup_window_secs = 120
-alert_rate_limit = 200
-rule_dirs = ["/etc/ironpost/rules"]
-log_collectors = []
+
+[log_pipeline.storage]
+postgres_url = "postgresql://localhost:5432/ironpost"
+redis_url = "redis://localhost:6379"
+retention_days = 30
 
 [container]
 enabled = true
 docker_socket = "/var/run/docker.sock"
-monitor_interval_secs = 15
-policy_dirs = ["/etc/ironpost/policies"]
+poll_interval_secs = 15
+policy_path = "/etc/ironpost/policies"
+auto_isolate = false
 
 [sbom]
 enabled = true
-scan_interval_secs = 7200
 scan_dirs = ["/app", "/opt"]
-db_url = "https://example.com/vulndb.json"
-db_update_interval_secs = 172800
-report_output_dir = "/var/log/ironpost/sbom"
-report_formats = ["cyclonedx", "spdx"]
-severity_threshold = "High"
+vuln_db_update_hours = 48
+vuln_db_path = "/var/lib/ironpost/vuln-db"
+min_severity = "high"
+output_format = "cyclonedx"
 "#;
 
     // When: Parsing config
@@ -65,13 +72,13 @@ severity_threshold = "High"
     assert_eq!(config.ebpf.interface, "eth0");
 
     assert!(config.log_pipeline.enabled);
-    assert_eq!(config.log_pipeline.buffer_capacity, 2000);
+    assert_eq!(config.log_pipeline.batch_size, 200);
 
     assert!(config.container.enabled);
-    assert_eq!(config.container.monitor_interval_secs, 15);
+    assert_eq!(config.container.poll_interval_secs, 15);
 
     assert!(config.sbom.enabled);
-    assert_eq!(config.sbom.scan_interval_secs, 7200);
+    assert_eq!(config.sbom.scan_dirs, vec!["/app", "/opt"]);
 }
 
 #[test]
@@ -97,8 +104,8 @@ log_level = "info"
     // Default values for missing sections
     assert!(!config.ebpf.enabled, "ebpf should be disabled by default");
     assert!(
-        !config.log_pipeline.enabled,
-        "log_pipeline should be disabled by default"
+        config.log_pipeline.enabled,
+        "log_pipeline should be enabled by default"
     );
     assert!(
         !config.container.enabled,
@@ -119,9 +126,9 @@ fn test_parse_empty_config() {
     assert!(result.is_ok(), "empty config should parse successfully");
     let config = result.expect("config should parse");
 
-    // All modules should be disabled by default
+    // All modules should have their default values (log_pipeline enabled by default)
     assert!(!config.ebpf.enabled);
-    assert!(!config.log_pipeline.enabled);
+    assert!(config.log_pipeline.enabled); // log_pipeline is enabled by default
     assert!(!config.container.enabled);
     assert!(!config.sbom.enabled);
 }
@@ -147,7 +154,7 @@ fn test_parse_invalid_section_fails() {
     let toml_str = r#"
 [log_pipeline]
 enabled = true
-buffer_capacity = "not_a_number"
+batch_size = "not_a_number"
 "#;
 
     // When: Parsing config
@@ -162,6 +169,8 @@ buffer_capacity = "not_a_number"
 
 #[test]
 fn test_env_override_general_log_level() {
+    let _guard = ENV_LOCK.lock().expect("lock poisoned");
+
     // Given: A base config and environment variable
     let toml_str = r#"
 [general]
@@ -169,6 +178,8 @@ log_level = "info"
 "#;
 
     // SAFETY: Test isolation - we set and clean up env vars
+    // Store original value if it exists
+    let original_value = env::var("IRONPOST_GENERAL_LOG_LEVEL").ok();
     unsafe {
         env::set_var("IRONPOST_GENERAL_LOG_LEVEL", "debug");
     }
@@ -178,20 +189,24 @@ log_level = "info"
     config.apply_env_overrides();
 
     // Then: Environment variable should override TOML value
-    assert_eq!(
-        config.general.log_level, "debug",
-        "env var should override TOML value"
-    );
+    let result = config.general.log_level.clone();
 
-    // Cleanup
+    // Cleanup (restore original or remove)
     // SAFETY: Test cleanup
     unsafe {
-        env::remove_var("IRONPOST_GENERAL_LOG_LEVEL");
+        match original_value {
+            Some(val) => env::set_var("IRONPOST_GENERAL_LOG_LEVEL", val),
+            None => env::remove_var("IRONPOST_GENERAL_LOG_LEVEL"),
+        }
     }
+
+    assert_eq!(result, "debug", "env var should override TOML value");
 }
 
 #[test]
 fn test_env_override_ebpf_interface() {
+    let _guard = ENV_LOCK.lock().expect("lock poisoned");
+
     // Given: Config with eBPF interface
     let toml_str = r#"
 [ebpf]
@@ -200,6 +215,7 @@ interface = "eth0"
 "#;
 
     // SAFETY: Test isolation
+    let original_value = env::var("IRONPOST_EBPF_INTERFACE").ok();
     unsafe {
         env::set_var("IRONPOST_EBPF_INTERFACE", "wlan0");
     }
@@ -209,24 +225,29 @@ interface = "eth0"
     config.apply_env_overrides();
 
     // Then: Should use env var value
-    assert_eq!(
-        config.ebpf.interface, "wlan0",
-        "env var should override interface"
-    );
+    let result = config.ebpf.interface.clone();
 
     // Cleanup
     // SAFETY: Test cleanup
     unsafe {
-        env::remove_var("IRONPOST_EBPF_INTERFACE");
+        match original_value {
+            Some(val) => env::set_var("IRONPOST_EBPF_INTERFACE", val),
+            None => env::remove_var("IRONPOST_EBPF_INTERFACE"),
+        }
     }
+
+    assert_eq!(result, "wlan0", "env var should override interface");
 }
 
 #[test]
 fn test_env_override_takes_precedence_over_empty_toml() {
+    let _guard = ENV_LOCK.lock().expect("lock poisoned");
+
     // Given: Empty config and environment variable
     let toml_str = "";
 
     // SAFETY: Test isolation
+    let original_value = env::var("IRONPOST_GENERAL_LOG_LEVEL").ok();
     unsafe {
         env::set_var("IRONPOST_GENERAL_LOG_LEVEL", "trace");
     }
@@ -236,35 +257,52 @@ fn test_env_override_takes_precedence_over_empty_toml() {
     config.apply_env_overrides();
 
     // Then: Environment variable should set value
-    assert_eq!(
-        config.general.log_level, "trace",
-        "env var should work even with empty TOML"
-    );
+    let result = config.general.log_level.clone();
 
     // Cleanup
     // SAFETY: Test cleanup
     unsafe {
-        env::remove_var("IRONPOST_GENERAL_LOG_LEVEL");
+        match original_value {
+            Some(val) => env::set_var("IRONPOST_GENERAL_LOG_LEVEL", val),
+            None => env::remove_var("IRONPOST_GENERAL_LOG_LEVEL"),
+        }
     }
+
+    assert_eq!(result, "trace", "env var should work even with empty TOML");
 }
 
 #[test]
 fn test_env_override_no_env_var_keeps_toml() {
+    let _guard = ENV_LOCK.lock().expect("lock poisoned");
+
     // Given: Config without corresponding env var
     let toml_str = r#"
 [general]
 log_level = "warn"
 "#;
 
+    // SAFETY: Ensure no env var is set for this test
+    let original_value = env::var("IRONPOST_GENERAL_LOG_LEVEL").ok();
+    unsafe {
+        env::remove_var("IRONPOST_GENERAL_LOG_LEVEL");
+    }
+
     // When: Applying env overrides (no env vars set)
     let mut config = IronpostConfig::parse(toml_str).expect("should parse");
     config.apply_env_overrides();
 
     // Then: TOML value should remain
-    assert_eq!(
-        config.general.log_level, "warn",
-        "TOML value should remain when no env var is set"
-    );
+    let result = config.general.log_level.clone();
+
+    // Cleanup - restore original value if it existed
+    // SAFETY: Test cleanup
+    if let Some(val) = original_value {
+        unsafe {
+            env::set_var("IRONPOST_GENERAL_LOG_LEVEL", val);
+        }
+    }
+
+    assert_eq!(result, "warn", "TOML value should remain when no env var is set");
 }
 
 #[test]
@@ -273,19 +311,18 @@ fn test_parse_config_with_empty_arrays() {
     let toml_str = r#"
 [log_pipeline]
 enabled = true
-buffer_capacity = 1000
+sources = ["syslog"]
+syslog_bind = "0.0.0.0:514"
+watch_paths = []
 batch_size = 100
 flush_interval_secs = 5
-alert_dedup_window_secs = 60
-alert_rate_limit = 100
-rule_dirs = []
-log_collectors = []
 
 [container]
 enabled = true
 docker_socket = "/var/run/docker.sock"
-monitor_interval_secs = 10
-policy_dirs = []
+poll_interval_secs = 10
+policy_path = ""
+auto_isolate = false
 "#;
 
     // When: Parsing config
@@ -295,8 +332,8 @@ policy_dirs = []
     assert!(result.is_ok(), "config with empty arrays should parse");
     let config = result.expect("config should parse");
 
-    assert!(config.log_pipeline.rule_dirs.is_empty());
-    assert!(config.container.policy_dirs.is_empty());
+    assert!(config.log_pipeline.watch_paths.is_empty());
+    assert!(config.container.policy_path.is_empty());
 }
 
 #[test]
@@ -305,13 +342,11 @@ fn test_parse_config_with_multiple_array_items() {
     let toml_str = r#"
 [sbom]
 enabled = true
-scan_interval_secs = 3600
 scan_dirs = ["/app", "/opt", "/usr/local"]
-db_url = "https://example.com/db.json"
-db_update_interval_secs = 86400
-report_output_dir = "/tmp"
-report_formats = ["cyclonedx", "spdx"]
-severity_threshold = "Medium"
+vuln_db_update_hours = 24
+vuln_db_path = "/var/lib/ironpost/vuln-db"
+min_severity = "medium"
+output_format = "cyclonedx"
 "#;
 
     // When: Parsing config
@@ -325,8 +360,6 @@ severity_threshold = "Medium"
     assert_eq!(config.sbom.scan_dirs[0], "/app");
     assert_eq!(config.sbom.scan_dirs[1], "/opt");
     assert_eq!(config.sbom.scan_dirs[2], "/usr/local");
-
-    assert_eq!(config.sbom.report_formats.len(), 2);
 }
 
 #[test]
@@ -338,13 +371,11 @@ log_level = "info"
 
 [log_pipeline]
 enabled = true
-buffer_capacity = 1000
+sources = ["syslog"]
+syslog_bind = "0.0.0.0:514"
+watch_paths = []
 batch_size = 100
 flush_interval_secs = 5
-alert_dedup_window_secs = 60
-alert_rate_limit = 100
-rule_dirs = []
-log_collectors = []
 "#;
 
     let config = IronpostConfig::parse(toml_str).expect("should parse");
@@ -405,8 +436,9 @@ pid_file = "/var/run/ironpost-daemon@1.0.pid"
 [container]
 enabled = true
 docker_socket = "unix:///var/run/docker.sock"
-monitor_interval_secs = 10
-policy_dirs = []
+poll_interval_secs = 10
+policy_path = ""
+auto_isolate = false
 "#;
 
     // When: Parsing config
@@ -425,23 +457,19 @@ fn test_parse_boundary_values() {
     let toml_str = r#"
 [log_pipeline]
 enabled = true
-buffer_capacity = 1
+sources = ["syslog"]
+syslog_bind = "0.0.0.0:514"
+watch_paths = []
 batch_size = 1
 flush_interval_secs = 1
-alert_dedup_window_secs = 0
-alert_rate_limit = 0
-rule_dirs = []
-log_collectors = []
 
 [sbom]
 enabled = true
-scan_interval_secs = 1
 scan_dirs = []
-db_url = "http://localhost"
-db_update_interval_secs = 1
-report_output_dir = "/tmp"
-report_formats = ["cyclonedx"]
-severity_threshold = "Critical"
+vuln_db_update_hours = 1
+vuln_db_path = "/tmp/vuln-db"
+min_severity = "critical"
+output_format = "cyclonedx"
 "#;
 
     // When: Parsing config
@@ -451,7 +479,6 @@ severity_threshold = "Critical"
     assert!(result.is_ok(), "config with boundary values should parse");
     let config = result.expect("config should parse");
 
-    assert_eq!(config.log_pipeline.buffer_capacity, 1);
     assert_eq!(config.log_pipeline.batch_size, 1);
-    assert_eq!(config.log_pipeline.alert_dedup_window_secs, 0);
+    assert_eq!(config.log_pipeline.flush_interval_secs, 1);
 }

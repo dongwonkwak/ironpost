@@ -8,6 +8,7 @@
 use tokio::sync::mpsc;
 use tokio::time::{timeout, Duration};
 
+use bytes::Bytes;
 use ironpost_core::event::{ActionEvent, AlertEvent, EventMetadata, PacketEvent};
 use ironpost_core::types::{Alert, PacketInfo, Severity};
 
@@ -17,20 +18,24 @@ async fn test_packet_event_channel_send_receive() {
     let (tx, mut rx) = mpsc::channel::<PacketEvent>(16);
 
     // When: Sending a packet event
+    let packet_info = PacketInfo {
+        src_ip: "192.168.1.100".parse().expect("valid IP"),
+        dst_ip: "10.0.0.1".parse().expect("valid IP"),
+        src_port: 54321,
+        dst_port: 80,
+        protocol: 6, // TCP
+        size: 1500,
+        timestamp: std::time::SystemTime::now(),
+    };
     let packet = PacketEvent {
+        id: uuid::Uuid::new_v4().to_string(),
         metadata: EventMetadata {
             timestamp: std::time::SystemTime::now(),
             source_module: "ebpf-engine".to_string(),
             trace_id: uuid::Uuid::new_v4().to_string(),
         },
-        packet: PacketInfo {
-            src_ip: "192.168.1.100".to_string(),
-            dst_ip: "10.0.0.1".to_string(),
-            src_port: 54321,
-            dst_port: 80,
-            protocol: "TCP".to_string(),
-            action: "allow".to_string(),
-        },
+        packet_info,
+        raw_data: Bytes::from_static(b"raw packet data"),
     };
 
     tx.send(packet.clone())
@@ -43,8 +48,8 @@ async fn test_packet_event_channel_send_receive() {
         .expect("should not timeout")
         .expect("should receive event");
 
-    assert_eq!(received.packet.src_ip, "192.168.1.100");
-    assert_eq!(received.packet.dst_port, 80);
+    assert_eq!(received.packet_info.src_ip.to_string(), "192.168.1.100");
+    assert_eq!(received.packet_info.dst_port, 80);
 }
 
 #[tokio::test]
@@ -186,20 +191,24 @@ async fn test_channel_receiver_closes_gracefully() {
     // Given: A channel with pending messages
     let (tx, mut rx) = mpsc::channel::<PacketEvent>(16);
 
+    let packet_info = PacketInfo {
+        src_ip: "1.2.3.4".parse().expect("valid IP"),
+        dst_ip: "5.6.7.8".parse().expect("valid IP"),
+        src_port: 1234,
+        dst_port: 80,
+        protocol: 6, // TCP
+        size: 1000,
+        timestamp: std::time::SystemTime::now(),
+    };
     let packet = PacketEvent {
+        id: uuid::Uuid::new_v4().to_string(),
         metadata: EventMetadata {
             timestamp: std::time::SystemTime::now(),
             source_module: "test".to_string(),
             trace_id: uuid::Uuid::new_v4().to_string(),
         },
-        packet: PacketInfo {
-            src_ip: "1.2.3.4".to_string(),
-            dst_ip: "5.6.7.8".to_string(),
-            src_port: 1234,
-            dst_port: 80,
-            protocol: "TCP".to_string(),
-            action: "allow".to_string(),
-        },
+        packet_info,
+        raw_data: Bytes::from_static(b"data"),
     };
 
     tx.send(packet).await.expect("should send");
@@ -287,9 +296,9 @@ async fn test_channel_unicode_in_messages() {
 }
 
 #[tokio::test]
-async fn test_channel_zero_capacity_rendezvous() {
-    // Given: A zero-capacity channel (rendezvous)
-    let (tx, mut rx) = mpsc::channel::<ActionEvent>(0);
+async fn test_channel_capacity_one_backpressure() {
+    // Given: A capacity-1 channel (minimal buffering)
+    let (tx, mut rx) = mpsc::channel::<ActionEvent>(1);
 
     // When: Spawning receiver task
     let recv_task = tokio::spawn(async move {
@@ -299,7 +308,7 @@ async fn test_channel_zero_capacity_rendezvous() {
     // Give receiver time to start waiting
     tokio::time::sleep(Duration::from_millis(10)).await;
 
-    // Send action (will block until receiver is ready)
+    // Send action (should succeed immediately with capacity 1)
     let action = ActionEvent {
         id: uuid::Uuid::new_v4().to_string(),
         metadata: EventMetadata {
@@ -329,7 +338,7 @@ fn create_test_alert(rule_name: &str) -> AlertEvent {
         rule_name: "Test Rule".to_string(),
         source_ip: None,
         target_ip: None,
-        timestamp: std::time::SystemTime::now(),
+        created_at: std::time::SystemTime::now(),
     };
 
     AlertEvent {

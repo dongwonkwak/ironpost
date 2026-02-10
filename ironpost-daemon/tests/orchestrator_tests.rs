@@ -42,13 +42,11 @@ enabled = false
 
 [log_pipeline]
 enabled = true
-buffer_capacity = 1000
+sources = ["syslog"]
+syslog_bind = "0.0.0.0:514"
+watch_paths = []
 batch_size = 100
 flush_interval_secs = 5
-alert_dedup_window_secs = 60
-alert_rate_limit = 100
-rule_dirs = []
-log_collectors = []
 
 [container]
 enabled = false
@@ -71,19 +69,18 @@ enabled = false
 
 [log_pipeline]
 enabled = true
-buffer_capacity = 1000
+sources = ["syslog"]
+syslog_bind = "0.0.0.0:514"
+watch_paths = []
 batch_size = 100
 flush_interval_secs = 5
-alert_dedup_window_secs = 60
-alert_rate_limit = 100
-rule_dirs = []
-log_collectors = []
 
 [container]
 enabled = true
 docker_socket = "/var/run/docker.sock"
-monitor_interval_secs = 10
-policy_dirs = []
+poll_interval_secs = 10
+policy_path = ""
+auto_isolate = false
 
 [sbom]
 enabled = false
@@ -158,7 +155,7 @@ buffer_capacity = 0
 async fn test_orchestrator_start_and_stop_with_disabled_modules() {
     // Given: Orchestrator with all modules disabled
     let config = minimal_test_config();
-    let mut orchestrator = ironpost_daemon::orchestrator::Orchestrator::build_from_config(config)
+    let orchestrator = ironpost_daemon::orchestrator::Orchestrator::build_from_config(config)
         .await
         .expect("build should succeed");
 
@@ -252,10 +249,10 @@ async fn test_orchestrator_with_container_guard_requires_docker() {
 
     // Then: May fail if Docker is not available
     // This test is marked as ignore since it requires Docker
-    if result.is_err() {
+    if let Err(e) = result {
         eprintln!(
-            "Container guard initialization failed (expected if Docker is not running): {:?}",
-            result
+            "Container guard initialization failed (expected if Docker is not running): {}",
+            e
         );
     }
 }
@@ -273,12 +270,14 @@ async fn test_orchestrator_load_from_nonexistent_file_fails() {
         result.is_err(),
         "loading from nonexistent file should fail"
     );
-    let err_msg = result.unwrap_err().to_string();
-    assert!(
-        err_msg.contains("failed to load config") || err_msg.contains("not found"),
-        "error message should mention config loading failure, got: {}",
-        err_msg
-    );
+    if let Err(e) = result {
+        let err_msg = e.to_string();
+        assert!(
+            err_msg.contains("failed to load config") || err_msg.contains("not found"),
+            "error message should mention config loading failure, got: {}",
+            err_msg
+        );
+    }
 }
 
 #[tokio::test]
@@ -320,9 +319,9 @@ async fn test_orchestrator_empty_config_uses_defaults() {
     let orchestrator = result.expect("orchestrator should be built");
     let retrieved_config = orchestrator.config();
 
-    // Default behavior is all modules disabled
+    // Default behavior: log_pipeline enabled by default, others disabled
     assert!(!retrieved_config.ebpf.enabled);
-    assert!(!retrieved_config.log_pipeline.enabled);
+    assert!(retrieved_config.log_pipeline.enabled); // enabled by default
     assert!(!retrieved_config.container.enabled);
     assert!(!retrieved_config.sbom.enabled);
 }

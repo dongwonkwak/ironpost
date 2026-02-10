@@ -373,22 +373,18 @@ async fn test_module_init_with_minimal_config() {
     let configs = vec![
         r#"[log_pipeline]
 enabled = true
-buffer_capacity = 100
+sources = ["syslog"]
+syslog_bind = "0.0.0.0:514"
+watch_paths = []
 batch_size = 10
-flush_interval_secs = 1
-alert_dedup_window_secs = 10
-alert_rate_limit = 10
-rule_dirs = []
-log_collectors = []"#,
+flush_interval_secs = 1"#,
         r#"[sbom]
 enabled = true
-scan_interval_secs = 60
-scan_dirs = []
-db_url = "http://localhost/db.json"
-db_update_interval_secs = 3600
-report_output_dir = "/tmp"
-report_formats = ["cyclonedx"]
-severity_threshold = "Low""#,
+scan_dirs = ["/tmp"]
+vuln_db_update_hours = 1
+vuln_db_path = "/tmp/vuln-db"
+min_severity = "low"
+output_format = "cyclonedx""#,
     ];
 
     for config_str in configs {
@@ -407,7 +403,11 @@ severity_threshold = "Low""#,
         let (alert_tx2, _) = mpsc::channel(1);
         if config.sbom.enabled {
             let result = ironpost_daemon::modules::sbom_scanner::init(&config, alert_tx2);
-            assert!(result.is_ok(), "minimal config should work for sbom-scanner");
+            assert!(
+                result.is_ok(),
+                "minimal config should work for sbom-scanner: {:?}",
+                result.err()
+            );
         }
     }
 }

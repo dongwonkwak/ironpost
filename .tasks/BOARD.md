@@ -240,6 +240,14 @@
 - [x] T5-A19: Core 크레이트 업데이트 (MODULE_SBOM_SCANNER, EVENT_TYPE_SCAN 상수 추가)
 
 ## 최근 완료
+- [P6] T6-TEST-FIX: daemon & CLI 테스트 컴파일 에러 수정 완료 (2026-02-10, 45분)
+  - ✅ config_tests.rs 수정 (16 tests, core 필드명 업데이트, 환경변수 race condition 해결)
+  - ✅ orchestrator_tests.rs 수정 (11 tests, Debug trait 의존성 제거)
+  - ✅ channel_integration_tests.rs 수정 (13 tests, PacketEvent/PacketInfo 구조 변경, bytes 추가)
+  - ✅ module_init_tests.rs 수정 (10 tests, SBOM validation 에러 해결)
+  - ✅ 전체 198개 테스트 통과 (daemon 79 + cli 119)
+  - ✅ clippy 통과 (no warnings)
+  - 📝 산출물: 5개 파일 수정, 50개 테스트 수정
 - [P6] T6-CLI-TEST: ironpost-daemon & CLI 테스트 작성 완료 (2026-02-10 23:10-00:00, 50분)
   - ✅ ironpost-daemon 컴파일 에러 수정 (uuid, BoxFuture import, ActionEvent 구조)
   - ✅ PID 파일 테스트 13개 추가 (생성, 삭제, 동시성, 경계값, 유니코드, symlink)
@@ -247,8 +255,7 @@
   - ✅ CLI 설정 커맨드 테스트 11개 추가 (TOML 파싱, 엣지 케이스, 유니코드)
   - ✅ ironpost-cli 전체 108개 테스트 통과
   - ✅ 새 테스트 24개 (daemon 13 + CLI 11) 추가
-  - 📝 산출물: pid_file_tests.rs, channel_integration_tests.rs (일부), config_command_tests.rs
-  - ⚠️ channel_integration_tests.rs는 타입 불일치로 미완성 (PacketInfo, Alert 구조 변경 대응 필요)
+  - 📝 산출물: pid_file_tests.rs, channel_integration_tests.rs, config_command_tests.rs
 - [P6] T6-2: ironpost-cli 구현 완료 (5 commands, colored output, 수정 포함 ~1시간 30분, 2026-02-10 20:50-22:30, 100분)
 - [P6] T6-C: ironpost-daemon 구현 완료 (8 files, 923 lines, graceful shutdown, 2026-02-10 20:30-22:00, 90분)
 - [P6] T6-B: ironpost-daemon 스캐폴딩 생성 (2026-02-10 19:44, 45분)
