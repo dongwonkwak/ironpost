@@ -1,15 +1,47 @@
-//! 컨테이너 가드 에러 타입
+//! Container guard error types.
 //!
-//! [`ContainerGuardError`]는 컨테이너 가드 내부에서 발생하는 모든 에러를 표현합니다.
-//! `From<ContainerGuardError> for IronpostError` 변환이 구현되어 있어
-//! 상위 레이어에서 `?` 연산자로 자연스럽게 전파할 수 있습니다.
+//! [`ContainerGuardError`] represents all errors that can occur within the container guard module.
+//! It implements `From<ContainerGuardError> for IronpostError`, allowing natural error propagation
+//! with the `?` operator in upstream code.
+//!
+//! # Error Categories
+//!
+//! - **Docker API errors**: `DockerApi`, `DockerConnection`
+//! - **Isolation failures**: `IsolationFailed`, `ContainerNotFound`
+//! - **Policy errors**: `PolicyLoad`, `PolicyValidation`
+//! - **Configuration errors**: `Config`
+//! - **Channel errors**: `Channel`
+//!
+//! # Examples
+//!
+//! ```
+//! # use ironpost_container_guard::ContainerGuardError;
+//! # use ironpost_core::error::IronpostError;
+//! fn example() -> Result<(), ContainerGuardError> {
+//!     // Docker API error
+//!     Err(ContainerGuardError::DockerApi("connection refused".to_owned()))?;
+//!     Ok(())
+//! }
+//!
+//! // Automatically converts to IronpostError
+//! fn upstream() -> Result<(), IronpostError> {
+//!     example()?;
+//!     Ok(())
+//! }
+//! ```
 
 use ironpost_core::error::{ContainerError, IronpostError};
 
-/// 컨테이너 가드 도메인 에러
+/// Domain-specific errors for container guard operations.
 ///
-/// Docker API 호출, 격리 실행, 정책 로딩/검증, 설정 에러 등
-/// 컨테이너 가드 내부의 모든 에러 상황을 포괄합니다.
+/// Covers all error scenarios within the container guard module, including
+/// Docker API failures, isolation execution errors, policy loading/validation,
+/// and configuration issues.
+///
+/// # Error Conversion
+///
+/// This type implements `From<ContainerGuardError> for IronpostError`, allowing
+/// seamless propagation to the top-level error type used by `ironpost-daemon`.
 #[derive(Debug, thiserror::Error)]
 pub enum ContainerGuardError {
     /// Docker API 호출 실패

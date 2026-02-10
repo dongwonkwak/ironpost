@@ -16,7 +16,7 @@
 - 없음
 
 ## 현재 진행중
-- 없음 (Phase 4 재리뷰 완료, 수정 대기)
+- 없음 (Phase 4 문서화 완료)
 
 ## Phase 3 설계 완료 항목
 - [x] `.knowledge/log-pipeline-design.md` -- 전체 설계 문서
@@ -114,7 +114,14 @@
   - Medium 11건, Low 10건 (총 27건)
   - 수정 대기
 
+## Phase 4 문서화 (Phase 4-E)
+- [x] T4-E1: container-guard 문서화 (2026-02-10, 19:45-21:30, 105분)
+  - Doc comments 작성 (config, error, event, docker 모듈)
+  - README.md 재작성 (480+ 라인, 아키텍처/정책/예시/제한사항 전체 포함)
+  - docs/architecture.md 업데이트 (container-guard 섹션 추가)
+
 ## 최근 완료
+- [P4] T4-E1: container-guard 문서화 완료 (doc comments + 480+ lines README + architecture.md, 2026-02-10 21:30, 105분)
 - [P4] T4-D3: container-guard 재리뷰 완료 (27건 발견, 11건 resolved, 2026-02-10)
 - [P4] T4-D2: container-guard 초기 리뷰 수정 반영 (C1-C5,H1,H2,H5 수정, 2026-02-10)
 - [P4] T4-D1: container-guard 코드 리뷰 완료 (29건 발견, 2026-02-10)

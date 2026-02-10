@@ -1,25 +1,64 @@
-//! 컨테이너 가드 설정
+//! Container guard configuration.
 //!
-//! [`ContainerGuardConfig`]는 core의 [`ContainerConfig`](ironpost_core::config::ContainerConfig)를
-//! 기반으로 컨테이너 가드 전용 설정을 제공합니다.
+//! [`ContainerGuardConfig`] extends core's [`ContainerConfig`](ironpost_core::config::ContainerConfig)
+//! with container guard-specific settings such as retry behavior, timeouts, and cache TTL.
 //!
-//! # 사용 예시
+//! # Examples
+//!
 //! ```ignore
 //! use ironpost_core::config::IronpostConfig;
-//! use ironpost_container_guard::config::ContainerGuardConfig;
+//! use ironpost_container_guard::ContainerGuardConfig;
 //!
+//! // Create from core configuration
 //! let core_config = IronpostConfig::default();
 //! let config = ContainerGuardConfig::from_core(&core_config.container);
+//!
+//! // Or build with specific settings
+//! use ironpost_container_guard::ContainerGuardConfigBuilder;
+//!
+//! let config = ContainerGuardConfigBuilder::new()
+//!     .enabled(true)
+//!     .docker_socket("/var/run/docker.sock")
+//!     .poll_interval_secs(10)
+//!     .action_timeout_secs(30)
+//!     .retry_max_attempts(3)
+//!     .build()?;
+//! # Ok::<(), ironpost_container_guard::ContainerGuardError>(())
 //! ```
 
 use serde::{Deserialize, Serialize};
 
 use crate::error::ContainerGuardError;
 
-/// 컨테이너 가드 설정
+/// Container guard configuration.
 ///
-/// core의 `ContainerConfig`에서 파생되며, 가드 내부에서
-/// 사용하는 추가 설정을 포함합니다.
+/// Derived from core's `ContainerConfig` and extended with guard-internal settings
+/// such as action timeouts, retry parameters, and cache TTL.
+///
+/// # Fields
+///
+/// - **enabled**: Whether the container guard is active
+/// - **docker_socket**: Path to Docker daemon socket (default: `/var/run/docker.sock`)
+/// - **poll_interval_secs**: How often to refresh container inventory (1-3600)
+/// - **policy_path**: Directory containing TOML policy files
+/// - **auto_isolate**: If true, automatically execute isolation actions on matching alerts
+/// - **max_concurrent_actions**: Maximum simultaneous isolation actions (1-100)
+/// - **action_timeout_secs**: Timeout for each isolation action (1-300)
+/// - **retry_max_attempts**: Max retries for failed isolation actions (0-10)
+/// - **retry_backoff_base_ms**: Base backoff interval for retries (0-30000)
+/// - **container_cache_ttl_secs**: Container inventory cache validity (1-3600)
+///
+/// # Environment Variable Overrides
+///
+/// Configuration can be overridden via environment variables:
+/// - `IRONPOST_CONTAINER_GUARD_ENABLED=true`
+/// - `IRONPOST_CONTAINER_GUARD_DOCKER_SOCKET=/run/docker.sock`
+/// - `IRONPOST_CONTAINER_GUARD_POLL_INTERVAL_SECS=5`
+/// - `IRONPOST_CONTAINER_GUARD_AUTO_ISOLATE=false`
+///
+/// # Validation
+///
+/// Call [`ContainerGuardConfig::validate`] to check bounds on all numeric fields.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContainerGuardConfig {
     /// 활성화 여부
@@ -72,9 +111,20 @@ const MAX_CACHE_TTL_SECS: u64 = 3600;
 const MAX_RETRY_BACKOFF_BASE_MS: u64 = 30_000;
 
 impl ContainerGuardConfig {
-    /// core의 `ContainerConfig`에서 가드 설정을 생성합니다.
+    /// Creates guard configuration from core's `ContainerConfig`.
     ///
-    /// core 설정에 없는 확장 필드는 기본값이 적용됩니다.
+    /// Extended fields not present in core config use default values.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// use ironpost_core::config::IronpostConfig;
+    /// use ironpost_container_guard::ContainerGuardConfig;
+    ///
+    /// let core_config = IronpostConfig::load_from_file("ironpost.toml")?;
+    /// let guard_config = ContainerGuardConfig::from_core(&core_config.container);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn from_core(core: &ironpost_core::config::ContainerConfig) -> Self {
         Self {
             enabled: core.enabled,
@@ -86,7 +136,33 @@ impl ContainerGuardConfig {
         }
     }
 
-    /// 설정값의 유효성을 검증합니다.
+    /// Validates all configuration values against defined bounds.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` if all values are within valid ranges
+    /// - `Err(ContainerGuardError::Config)` with field name and reason if invalid
+    ///
+    /// # Validation Rules
+    ///
+    /// - `poll_interval_secs`: 1-3600
+    /// - `action_timeout_secs`: 1-300
+    /// - `retry_max_attempts`: 0-10
+    /// - `max_concurrent_actions`: 1-100
+    /// - `container_cache_ttl_secs`: 1-3600
+    /// - `retry_backoff_base_ms`: 0-30000
+    /// - `docker_socket`: Must be non-empty if enabled
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use ironpost_container_guard::ContainerGuardConfig;
+    /// let config = ContainerGuardConfig {
+    ///     poll_interval_secs: 5,
+    ///     ..Default::default()
+    /// };
+    /// config.validate().unwrap();
+    /// ```
     pub fn validate(&self) -> Result<(), ContainerGuardError> {
         if self.poll_interval_secs == 0 || self.poll_interval_secs > MAX_POLL_INTERVAL_SECS {
             return Err(ContainerGuardError::Config {
@@ -143,16 +219,31 @@ impl ContainerGuardConfig {
     }
 }
 
-/// 컨테이너 가드 설정 빌더
+/// Builder for [`ContainerGuardConfig`].
 ///
-/// 3개 이상의 설정 필드가 있으므로 빌더 패턴을 사용합니다.
+/// Provides a fluent API for constructing configuration with validation on build.
+///
+/// # Examples
+///
+/// ```
+/// # use ironpost_container_guard::ContainerGuardConfigBuilder;
+/// let config = ContainerGuardConfigBuilder::new()
+///     .enabled(true)
+///     .docker_socket("/var/run/docker.sock")
+///     .poll_interval_secs(10)
+///     .auto_isolate(true)
+///     .action_timeout_secs(30)
+///     .retry_max_attempts(3)
+///     .build()?;
+/// # Ok::<(), ironpost_container_guard::ContainerGuardError>(())
+/// ```
 #[derive(Default)]
 pub struct ContainerGuardConfigBuilder {
     config: ContainerGuardConfig,
 }
 
 impl ContainerGuardConfigBuilder {
-    /// 새 빌더를 생성합니다.
+    /// Creates a new builder with default values.
     pub fn new() -> Self {
         Self::default()
     }
@@ -217,7 +308,11 @@ impl ContainerGuardConfigBuilder {
         self
     }
 
-    /// 설정을 검증하고 `ContainerGuardConfig`를 생성합니다.
+    /// Validates and builds the configuration.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ContainerGuardError::Config` if any field violates bounds.
     pub fn build(self) -> Result<ContainerGuardConfig, ContainerGuardError> {
         self.config.validate()?;
         Ok(self.config)

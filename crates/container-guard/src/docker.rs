@@ -1,8 +1,53 @@
-//! Docker API 추상화 -- 테스트 가능한 Docker 클라이언트 인터페이스
+//! Docker API abstraction for testability.
 //!
-//! [`DockerClient`] trait은 bollard Docker API를 추상화하여
-//! 프로덕션에서는 [`BollardDockerClient`]를, 테스트에서는
-//! [`MockDockerClient`]를 사용할 수 있게 합니다.
+//! The [`DockerClient`] trait abstracts the bollard Docker API, allowing
+//! production code to use [`BollardDockerClient`] while tests use `MockDockerClient`.
+//!
+//! # Architecture
+//!
+//! ```text
+//! ┌──────────────────┐
+//! │  ContainerGuard  │
+//! └────────┬─────────┘
+//!          │
+//!          ▼
+//!   ┌─────────────┐
+//!   │DockerClient │ (trait)
+//!   └─────────────┘
+//!        │     │
+//!        ▼     ▼
+//!   ┌─────┐ ┌──────┐
+//!   │Bollard│ │Mock│
+//!   └───┬─┘ └─────┘
+//!       │
+//!       ▼
+//!   Docker Daemon
+//! ```
+//!
+//! # Container ID Validation
+//!
+//! All methods that accept container IDs perform validation to prevent injection attacks:
+//! - Must be 1-64 characters
+//! - Must contain only ASCII hex digits ([0-9a-fA-F])
+//! - Empty IDs and IDs with special characters are rejected
+//!
+//! # Examples
+//!
+//! ```ignore
+//! use std::sync::Arc;
+//! use ironpost_container_guard::BollardDockerClient;
+//!
+//! // Connect to Docker daemon
+//! let client = BollardDockerClient::connect_local()?;
+//! let client = Arc::new(client);
+//!
+//! // List running containers
+//! let containers = client.list_containers().await?;
+//!
+//! // Pause a specific container
+//! client.pause_container("abc123def456").await?;
+//! # Ok::<(), ironpost_container_guard::ContainerGuardError>(())
+//! ```
 
 use std::future::Future;
 use std::sync::Arc;
@@ -31,67 +76,151 @@ fn validate_container_id(id: &str) -> Result<(), ContainerGuardError> {
     Ok(())
 }
 
-/// Docker API 추상화 trait
+/// Trait abstracting Docker API operations.
 ///
-/// 모든 Docker API 호출은 이 trait을 통해 수행됩니다.
-/// `Send + Sync + 'static` 바운드로 비동기 컨텍스트에서 안전하게 공유할 수 있습니다.
+/// All Docker API calls go through this trait, enabling testability via mocking.
+/// The trait is `Send + Sync + 'static`, allowing safe sharing across async contexts.
 ///
-/// # 구현
-/// - [`BollardDockerClient`]: bollard 라이브러리를 사용하는 실제 구현
-/// - [`MockDockerClient`]: 테스트용 mock 구현
+/// # Implementations
+///
+/// - [`BollardDockerClient`]: Production implementation using the `bollard` library
+/// - `MockDockerClient`: Test implementation with configurable responses (available in tests only)
+///
+/// # Container ID Validation
+///
+/// All methods validate container IDs before making Docker API calls.
+/// Invalid IDs (empty, > 64 chars, or non-hex) return `ContainerGuardError::DockerApi`.
+///
+/// # Error Handling
+///
+/// - **404 errors**: Converted to `ContainerGuardError::ContainerNotFound`
+/// - **Connection errors**: Wrapped as `ContainerGuardError::DockerConnection`
+/// - **Action failures**: Wrapped as `ContainerGuardError::IsolationFailed`
 pub trait DockerClient: Send + Sync + 'static {
-    /// 실행 중인 컨테이너 목록을 조회합니다.
+    /// Lists running containers.
+    ///
+    /// Returns only running containers (stopped/exited containers are filtered).
+    /// Each `ContainerInfo` includes ID, name, image, status, and creation time.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ContainerGuardError::DockerApi` if the Docker API call fails.
     fn list_containers(
         &self,
     ) -> impl Future<Output = Result<Vec<ContainerInfo>, ContainerGuardError>> + Send;
 
-    /// 특정 컨테이너의 상세 정보를 조회합니다.
+    /// Inspects a specific container.
+    ///
+    /// # Arguments
+    ///
+    /// - `id`: Container ID (full or prefix). Must be 1-64 hex characters.
+    ///
+    /// # Errors
+    ///
+    /// - `ContainerGuardError::ContainerNotFound`: Container does not exist (404)
+    /// - `ContainerGuardError::DockerApi`: Invalid ID or other API errors
     fn inspect_container(
         &self,
         id: &str,
     ) -> impl Future<Output = Result<ContainerInfo, ContainerGuardError>> + Send;
 
-    /// 컨테이너를 정지합니다.
+    /// Stops a container with a 10-second grace period.
+    ///
+    /// Sends SIGTERM, then SIGKILL after 10 seconds if the container hasn't stopped.
+    ///
+    /// # Errors
+    ///
+    /// - `ContainerGuardError::IsolationFailed`: Container cannot be stopped
+    /// - `ContainerGuardError::DockerApi`: Invalid container ID
     fn stop_container(
         &self,
         id: &str,
     ) -> impl Future<Output = Result<(), ContainerGuardError>> + Send;
 
-    /// 컨테이너를 일시정지합니다.
+    /// Pauses a container, freezing all its processes.
+    ///
+    /// Useful for forensics or temporary service suspension without killing processes.
+    /// Call [`unpause_container`](Self::unpause_container) to resume.
+    ///
+    /// # Errors
+    ///
+    /// - `ContainerGuardError::IsolationFailed`: Container cannot be paused
     fn pause_container(
         &self,
         id: &str,
     ) -> impl Future<Output = Result<(), ContainerGuardError>> + Send;
 
-    /// 컨테이너 일시정지를 해제합니다.
+    /// Resumes a paused container.
     fn unpause_container(
         &self,
         id: &str,
     ) -> impl Future<Output = Result<(), ContainerGuardError>> + Send;
 
-    /// 컨테이너를 특정 네트워크에서 연결 해제합니다.
+    /// Disconnects a container from a specific network.
+    ///
+    /// Uses `force: true` to ensure disconnection even if the container is running.
+    ///
+    /// # Arguments
+    ///
+    /// - `container_id`: Container to disconnect
+    /// - `network`: Network name (e.g., "bridge", "host")
+    ///
+    /// # Errors
+    ///
+    /// - `ContainerGuardError::IsolationFailed`: Network disconnect failed
     fn disconnect_network(
         &self,
         container_id: &str,
         network: &str,
     ) -> impl Future<Output = Result<(), ContainerGuardError>> + Send;
 
-    /// Docker 데몬 연결 상태를 확인합니다.
+    /// Checks Docker daemon connectivity.
+    ///
+    /// Used by `ContainerGuard`'s `Pipeline::health_check()` implementation
+    /// to report the guard's health status.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ContainerGuardError::DockerConnection` if the daemon is unreachable.
     fn ping(&self) -> impl Future<Output = Result<(), ContainerGuardError>> + Send;
 }
 
-/// bollard 라이브러리를 사용하는 Docker 클라이언트 구현
+/// Production Docker client implementation using `bollard`.
 ///
-/// Docker 소켓을 통해 Docker 데몬과 통신합니다.
-/// `Arc<bollard::Docker>`를 내부에 보관하여 여러 태스크에서 공유할 수 있습니다.
+/// Communicates with the Docker daemon via a Unix socket or TCP connection.
+/// Internally uses `Arc<bollard::Docker>` for safe sharing across async tasks.
+///
+/// # Connection Management
+///
+/// - Connection timeout: 120 seconds
+/// - API version: Default (auto-negotiated)
+/// - Socket path: Configurable (default: `/var/run/docker.sock`)
+///
+/// # Examples
+///
+/// ```ignore
+/// use ironpost_container_guard::BollardDockerClient;
+///
+/// // Connect to default Docker socket
+/// let client = BollardDockerClient::connect_local()?;
+///
+/// // Or connect to a specific socket
+/// let client = BollardDockerClient::connect_with_socket("/run/docker.sock")?;
+/// # Ok::<(), ironpost_container_guard::ContainerGuardError>(())
+/// ```
 pub struct BollardDockerClient {
     docker: Arc<bollard::Docker>,
 }
 
 impl BollardDockerClient {
-    /// 기본 설정으로 Docker 클라이언트를 생성합니다.
+    /// Connects to Docker using the default local socket.
     ///
-    /// 로컬 Docker 소켓에 자동으로 연결합니다.
+    /// Automatically detects the socket path based on the platform.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ContainerGuardError::DockerConnection` if the connection fails
+    /// (e.g., socket not found, permission denied, daemon not running).
     pub fn connect_local() -> Result<Self, ContainerGuardError> {
         let docker = bollard::Docker::connect_with_local_defaults().map_err(|e| {
             ContainerGuardError::DockerConnection(format!("failed to connect to docker: {e}"))
@@ -101,7 +230,15 @@ impl BollardDockerClient {
         })
     }
 
-    /// 지정된 소켓 경로로 Docker 클라이언트를 생성합니다.
+    /// Connects to Docker using a specific socket path.
+    ///
+    /// # Arguments
+    ///
+    /// - `socket_path`: Path to the Docker socket (e.g., `/var/run/docker.sock`)
+    ///
+    /// # Errors
+    ///
+    /// Returns `ContainerGuardError::DockerConnection` if the connection fails.
     pub fn connect_with_socket(socket_path: &str) -> Result<Self, ContainerGuardError> {
         let docker =
             bollard::Docker::connect_with_socket(socket_path, 120, bollard::API_DEFAULT_VERSION)

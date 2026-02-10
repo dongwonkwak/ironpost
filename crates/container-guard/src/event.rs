@@ -1,7 +1,34 @@
-//! 컨테이너 이벤트 — Docker 컨테이너 생명주기 이벤트
+//! Container lifecycle events.
 //!
-//! [`ContainerEvent`]는 Docker 컨테이너의 생성/시작/정지/삭제 등
-//! 생명주기 이벤트를 나타냅니다. core의 [`Event`] trait을 구현합니다.
+//! [`ContainerEvent`] represents Docker container lifecycle events such as
+//! creation, start, stop, pause, and network disconnection.
+//!
+//! These events implement core's [`Event`] trait and are emitted by the
+//! [`IsolationExecutor`](crate::isolation::IsolationExecutor) as [`ActionEvent`](ironpost_core::event::ActionEvent)
+//! messages after isolation actions complete.
+//!
+//! # Examples
+//!
+//! ```
+//! use ironpost_container_guard::{ContainerEvent, ContainerEventKind};
+//!
+//! // Create a new event with a new trace
+//! let event = ContainerEvent::new(
+//!     "abc123def456",
+//!     "web-server",
+//!     ContainerEventKind::Paused,
+//! );
+//!
+//! // Or link to an existing trace from an alert
+//! let event_with_trace = ContainerEvent::with_trace(
+//!     "abc123def456",
+//!     "web-server",
+//!     ContainerEventKind::NetworkDisconnected {
+//!         network: "bridge".to_owned(),
+//!     },
+//!     "trace-123",
+//! );
+//! ```
 
 use std::fmt;
 
@@ -9,7 +36,9 @@ use serde::{Deserialize, Serialize};
 
 use ironpost_core::event::{EVENT_TYPE_ACTION, Event, EventMetadata, MODULE_CONTAINER_GUARD};
 
-/// 컨테이너 생명주기 이벤트 종류
+/// Container lifecycle event kind.
+///
+/// Represents the type of lifecycle event that occurred on a Docker container.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ContainerEventKind {
     /// 컨테이너 생성됨
@@ -47,10 +76,18 @@ impl fmt::Display for ContainerEventKind {
     }
 }
 
-/// Docker 컨테이너 생명주기 이벤트
+/// Docker container lifecycle event.
 ///
-/// Docker 데몬에서 발생하는 컨테이너 이벤트를 나타냅니다.
-/// 모니터링 모듈에서 감시하여 컨테이너 인벤토리를 유지합니다.
+/// Represents a container event from the Docker daemon. These events are
+/// monitored by [`DockerMonitor`](crate::monitor::DockerMonitor) to maintain
+/// the container inventory.
+///
+/// # Event Metadata
+///
+/// Each event carries `EventMetadata` which includes:
+/// - `source_module`: Always `"container-guard"`
+/// - `trace_id`: Links related events across modules
+/// - `timestamp`: Event creation time
 #[derive(Debug, Clone)]
 pub struct ContainerEvent {
     /// 이벤트 고유 ID
@@ -66,7 +103,9 @@ pub struct ContainerEvent {
 }
 
 impl ContainerEvent {
-    /// 새로운 trace를 시작하는 컨테이너 이벤트를 생성합니다.
+    /// Creates a container event with a new trace ID.
+    ///
+    /// Use this when the event is not part of an existing trace (e.g., standalone container monitoring).
     pub fn new(
         container_id: impl Into<String>,
         container_name: impl Into<String>,
@@ -81,7 +120,14 @@ impl ContainerEvent {
         }
     }
 
-    /// 기존 trace에 연결된 컨테이너 이벤트를 생성합니다.
+    /// Creates a container event linked to an existing trace.
+    ///
+    /// Use this to connect the container event to an upstream trace, such as
+    /// linking an isolation action back to the original alert that triggered it.
+    ///
+    /// # Arguments
+    ///
+    /// - `trace_id`: Trace ID from the originating event (e.g., `AlertEvent.metadata.trace_id`)
     pub fn with_trace(
         container_id: impl Into<String>,
         container_name: impl Into<String>,

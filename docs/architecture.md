@@ -146,9 +146,61 @@ graph TD
 
 ### ironpost-container-guard
 
-(Phase 4 구현 예정)
+Alert-driven Docker container isolation with policy-based enforcement.
 
-컨테이너 기반 격리 및 정책 적용.
+**Purpose**: Automatically isolates containers based on security alerts from log-pipeline and ebpf-engine.
+
+**Key Components**:
+- **ContainerGuard**: Main orchestrator implementing the `Pipeline` trait, coordinates all sub-components
+- **PolicyEngine**: Evaluates incoming `AlertEvent` messages against TOML-defined security policies
+- **IsolationExecutor**: Executes isolation actions (pause, stop, network disconnect) with retry logic and timeout
+- **DockerMonitor**: Maintains container inventory cache with TTL-based refresh to reduce Docker API calls
+- **DockerClient trait**: Abstracts bollard Docker API for testability via `MockDockerClient`
+
+**Data Flow**:
+1. `AlertEvent` arrives via `tokio::mpsc` channel from log-pipeline
+2. `DockerMonitor` refreshes container list if cache TTL expired
+3. `PolicyEngine` evaluates alert against each cached container:
+   - Checks alert severity ≥ policy threshold
+   - Checks container name/image against glob patterns
+4. First matching policy triggers `IsolationExecutor`
+5. Isolation action executed with retry logic (max 3 attempts, linear backoff)
+6. `ActionEvent` emitted to downstream subscribers with success/failure status
+
+**Integration Points**:
+- **Consumes**: `AlertEvent` from log-pipeline (severity, alert details)
+- **Produces**: `ActionEvent` for audit/notification (action type, target, success, trace_id)
+- **Depends on**: Docker daemon via bollard library (Unix socket or TCP)
+
+**Security Policies**:
+- Loaded from TOML files in configured directory (`policy_path`)
+- Glob pattern matching for container names and images (`*` and `?` wildcards)
+- Three isolation actions: `Pause` (freeze processes), `Stop` (SIGTERM + SIGKILL), `NetworkDisconnect` (remove from networks)
+- Priority-based evaluation (lower priority number = higher priority, first match wins)
+- Runtime policy updates via shared `Arc<Mutex<PolicyEngine>>`
+
+**Configuration**: `[container_guard]` section in `ironpost.toml`
+- `enabled`: Activate the guard
+- `docker_socket`: Docker daemon socket path (default: `/var/run/docker.sock`)
+- `poll_interval_secs`: Container inventory refresh interval (1-3600s)
+- `policy_path`: TOML policy directory
+- `auto_isolate`: If true, automatically execute isolation actions on matching alerts
+- `action_timeout_secs`: Timeout per isolation action (1-300s)
+- `retry_max_attempts`: Max retries for failed actions (0-10)
+- `container_cache_ttl_secs`: Container inventory cache validity (1-3600s)
+
+**Known Limitations**:
+- Guard cannot be restarted after `stop()` — alert receiver channel is consumed (rebuild required)
+- Label-based filtering not implemented (rejected during validation)
+- Empty filters match ALL containers (dangerous, always use explicit patterns)
+- First matching policy applied to first matching container (non-deterministic with wildcards due to HashMap iteration)
+
+**Performance**:
+- Container inventory: Cached with TTL, reduces Docker API calls
+- Policy evaluation: O(policies × containers), short-circuits on first match
+- Isolation actions: Linear backoff retry (500ms, 1000ms, 1500ms with default config)
+
+**Testing**: 202 tests (185 unit + 17 integration) with `MockDockerClient` for Docker-free testing
 
 ### ironpost-sbom-scanner
 
