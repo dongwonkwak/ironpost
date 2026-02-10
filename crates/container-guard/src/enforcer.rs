@@ -1,1 +1,3 @@
-//! 정책 실행 — 격리, 네트워크 차단, 컨테이너 중지 등 액션 수행
+// This module has been superseded by isolation.rs and guard.rs.
+// Kept as an empty file for backwards compatibility during migration.
+// Remove this file after Phase 4-B is complete.

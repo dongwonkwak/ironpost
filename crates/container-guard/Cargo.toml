@@ -8,6 +8,12 @@ description = "Ironpost 컨테이너 모니터링 및 정책 기반 격리"
 ironpost-core = { path = "../core" }
 tokio = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
 tracing = { workspace = true }
-bytes = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
 bollard = "0.18"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util", "macros"] }

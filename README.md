@@ -74,4 +74,8 @@ sudo ./target/release/ironpost-daemon --config ironpost.toml
 
 ## 라이선스
 
-(TBD)
+MIT License
+
+Copyright (c) 2026 Ironpost Contributors
+
+본 소프트웨어는 MIT 라이선스 하에 배포됩니다. 자세한 내용은 [LICENSE](LICENSE) 파일을 참조하세요.

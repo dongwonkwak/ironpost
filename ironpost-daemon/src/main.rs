@@ -1,42 +1,73 @@
 use anyhow::Result;
+use std::sync::Arc;
+
+use ironpost_container_guard::{BollardDockerClient, ContainerGuardBuilder};
+use ironpost_core::pipeline::Pipeline;
+use ironpost_log_pipeline::LogPipelineBuilder;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     // 로깅 초기화
     tracing_subscriber::fmt()
-        .with_env_filter("info")
+        .with_env_filter(
+            std::env::var("RUST_LOG").unwrap_or_else(|_| "info,ironpost=debug".to_owned()),
+        )
         .json()
         .init();
 
     tracing::info!("ironpost-daemon starting");
 
-    // TODO: 설정 로드
-    // let config = load_config("ironpost.toml").await?;
+    // 모듈 간 통신 채널 생성
+    let (alert_tx, alert_rx) = tokio::sync::mpsc::channel(256);
 
-    // TODO: 이벤트 버스 생성 (모듈 간 통신 채널)
-    // let (event_tx, event_rx) = tokio::sync::mpsc::channel(1024);
-    // let (alert_tx, alert_rx) = tokio::sync::mpsc::channel(256);
+    // 로그 파이프라인 빌드
+    let (mut log_pipeline, _alert_rx_internal) = LogPipelineBuilder::new()
+        .alert_sender(alert_tx)
+        .build()
+        .map_err(|e| anyhow::anyhow!("failed to build log pipeline: {}", e))?;
 
-    // TODO: 모듈 초기화
-    // let ebpf_engine = EbpfEngine::new(config.ebpf, event_tx.clone()).await?;
-    // let log_pipeline = LogPipeline::new(config.log_pipeline, event_rx, alert_tx).await?;
-    // let container_guard = ContainerGuard::new(config.container, alert_rx).await?;
-    // let sbom_scanner = SbomScanner::new(config.sbom).await?;
+    tracing::info!("log pipeline initialized");
 
-    // TODO: 모듈 실행
-    // tokio::select! {
-    //     result = ebpf_engine.run() => { result?; }
-    //     result = log_pipeline.run() => { result?; }
-    //     result = container_guard.run() => { result?; }
-    //     _ = tokio::signal::ctrl_c() => {
-    //         tracing::info!("shutdown signal received");
-    //     }
-    // }
+    // 컨테이너 가드 빌드
+    let docker_client = Arc::new(
+        BollardDockerClient::connect_local()
+            .map_err(|e| anyhow::anyhow!("failed to create docker client: {}", e))?,
+    );
 
-    // Placeholder: 시그널 대기
-    tracing::info!("ironpost-daemon running (placeholder — modules not yet wired)");
+    let (mut container_guard, _action_rx) = ContainerGuardBuilder::new()
+        .docker_client(docker_client)
+        .alert_receiver(alert_rx)
+        .build()
+        .map_err(|e| anyhow::anyhow!("failed to build container guard: {}", e))?;
+
+    tracing::info!("container guard initialized");
+
+    // 파이프라인 시작
+    log_pipeline
+        .start()
+        .await
+        .map_err(|e| anyhow::anyhow!("failed to start log pipeline: {}", e))?;
+    tracing::info!("log pipeline started");
+
+    container_guard
+        .start()
+        .await
+        .map_err(|e| anyhow::anyhow!("failed to start container guard: {}", e))?;
+    tracing::info!("container guard started");
+
+    // 종료 시그널 대기
+    tracing::info!("ironpost-daemon running — modules active");
     tokio::signal::ctrl_c().await?;
-    tracing::info!("ironpost-daemon shutting down");
+    tracing::info!("shutdown signal received");
 
+    // 우아한 종료
+    if let Err(e) = container_guard.stop().await {
+        tracing::error!(error = %e, "failed to stop container guard");
+    }
+    if let Err(e) = log_pipeline.stop().await {
+        tracing::error!(error = %e, "failed to stop log pipeline");
+    }
+
+    tracing::info!("ironpost-daemon shut down");
     Ok(())
 }

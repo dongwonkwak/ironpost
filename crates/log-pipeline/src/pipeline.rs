@@ -236,55 +236,63 @@ impl Pipeline for LogPipeline {
             loop {
                 tokio::select! {
                     // RawLog 수신
-                    Some(raw_log) = raw_log_rx.recv() => {
-                        let mut buf = buffer.lock().await;
-                        buf.push(raw_log);
+                    result = raw_log_rx.recv() => {
+                        match result {
+                            Some(raw_log) => {
+                                let mut buf = buffer.lock().await;
+                                buf.push(raw_log);
 
-                        // 배치 크기 도달 시 즉시 플러시
-                        if buf.should_flush(batch_size) {
-                            let batch = buf.drain_batch(batch_size);
-                            drop(buf); // unlock buffer before processing
+                                // 배치 크기 도달 시 즉시 플러시
+                                if buf.should_flush(batch_size) {
+                                    let batch = buf.drain_batch(batch_size);
+                                    drop(buf); // unlock buffer before processing
 
-                            tracing::debug!(batch_size = batch.len(), "flushing batch (size trigger)");
+                                    tracing::debug!(batch_size = batch.len(), "flushing batch (size trigger)");
 
-                            // 공유 process_batch 로직 호출
-                            for raw_log in batch {
-                                match parser.parse(&raw_log.data) {
-                                    Ok(log_entry) => {
-                                        processed_count.fetch_add(1, Ordering::Relaxed);
+                                    // 공유 process_batch 로직 호출
+                                    for raw_log in batch {
+                                        match parser.parse(&raw_log.data) {
+                                            Ok(log_entry) => {
+                                                processed_count.fetch_add(1, Ordering::Relaxed);
 
-                                        match rule_engine.lock().await.evaluate(&log_entry) {
-                                            Ok(matches) => {
-                                                for rule_match in matches {
-                                                    let mut alert_gen = alert_generator.lock().await;
-                                                    if let Some(alert_event) = alert_gen.generate(
-                                                        &rule_match,
-                                                        None,
-                                                    ) {
-                                                        drop(alert_gen);
-                                                        if let Err(e) = alert_tx.send(alert_event).await {
-                                                            tracing::error!(error = %e, "failed to send alert event");
+                                                match rule_engine.lock().await.evaluate(&log_entry) {
+                                                    Ok(matches) => {
+                                                        for rule_match in matches {
+                                                            let mut alert_gen = alert_generator.lock().await;
+                                                            if let Some(alert_event) = alert_gen.generate(
+                                                                &rule_match,
+                                                                None,
+                                                            ) {
+                                                                drop(alert_gen);
+                                                                if let Err(e) = alert_tx.send(alert_event).await {
+                                                                    tracing::error!(error = %e, "failed to send alert event");
+                                                                }
+                                                            }
                                                         }
+                                                    }
+                                                    Err(e) => {
+                                                        tracing::warn!(error = %e, "rule evaluation failed");
                                                     }
                                                 }
                                             }
                                             Err(e) => {
-                                                tracing::warn!(error = %e, "rule evaluation failed");
+                                                parse_error_count.fetch_add(1, Ordering::Relaxed);
+                                                tracing::debug!(
+                                                    source = %raw_log.source,
+                                                    error = %e,
+                                                    "failed to parse log entry"
+                                                );
                                             }
                                         }
                                     }
-                                    Err(e) => {
-                                        parse_error_count.fetch_add(1, Ordering::Relaxed);
-                                        tracing::debug!(
-                                            source = %raw_log.source,
-                                            error = %e,
-                                            "failed to parse log entry"
-                                        );
-                                    }
+
+                                    last_flush = Instant::now();
                                 }
                             }
-
-                            last_flush = Instant::now();
+                            None => {
+                                tracing::info!("raw_log channel closed, stopping processing loop");
+                                break;
+                            }
                         }
                     }
 
