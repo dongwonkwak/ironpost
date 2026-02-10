@@ -384,13 +384,26 @@ d.split_whitespace()
 | **Total** | **23** | |
 
 ### Critical fixes required before production:
-- **C1**: Add file size limit for VulnDb JSON files
-- **C2**: Index VulnDb with HashMap for O(1) lookups instead of O(n)
-- **C3**: Remove TOCTOU `exists()` checks; use direct open + error handling
+- ✅ **C1**: Add file size limit for VulnDb JSON files
+- ✅ **C2**: Index VulnDb with HashMap for O(1) lookups instead of O(n)
+- ✅ **C3**: Remove TOCTOU `exists()` checks; use direct open + error handling
 
 ### High priority recommendations:
-- **H1**: Extract shared scan logic to eliminate ~130 lines of duplication
-- **H2**: Use CancellationToken for graceful periodic task shutdown
-- **H3**: Explicitly reject start() from Stopped state
-- **H4**: Validate scan_dirs paths for traversal and symlink attacks
-- **H5**: Cap total VulnDb entry count after loading
+- ✅ **H1**: Extract shared scan logic to eliminate ~130 lines of duplication
+- ⚠️ **H2**: Use CancellationToken for graceful periodic task shutdown (deferred to Phase 6)
+- ✅ **H3**: Explicitly reject start() from Stopped state
+- ✅ **H4**: Validate scan_dirs paths for traversal and symlink attacks
+- ✅ **H5**: Cap total VulnDb entry count after loading
+
+---
+
+## Fix Summary (2026-02-10)
+
+**Fixed:** Critical 3/3, High 4/5 (1 deferred to Phase 6)
+**Commit:** 14ac3f7
+**Tests:** 183 passing (165 unit + 10 CVE + 6 integration + 2 doc)
+**Clippy:** Clean (no warnings)
+
+**Deferred to Phase 6:**
+- H2: Graceful shutdown with CancellationToken (functional correctness not affected)
+- Medium 8 issues, Low 7 issues (polishing items)
