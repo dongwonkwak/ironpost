@@ -127,7 +127,7 @@ pipeline.stop().await?;
 ```
 
 **수집기 (Collector)**:
-- `FileCollector` — 파일 tail (inotify 감시)
+- `FileCollector` — 파일 tail (폴링 기반 로테이션 감지)
 - `SyslogUdpCollector` — Syslog UDP 514
 - `SyslogTcpCollector` — Syslog TCP 514 + octet framing
 - `EventReceiver` — PacketEvent → RawLog 변환
@@ -163,7 +163,7 @@ detection:
   threshold:
     count: 5
     timeframe_secs: 60
-    group_by: src_ip
+    field: src_ip
 ```
 
 ---

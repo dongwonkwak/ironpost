@@ -163,7 +163,10 @@ impl RuleEngine {
 
             // threshold 처리
             if let Some(ref threshold) = rule.detection.threshold {
-                let group_key = Self::extract_group_key(entry, &threshold.field);
+                // 그룹화 필드가 없으면 threshold 카운팅을 건너뜁니다
+                let Some(group_key) = Self::extract_group_key(entry, &threshold.field) else {
+                    continue;
+                };
                 let key = (rule.id.clone(), group_key);
 
                 let counter =
@@ -229,12 +232,13 @@ impl RuleEngine {
     }
 
     /// LogEntry에서 그룹 키를 추출합니다.
-    fn extract_group_key(entry: &LogEntry, field: &str) -> String {
+    /// 필드가 없으면 None을 반환하여 threshold 카운팅을 건너뜁니다.
+    fn extract_group_key(entry: &LogEntry, field: &str) -> Option<String> {
         match field {
-            "hostname" => entry.hostname.clone(),
-            "process" => entry.process.clone(),
-            "source" => entry.source.clone(),
-            "message" => entry.message.clone(),
+            "hostname" => Some(entry.hostname.clone()),
+            "process" => Some(entry.process.clone()),
+            "source" => Some(entry.source.clone()),
+            "message" => Some(entry.message.clone()),
             _ => {
                 // fields에서 검색
                 entry
@@ -242,7 +246,6 @@ impl RuleEngine {
                     .iter()
                     .find(|(k, _)| k == field)
                     .map(|(_, v)| v.clone())
-                    .unwrap_or_else(|| "unknown".to_owned())
             }
         }
     }
@@ -302,7 +305,7 @@ impl ironpost_core::pipeline::Detector for RuleEngine {
             }
 
             let matched = self.matcher.matches(rule, entry).map_err(|e| {
-                IronpostError::Pipeline(ironpost_core::error::PipelineError::InitFailed(
+                IronpostError::Detection(ironpost_core::error::DetectionError::Rule(
                     e.to_string(),
                 ))
             })?;
@@ -376,7 +379,7 @@ mod tests {
     fn extract_group_key_from_fields() {
         let entry = sample_entry();
         let key = RuleEngine::extract_group_key(&entry, "source_ip");
-        assert_eq!(key, "192.168.1.100");
+        assert_eq!(key, Some("192.168.1.100".to_owned()));
     }
 
     #[test]
@@ -384,17 +387,20 @@ mod tests {
         let entry = sample_entry();
         assert_eq!(
             RuleEngine::extract_group_key(&entry, "hostname"),
-            "server-01"
+            Some("server-01".to_owned())
         );
-        assert_eq!(RuleEngine::extract_group_key(&entry, "process"), "sshd");
+        assert_eq!(
+            RuleEngine::extract_group_key(&entry, "process"),
+            Some("sshd".to_owned())
+        );
     }
 
     #[test]
-    fn extract_group_key_unknown_returns_default() {
+    fn extract_group_key_unknown_returns_none() {
         let entry = sample_entry();
         assert_eq!(
             RuleEngine::extract_group_key(&entry, "nonexistent"),
-            "unknown"
+            None
         );
     }
 
