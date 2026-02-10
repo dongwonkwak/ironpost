@@ -9,7 +9,7 @@
 | 2-ebpf | 5 | 5 | 0 | 6 | ✅ (설계+구현+리뷰+수정 완료) |
 | 3-log | 12 | 13 | 0 | 5 | ✅ (설계+구현+리뷰+수정 완료) |
 | 4-container | 17 | 17 | 0 | 0 | ✅ (설계+구현+테스트+리뷰 완료, 202 tests) |
-| 5-sbom | 24 | 27 | 0 | 2 | ✅ (Phase 5-B 구현+리뷰+수정+재리뷰 완료, 183 tests) |
+| 5-sbom | 28 | 28 | 0 | 0 | ✅ (Phase 5-E 문서화 완료, 183 tests, README 580+ lines) |
 | 6-polish | - | - | - | - | ⏳ |
 
 ## 블로커
@@ -176,6 +176,7 @@
 - [x] T5-A19: Core 크레이트 업데이트 (MODULE_SBOM_SCANNER, EVENT_TYPE_SCAN 상수 추가)
 
 ## 최근 완료
+- [P5] T5-E1: sbom-scanner 문서화 완료 (README 580+ lines + architecture + module-guide, 2026-02-10 16:58, 4분)
 - [P5] T5-D3: sbom-scanner 재리뷰 완료 (21건 발견, 이전 수정 7건 검증, 2026-02-10)
 - [P5] T5-D2: sbom-scanner 리뷰 수정 완료 (C3+H4 완료, 183 tests passing, 2026-02-10 23:15, 75분)
 - [P5] T5-D1: sbom-scanner 코드 리뷰 완료 (23건 발견, 2026-02-10)

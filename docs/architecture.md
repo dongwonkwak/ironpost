@@ -212,9 +212,78 @@ Alert-driven Docker container isolation with policy-based enforcement.
 
 ### ironpost-sbom-scanner
 
-(Phase 5 구현 예정)
+Lockfile parsing, SBOM generation, and CVE vulnerability scanning.
 
-컨테이너 이미지 SBOM 스캔 및 취약점 매칭.
+**Purpose**: Generates Software Bill of Materials (SBOM) from dependency lockfiles and scans for known vulnerabilities against a local CVE database.
+
+**Key Components**:
+- **SbomScanner**: Main orchestrator implementing the `Pipeline` trait, coordinates scanning workflow
+- **LockfileParser trait**: Extensible interface for parsing dependency files (Cargo.lock, package-lock.json)
+  - `CargoLockParser`: TOML-based Rust dependency parsing
+  - `NpmLockParser`: JSON-based NPM dependency parsing (supports lockfile v2/v3)
+- **SbomGenerator**: Transforms package graphs into industry-standard SBOM formats
+  - CycloneDX 1.5 JSON with full component metadata (PURL, checksums, timestamps)
+  - SPDX 2.3 JSON with SPDXRef identifiers and external references
+- **VulnDb**: Local JSON-based CVE database with HashMap indexing for O(1) lookup
+  - Per-ecosystem JSON files (cargo.json, npm.json)
+  - Entry validation (field length limits, affected ranges capping)
+  - 1M entry limit with 50MB per-file limit
+- **VulnMatcher**: SemVer-based version range matching with string fallback
+  - Matches package versions against CVE affected ranges
+  - Severity-based filtering (Critical, High, Medium, Low, Info)
+
+**Data Flow**:
+1. Scanner discovers lockfiles (Cargo.lock, package-lock.json) in configured `scan_dirs`
+2. Appropriate `LockfileParser` parses file into `PackageGraph` (packages + dependencies)
+3. (Optional) `SbomGenerator` produces CycloneDX or SPDX JSON document
+4. `VulnMatcher` queries `VulnDb` for each package, performs version range matching
+5. Findings with `severity >= min_severity` converted to `AlertEvent` and emitted via `mpsc::Sender`
+
+**Integration Points**:
+- **Consumes**: Lockfiles from filesystem (non-recursive directory scan)
+- **Produces**: `AlertEvent` for each vulnerability finding (with CVE ID, package, severity)
+- **Depends on**: Local CVE database JSON files at configured `vuln_db_path`
+
+**Supported Formats**:
+- **Lockfiles**: Cargo.lock (TOML), package-lock.json (JSON v2/v3)
+- **SBOM Output**: CycloneDX 1.5 JSON, SPDX 2.3 JSON
+- **Package URL (PURL)**: Follows purl-spec for all ecosystems (cargo, npm, golang, pypi)
+
+**Configuration**: `[sbom]` section in `ironpost.toml`
+- `enabled`: Activate the scanner
+- `scan_dirs`: Directories to scan (1 level, non-recursive)
+- `vuln_db_path`: Local CVE database directory (e.g., `/var/lib/ironpost/vuln-db`)
+- `min_severity`: Minimum severity for alerts (info/low/medium/high/critical)
+- `output_format`: SBOM format (cyclonedx/spdx)
+- `scan_interval_secs`: Periodic scan interval (0 = manual trigger only)
+- `max_file_size`: Max lockfile size (default 10 MB)
+- `max_packages`: Max packages per graph (default 50,000)
+
+**Security Considerations**:
+- **File Size Limits**: Lockfiles exceeding `max_file_size` skipped
+- **Package Count Limits**: Graphs exceeding `max_packages` truncated with warning
+- **Field Length Limits**: Package names/versions exceeding 512/256 chars skipped
+- **Path Traversal Protection**: Scan directories validated against `..` patterns
+- **Symlink Protection**: Symlinks in scan directories skipped
+- **TOCTOU Mitigation**: File operations use open-then-read pattern with single handle
+- **DoS Protection**: VulnDb limited to 1M entries, CVE descriptions capped at 8KB
+
+**Known Limitations**:
+- Offline mode only (no network CVE API calls in Phase 5)
+- Single-level directory scan (not recursive)
+- String version comparison fallback may produce false negatives (non-SemVer versions)
+- Restart limitation: `stop()` prevents `start()` on same instance (rebuild required)
+- No graceful shutdown: Periodic scan task aborts immediately
+
+**Performance**:
+- Lockfile parsing: O(n) where n = package count
+- SBOM generation: O(n) serialization
+- Vulnerability lookup: O(1) via HashMap index on `(package_name, ecosystem)`
+- Version matching: O(m) where m = affected_ranges per CVE (typically 1-3)
+- All filesystem I/O wrapped in `tokio::task::spawn_blocking`
+- `Arc<VulnDb>` enables zero-copy database sharing across scan operations
+
+**Testing**: 183 tests (165 unit + 10 CVE integration + 6 pipeline + 2 doc tests)
 
 ## 이벤트 플로우 (종단 간 시나리오)
 

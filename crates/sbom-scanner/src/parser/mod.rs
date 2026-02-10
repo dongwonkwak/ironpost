@@ -5,8 +5,8 @@
 //!
 //! # 지원 형식
 //!
-//! - `Cargo.lock` (TOML) -- [`CargoLockParser`]
-//! - `package-lock.json` (JSON) -- [`NpmLockParser`]
+//! - `Cargo.lock` (TOML) -- [`cargo::CargoLockParser`]
+//! - `package-lock.json` (JSON) -- [`npm::NpmLockParser`]
 //!
 //! # 확장
 //!

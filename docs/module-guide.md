@@ -196,25 +196,154 @@ guard.start().await?;
 
 ## ironpost-sbom-scanner
 
-**역할**: 컨테이너 이미지 SBOM 스캔 및 취약점 매칭 (Phase 5 구현 예정)
+**역할**: Lockfile 파싱, SBOM 생성, CVE 취약점 스캔
 
-**계획된 기능**:
-- 컨테이너 이미지에서 SBOM 추출 (Syft 통합)
-- 취약점 DB 조회 (NVD, GHSA)
-- 심각도별 취약점 보고
-- 주기적 스캔 스케줄링
-- 취약점 발견 시 AlertEvent 생성
+**주요 타입**:
+- `SbomScanner` — 스캔 오케스트레이터 (Pipeline 구현)
+- `SbomScannerConfig` — 스캔 설정 (scan_dirs, vuln_db_path, min_severity)
+- `LockfileParser` — Lockfile 파서 trait
+  - `CargoLockParser` — Cargo.lock (TOML) 파서
+  - `NpmLockParser` — package-lock.json (JSON v2/v3) 파서
+- `PackageGraph` — 파싱된 패키지 의존성 그래프
+- `SbomGenerator` — SBOM 문서 생성기
+- `VulnDb` — 로컬 CVE 데이터베이스
+- `VulnMatcher` — 취약점 매칭 엔진
+- `ScanResult` — 스캔 결과 (findings, severity counts)
 
-**API 설계 (예상)**:
+**주요 API**:
 ```rust
-let mut scanner = SbomScanner::builder()
-    .config(sbom_config)
-    .scan_interval(Duration::from_secs(24 * 3600))
+// 스캐너 빌드
+let (mut scanner, alert_rx) = SbomScannerBuilder::new(config)
+    .alert_sender(alert_tx)
     .build()?;
 
+// 시작 (VulnDb 로드 + 주기적 스캔 시작)
 scanner.start().await?;
-// 주기적으로 이미지 스캔 → 취약점 발견 → AlertEvent
+
+// 수동 스캔 트리거
+scanner.scan_once().await?;
+
+// 메트릭 조회
+println!("Scans: {}", scanner.scans_completed());
+println!("Vulns: {}", scanner.vulns_found());
+
+// 정지
+scanner.stop().await?;
 ```
+
+**Lockfile 파싱 (직접 사용)**:
+```rust
+use ironpost_sbom_scanner::parser::{CargoLockParser, LockfileParser};
+
+let parser = CargoLockParser;
+let content = std::fs::read_to_string("Cargo.lock")?;
+let graph = parser.parse(&content, "Cargo.lock")?;
+
+println!("Found {} packages", graph.package_count());
+for pkg in &graph.packages {
+    println!("  {} @ {} (PURL: {})", pkg.name, pkg.version, pkg.purl);
+}
+```
+
+**SBOM 생성**:
+```rust
+use ironpost_sbom_scanner::{SbomGenerator, SbomFormat};
+
+// CycloneDX 1.5 JSON 생성
+let generator = SbomGenerator::new(SbomFormat::CycloneDx);
+let doc = generator.generate(&graph)?;
+
+// 파일로 저장
+std::fs::write("sbom.json", &doc.content)?;
+println!("Generated {} with {} components", doc.format, doc.component_count);
+```
+
+**취약점 스캔**:
+```rust
+use ironpost_sbom_scanner::{VulnDb, VulnMatcher};
+use ironpost_core::types::Severity;
+use std::sync::Arc;
+
+// VulnDb 로드 (비동기 blocking I/O)
+let db = VulnDb::load_from_dir("/var/lib/ironpost/vuln-db").await?;
+let db = Arc::new(db);
+
+// Matcher 생성 (Medium 이상만 알림)
+let matcher = VulnMatcher::new(db.clone(), Severity::Medium);
+
+// 스캔 실행
+let findings = matcher.scan(&graph)?;
+
+// 결과 출력
+println!("Found {} vulnerabilities", findings.len());
+for finding in findings {
+    println!(
+        "  {} in {}@{} ({})",
+        finding.vulnerability.cve_id,
+        finding.matched_package.name,
+        finding.matched_package.version,
+        finding.vulnerability.severity
+    );
+}
+```
+
+**지원 형식**:
+- **Lockfiles**: Cargo.lock (TOML), package-lock.json (JSON v2/v3)
+- **SBOM 출력**: CycloneDX 1.5 JSON, SPDX 2.3 JSON
+- **CVE DB**: 생태계별 JSON 파일 (cargo.json, npm.json)
+
+**CVE 매칭 알고리즘**:
+1. `VulnDb`에서 패키지명 + 생태계로 O(1) HashMap 조회
+2. 각 CVE의 `affected_ranges`에 대해 버전 비교:
+   - SemVer 파싱 시도 (`semver` crate)
+   - 성공: 정확한 범위 매칭 (`version >= introduced && version < fixed`)
+   - 실패: 문자열 비교 fallback (lexicographic, 제한적)
+3. `severity >= min_severity` 필터링
+4. 매칭된 CVE → `ScanFinding` → `AlertEvent` 변환
+
+**주기적 스캔 vs 수동 스캔**:
+```rust
+// 주기적 스캔 (scan_interval_secs > 0)
+let config = SbomScannerConfig {
+    scan_interval_secs: 3600,  // 1시간마다
+    ..Default::default()
+};
+
+// 수동 스캔만 (scan_interval_secs = 0)
+let config = SbomScannerConfig {
+    scan_interval_secs: 0,  // 주기적 스캔 비활성화
+    ..Default::default()
+};
+// scanner.scan_once().await로 수동 트리거
+```
+
+**리소스 제한**:
+| 항목 | 제한 | 설정 |
+|------|------|------|
+| Lockfile 크기 | 10 MB | `max_file_size` |
+| 패키지 수 | 50,000 | `max_packages` |
+| VulnDb 파일 크기 | 50 MB | 하드코드 상수 |
+| VulnDb 엔트리 수 | 1,000,000 | 하드코드 상수 |
+
+**성능**:
+- Lockfile 파싱: O(n) (n = 패키지 수)
+- SBOM 생성: O(n) JSON 직렬화
+- 취약점 조회: O(1) HashMap 인덱스
+- 버전 매칭: O(m) (m = affected_ranges 수, 일반적으로 1-3)
+- 모든 파일 I/O: `tokio::task::spawn_blocking`으로 비동기 처리
+
+**보안 고려사항**:
+- 파일 크기 제한으로 DoS 방지
+- 패키지명/버전 길이 제한 (512/256자)
+- 경로 순회 검증 (`..` 패턴 거부)
+- Symlink 스킵
+- TOCTOU 완화 (open-then-read 패턴)
+
+**제한사항**:
+- 오프라인 모드만 (네트워크 CVE API 미지원)
+- 1레벨 디렉토리 스캔만 (재귀 스캔 미지원)
+- 재시작 불가 (`stop()` 후 새 인스턴스 필요)
+- 비-SemVer 버전은 문자열 비교로 fallback (false negative 가능)
 
 ---
 
