@@ -9,14 +9,14 @@
 | 2-ebpf | 5 | 5 | 0 | 6 | ✅ (설계+구현+리뷰+수정 완료) |
 | 3-log | 12 | 13 | 0 | 5 | ✅ (설계+구현+리뷰+수정 완료) |
 | 4-container | 17 | 17 | 0 | 0 | ✅ (설계+구현+테스트+리뷰 완료, 202 tests) |
-| 5-sbom | - | - | - | - | ⏳ |
+| 5-sbom | 24 | 24 | 0 | 4 | 🔄 (Phase 5-B 구현 완료, 118 tests) |
 | 6-polish | - | - | - | - | ⏳ |
 
 ## 블로커
 - 없음
 
 ## 현재 진행중
-- 없음 (Phase 4 문서화 완료)
+- 없음 (Phase 5-B 완료, Phase 5-C 대기)
 
 ## Phase 3 설계 완료 항목
 - [x] `.knowledge/log-pipeline-design.md` -- 전체 설계 문서
@@ -120,7 +120,29 @@
   - README.md 재작성 (480+ 라인, 아키텍처/정책/예시/제한사항 전체 포함)
   - docs/architecture.md 업데이트 (container-guard 섹션 추가)
 
+## Phase 5 설계+스캐폴딩 완료 항목 (Phase 5-A)
+- [x] T5-A1: 설계 문서 (`.knowledge/sbom-scanner-design.md`, 14 sections)
+- [x] T5-A2: `Cargo.toml` -- ironpost-core, tokio, serde, serde_json, toml, tracing, thiserror, uuid, semver
+- [x] T5-A3: `error.rs` -- SbomScannerError (9 variants) + IronpostError 변환 (13 tests)
+- [x] T5-A4: `config.rs` -- SbomScannerConfig + Builder + from_core() + validate() (16 tests)
+- [x] T5-A5: `event.rs` -- ScanEvent + Event trait impl (4 tests)
+- [x] T5-A6: `types.rs` -- Ecosystem, Package, PackageGraph, SbomFormat, SbomDocument (12 tests)
+- [x] T5-A7: `parser/mod.rs` -- LockfileParser trait + LockfileDetector (5 tests)
+- [x] T5-A8: `parser/cargo.rs` -- CargoLockParser (Cargo.lock TOML 파싱, 6 tests)
+- [x] T5-A9: `parser/npm.rs` -- NpmLockParser (package-lock.json v2/v3, 8 tests)
+- [x] T5-A10: `sbom/mod.rs` -- SbomGenerator (3 tests)
+- [x] T5-A11: `sbom/cyclonedx.rs` -- CycloneDX 1.5 JSON 생성 (5 tests)
+- [x] T5-A12: `sbom/spdx.rs` -- SPDX 2.3 JSON 생성 (6 tests)
+- [x] T5-A13: `vuln/mod.rs` -- VulnMatcher + ScanFinding + ScanResult + SeverityCounts (5 tests)
+- [x] T5-A14: `vuln/db.rs` -- VulnDb + VulnDbEntry + VersionRange (8 tests)
+- [x] T5-A15: `vuln/version.rs` -- SemVer 버전 범위 비교 (10 tests)
+- [x] T5-A16: `scanner.rs` -- SbomScanner (Pipeline impl) + SbomScannerBuilder (8 tests)
+- [x] T5-A17: `lib.rs` -- 모듈 선언 + pub API re-export
+- [x] T5-A18: `README.md` -- 크레이트 문서 (아키텍처 다이어그램, 설정 예시, DB 구조)
+- [x] T5-A19: Core 크레이트 업데이트 (MODULE_SBOM_SCANNER, EVENT_TYPE_SCAN 상수 추가)
+
 ## 최근 완료
+- [P5] Phase 5-A: sbom-scanner 설계+스캐폴딩 완료 (19 tasks, 16 source files, 109 tests, 2026-02-10)
 - [P4] T4-E1: container-guard 문서화 완료 (doc comments + 480+ lines README + architecture.md, 2026-02-10 21:30, 105분)
 - [P4] T4-D3: container-guard 재리뷰 완료 (27건 발견, 11건 resolved, 2026-02-10)
 - [P4] T4-D2: container-guard 초기 리뷰 수정 반영 (C1-C5,H1,H2,H5 수정, 2026-02-10)
