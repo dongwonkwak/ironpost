@@ -1,3 +1,3 @@
-// This module has been superseded by isolation.rs and guard.rs.
-// Kept as an empty file for backwards compatibility during migration.
-// Remove this file after Phase 4-B is complete.
+// Legacy module, superseded by isolation.rs and guard.rs.
+// Intentionally left empty and not part of the public API; safe to remove
+// once all internal references and tooling no longer depend on its presence.
