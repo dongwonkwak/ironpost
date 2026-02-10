@@ -142,15 +142,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 The guard connects to the Docker daemon via a Unix socket (or TCP for remote daemons):
 
-```rust
+```rust,no_run
 use std::sync::Arc;
 use ironpost_container_guard::BollardDockerClient;
 
+# fn main() -> Result<(), Box<dyn std::error::Error>> {
 // Default socket (auto-detected)
 let client = Arc::new(BollardDockerClient::connect_local()?);
 
 // Custom socket path
 let client = Arc::new(BollardDockerClient::connect_with_socket("/run/docker.sock")?);
+# Ok(())
+# }
 ```
 
 ### Supported Docker Operations
@@ -324,16 +327,19 @@ If an alert has severity `Critical`:
 
 Policies are loaded from a directory at startup:
 
-```rust
+```rust,no_run
 use ironpost_container_guard::policy::{load_policies_from_dir, PolicyEngine};
 use std::path::Path;
 
+# fn main() -> Result<(), Box<dyn std::error::Error>> {
 let policies = load_policies_from_dir(Path::new("/etc/ironpost/policies"))?;
 
 let mut engine = PolicyEngine::new();
 for policy in policies {
     engine.add_policy(policy)?;
 }
+# Ok(())
+# }
 ```
 
 #### Policy Validation
@@ -349,15 +355,22 @@ Policies are validated on load:
 
 Policies can be updated at runtime via the shared `PolicyEngine`:
 
-```rust
-let policy_engine = guard.policy_engine_arc();
+```rust,ignore
+// Note: This example requires a fully constructed ContainerGuard instance
+use ironpost_container_guard::{ContainerGuard, DockerClient};
 
-// Add a new policy
-let new_policy = /* ... */;
-policy_engine.lock().await.add_policy(new_policy)?;
+async fn example<D: DockerClient>(guard: &ContainerGuard<D>) -> Result<(), Box<dyn std::error::Error>> {
+    let policy_engine = guard.policy_engine_arc();
 
-// Remove a policy by ID
-policy_engine.lock().await.remove_policy("old-policy-id");
+    // Add a new policy
+    let new_policy = /* ... */;
+    policy_engine.lock().await.add_policy(new_policy)?;
+
+    // Remove a policy by ID
+    policy_engine.lock().await.remove_policy("old-policy-id");
+
+    Ok(())
+}
 ```
 
 Changes take effect immediately for subsequent alert evaluations.
@@ -399,10 +412,15 @@ use ironpost_core::event::ActionEvent;
 
 The `DockerClient` trait allows testing without a Docker daemon:
 
-```rust
-use ironpost_container_guard::{MockDockerClient, ContainerGuardBuilder};
-use ironpost_core::types::{ContainerInfo, SystemTime};
+```rust,ignore
+// Note: MockDockerClient is available in tests but not exposed in the public API
+// This example shows the testing pattern used internally
+
+use ironpost_container_guard::docker::MockDockerClient;
+use ironpost_container_guard::ContainerGuardBuilder;
+use ironpost_core::types::ContainerInfo;
 use std::sync::Arc;
+use std::time::SystemTime;
 
 #[tokio::test]
 async fn test_pause_action() {
@@ -428,7 +446,10 @@ async fn test_pause_action() {
 
 ### Simulating Failures
 
-```rust
+```rust,ignore
+// Note: MockDockerClient is available in tests but not exposed in the public API
+use ironpost_container_guard::docker::MockDockerClient;
+
 let client = MockDockerClient::new()
     .with_containers(vec![/* ... */])
     .with_failing_actions(); // All actions will fail
