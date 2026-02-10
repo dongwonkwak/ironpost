@@ -10,6 +10,7 @@
 
 pub mod cyclonedx;
 pub mod spdx;
+pub mod util;
 
 use crate::error::SbomScannerError;
 use crate::types::{PackageGraph, SbomDocument, SbomFormat};
@@ -60,16 +61,14 @@ mod tests {
         PackageGraph {
             source_file: "Cargo.lock".to_owned(),
             ecosystem: Ecosystem::Cargo,
-            packages: vec![
-                Package {
-                    name: "serde".to_owned(),
-                    version: "1.0.204".to_owned(),
-                    ecosystem: Ecosystem::Cargo,
-                    purl: "pkg:cargo/serde@1.0.204".to_owned(),
-                    checksum: Some("abc123".to_owned()),
-                    dependencies: vec![],
-                },
-            ],
+            packages: vec![Package {
+                name: "serde".to_owned(),
+                version: "1.0.204".to_owned(),
+                ecosystem: Ecosystem::Cargo,
+                purl: "pkg:cargo/serde@1.0.204".to_owned(),
+                checksum: Some("abc123".to_owned()),
+                dependencies: vec![],
+            }],
             root_packages: vec![],
         }
     }

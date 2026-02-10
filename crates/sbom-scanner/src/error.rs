@@ -97,34 +97,30 @@ pub enum SbomScannerError {
 
 impl From<SbomScannerError> for IronpostError {
     fn from(err: SbomScannerError) -> Self {
-        match &err {
-            SbomScannerError::LockfileParse { .. } => {
-                IronpostError::Sbom(SbomError::ParseFailed(err.to_string()))
-            }
+        match err {
+            SbomScannerError::LockfileParse { path, reason } => IronpostError::Sbom(
+                SbomError::ParseFailed(format!("lockfile parse error: {path}: {reason}")),
+            ),
             SbomScannerError::SbomGeneration(msg) => {
-                IronpostError::Sbom(SbomError::ScanFailed(msg.clone()))
+                IronpostError::Sbom(SbomError::ScanFailed(msg))
             }
-            SbomScannerError::VulnDbLoad { .. } => {
-                IronpostError::Sbom(SbomError::VulnDb(err.to_string()))
+            SbomScannerError::VulnDbLoad { path, reason } => IronpostError::Sbom(
+                SbomError::VulnDb(format!("vulnerability db load error: {path}: {reason}")),
+            ),
+            SbomScannerError::VulnDbParse(msg) => IronpostError::Sbom(SbomError::VulnDb(msg)),
+            SbomScannerError::VersionParse { version, reason } => IronpostError::Sbom(
+                SbomError::ParseFailed(format!("version parse error: '{version}': {reason}")),
+            ),
+            SbomScannerError::Config { field, reason } => IronpostError::Sbom(
+                SbomError::ScanFailed(format!("config error: {field}: {reason}")),
+            ),
+            SbomScannerError::Channel(msg) => IronpostError::Sbom(SbomError::ScanFailed(msg)),
+            SbomScannerError::Io { path, source } => {
+                IronpostError::Sbom(SbomError::ScanFailed(format!("io error: {path}: {source}")))
             }
-            SbomScannerError::VulnDbParse(msg) => {
-                IronpostError::Sbom(SbomError::VulnDb(msg.clone()))
-            }
-            SbomScannerError::VersionParse { .. } => {
-                IronpostError::Sbom(SbomError::ParseFailed(err.to_string()))
-            }
-            SbomScannerError::Config { .. } => {
-                IronpostError::Sbom(SbomError::ScanFailed(err.to_string()))
-            }
-            SbomScannerError::Channel(msg) => {
-                IronpostError::Sbom(SbomError::ScanFailed(msg.clone()))
-            }
-            SbomScannerError::Io { .. } => {
-                IronpostError::Sbom(SbomError::ScanFailed(err.to_string()))
-            }
-            SbomScannerError::FileTooBig { .. } => {
-                IronpostError::Sbom(SbomError::ScanFailed(err.to_string()))
-            }
+            SbomScannerError::FileTooBig { path, size, max } => IronpostError::Sbom(
+                SbomError::ScanFailed(format!("file too large: {path}: {size} bytes (max: {max})")),
+            ),
         }
     }
 }
@@ -224,7 +220,10 @@ mod tests {
             reason: "bad".to_owned(),
         };
         let ironpost_err: IronpostError = err.into();
-        assert!(matches!(ironpost_err, IronpostError::Sbom(SbomError::ParseFailed(_))));
+        assert!(matches!(
+            ironpost_err,
+            IronpostError::Sbom(SbomError::ParseFailed(_))
+        ));
     }
 
     #[test]
@@ -234,14 +233,20 @@ mod tests {
             reason: "missing".to_owned(),
         };
         let ironpost_err: IronpostError = err.into();
-        assert!(matches!(ironpost_err, IronpostError::Sbom(SbomError::VulnDb(_))));
+        assert!(matches!(
+            ironpost_err,
+            IronpostError::Sbom(SbomError::VulnDb(_))
+        ));
     }
 
     #[test]
     fn converts_to_ironpost_error_generation() {
         let err = SbomScannerError::SbomGeneration("fail".to_owned());
         let ironpost_err: IronpostError = err.into();
-        assert!(matches!(ironpost_err, IronpostError::Sbom(SbomError::ScanFailed(_))));
+        assert!(matches!(
+            ironpost_err,
+            IronpostError::Sbom(SbomError::ScanFailed(_))
+        ));
     }
 
     #[test]
@@ -251,13 +256,19 @@ mod tests {
             reason: "bad".to_owned(),
         };
         let ironpost_err: IronpostError = err.into();
-        assert!(matches!(ironpost_err, IronpostError::Sbom(SbomError::ParseFailed(_))));
+        assert!(matches!(
+            ironpost_err,
+            IronpostError::Sbom(SbomError::ParseFailed(_))
+        ));
     }
 
     #[test]
     fn converts_to_ironpost_error_channel() {
         let err = SbomScannerError::Channel("dropped".to_owned());
         let ironpost_err: IronpostError = err.into();
-        assert!(matches!(ironpost_err, IronpostError::Sbom(SbomError::ScanFailed(_))));
+        assert!(matches!(
+            ironpost_err,
+            IronpostError::Sbom(SbomError::ScanFailed(_))
+        ));
     }
 }

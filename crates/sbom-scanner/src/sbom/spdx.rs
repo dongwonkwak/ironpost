@@ -4,6 +4,7 @@
 
 use serde::Serialize;
 
+use super::util;
 use crate::error::SbomScannerError;
 use crate::types::{PackageGraph, SbomDocument, SbomFormat};
 
@@ -66,9 +67,31 @@ pub fn generate(graph: &PackageGraph) -> Result<SbomDocument, SbomScannerError> 
     let spdx_packages: Vec<SpdxPackage> = graph
         .packages
         .iter()
-        .enumerate()
-        .map(|(idx, pkg)| {
-            let spdx_id = format!("SPDXRef-Package-{}", idx);
+        .map(|pkg| {
+            // 결정론적 SPDX ID 생성: 패키지 이름과 버전 기반 (인덱스 대신)
+            let sanitized_name = pkg
+                .name
+                .chars()
+                .map(|c| {
+                    if c.is_alphanumeric() || c == '.' || c == '-' {
+                        c
+                    } else {
+                        '-'
+                    }
+                })
+                .collect::<String>();
+            let sanitized_version = pkg
+                .version
+                .chars()
+                .map(|c| {
+                    if c.is_alphanumeric() || c == '.' {
+                        c
+                    } else {
+                        '-'
+                    }
+                })
+                .collect::<String>();
+            let spdx_id = format!("SPDXRef-Package-{}-{}", sanitized_name, sanitized_version);
 
             let external_refs = vec![SpdxExternalRef {
                 reference_category: "PACKAGE-MANAGER".to_owned(),
@@ -80,9 +103,10 @@ pub fn generate(graph: &PackageGraph) -> Result<SbomDocument, SbomScannerError> 
                 .checksum
                 .as_ref()
                 .map(|c| {
+                    let (algorithm, hash_value) = util::parse_checksum_algorithm(c, &pkg.ecosystem);
                     vec![SpdxChecksum {
-                        algorithm: "SHA256".to_owned(),
-                        checksum_value: c.clone(),
+                        algorithm: algorithm.replace('-', ""), // SPDX는 "SHA256" 형식 (하이픈 제거)
+                        checksum_value: hash_value.to_owned(),
                     }]
                 })
                 .unwrap_or_default();
@@ -100,42 +124,35 @@ pub fn generate(graph: &PackageGraph) -> Result<SbomDocument, SbomScannerError> 
 
     let component_count = spdx_packages.len();
 
-    let namespace = format!(
-        "https://ironpost.dev/spdx/{}",
-        uuid::Uuid::new_v4()
-    );
+    let namespace = format!("https://ironpost.dev/spdx/{}", uuid::Uuid::new_v4());
 
     let doc = SpdxDocument {
         spdx_version: "SPDX-2.3".to_owned(),
         spdx_id: "SPDXRef-DOCUMENT".to_owned(),
-        name: format!("ironpost-scan-{}", graph.source_file),
+        name: format!(
+            "ironpost-scan-{}",
+            std::path::Path::new(&graph.source_file)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("unknown")
+        ),
         data_license: "CC0-1.0".to_owned(),
         document_namespace: namespace,
         creation_info: SpdxCreationInfo {
-            created: current_timestamp(),
+            created: util::current_timestamp(),
             creators: vec!["Tool: ironpost-sbom-scanner".to_owned()],
         },
         packages: spdx_packages,
     };
 
-    let content = serde_json::to_string_pretty(&doc).map_err(|e| {
-        SbomScannerError::SbomGeneration(format!("SPDX serialization failed: {e}"))
-    })?;
+    let content = serde_json::to_string_pretty(&doc)
+        .map_err(|e| SbomScannerError::SbomGeneration(format!("SPDX serialization failed: {e}")))?;
 
     Ok(SbomDocument {
         format: SbomFormat::Spdx,
         content,
         component_count,
     })
-}
-
-/// 현재 시각을 ISO 8601 형식으로 반환합니다.
-fn current_timestamp() -> String {
-    let now = std::time::SystemTime::now();
-    match now.duration_since(std::time::UNIX_EPOCH) {
-        Ok(d) => format!("{}Z", d.as_secs()),
-        Err(_) => "unknown".to_owned(),
-    }
 }
 
 #[cfg(test)]
@@ -147,16 +164,14 @@ mod tests {
         PackageGraph {
             source_file: "Cargo.lock".to_owned(),
             ecosystem: Ecosystem::Cargo,
-            packages: vec![
-                Package {
-                    name: "serde".to_owned(),
-                    version: "1.0.204".to_owned(),
-                    ecosystem: Ecosystem::Cargo,
-                    purl: "pkg:cargo/serde@1.0.204".to_owned(),
-                    checksum: Some("abc123".to_owned()),
-                    dependencies: vec![],
-                },
-            ],
+            packages: vec![Package {
+                name: "serde".to_owned(),
+                version: "1.0.204".to_owned(),
+                ecosystem: Ecosystem::Cargo,
+                purl: "pkg:cargo/serde@1.0.204".to_owned(),
+                checksum: Some("abc123".to_owned()),
+                dependencies: vec![],
+            }],
             root_packages: vec![],
         }
     }

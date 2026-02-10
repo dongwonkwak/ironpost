@@ -38,43 +38,61 @@ fn is_in_range(version_str: &str, range: &VersionRange) -> bool {
         return is_in_range_semver(&version, range);
     }
 
-    // fallback: 문자열 비교
-    is_in_range_string(version_str, range)
+    // leading 'v' 또는 'V' 제거 후 재시도 (흔한 비표준 접두사)
+    if version_str.starts_with('v') || version_str.starts_with('V') {
+        let normalized = &version_str[1..];
+        if let Ok(version) = semver::Version::parse(normalized) {
+            return is_in_range_semver(&version, range);
+        }
+    }
+
+    // 비표준 버전 문자열: 보수적으로 매칭하지 않음 (false positive 방지)
+    // false negative(취약점 누락)보다는 false positive(오탐)가 나은 보안 관점
+    tracing::warn!(
+        version = %version_str,
+        "non-SemVer version string encountered, conservatively not matching (may miss vulnerability)"
+    );
+    false
 }
 
 /// SemVer 버전으로 범위 매칭
 fn is_in_range_semver(version: &semver::Version, range: &VersionRange) -> bool {
     // introduced 확인
-    if let Some(ref introduced) = range.introduced
-        && let Ok(intro_ver) = semver::Version::parse(introduced)
-        && version < &intro_ver
-    {
-        return false;
+    if let Some(ref introduced) = range.introduced {
+        match semver::Version::parse(introduced) {
+            Ok(intro_ver) => {
+                if version < &intro_ver {
+                    return false;
+                }
+            }
+            Err(_) => {
+                // SemVer 파싱 실패: 범위 무효로 간주하여 매칭 실패
+                tracing::warn!(
+                    introduced = %introduced,
+                    "failed to parse introduced version as SemVer, range ignored"
+                );
+                return false;
+            }
+        }
     }
 
     // fixed 확인
-    if let Some(ref fixed) = range.fixed
-        && let Ok(fix_ver) = semver::Version::parse(fixed)
-        && version >= &fix_ver
-    {
-        return false;
-    }
-
-    true
-}
-
-/// 문자열 비교로 범위 매칭 (SemVer 파싱 실패 시 fallback)
-fn is_in_range_string(version: &str, range: &VersionRange) -> bool {
-    if let Some(ref introduced) = range.introduced
-        && version < introduced.as_str()
-    {
-        return false;
-    }
-
-    if let Some(ref fixed) = range.fixed
-        && version >= fixed.as_str()
-    {
-        return false;
+    if let Some(ref fixed) = range.fixed {
+        match semver::Version::parse(fixed) {
+            Ok(fix_ver) => {
+                if version >= &fix_ver {
+                    return false;
+                }
+            }
+            Err(_) => {
+                // SemVer 파싱 실패: 범위 무효로 간주하여 매칭 실패
+                tracing::warn!(
+                    fixed = %fixed,
+                    "failed to parse fixed version as SemVer, range ignored"
+                );
+                return false;
+            }
+        }
     }
 
     true
@@ -177,14 +195,14 @@ mod tests {
     }
 
     #[test]
-    fn non_semver_fallback_string_comparison() {
+    fn non_semver_conservatively_not_matched() {
         let ranges = vec![VersionRange {
             introduced: Some("abc".to_owned()),
             fixed: Some("def".to_owned()),
         }];
 
-        // String comparison: "abc" <= "bcd" < "def"
-        assert!(is_affected("bcd", &ranges));
+        // 비 SemVer 문자열은 보수적으로 매칭하지 않음 (false positive 방지)
+        assert!(!is_affected("bcd", &ranges));
         assert!(!is_affected("aaa", &ranges));
         assert!(!is_affected("xyz", &ranges));
     }
@@ -208,9 +226,10 @@ mod tests {
             introduced: Some("*".to_owned()),
             fixed: None,
         }];
-        // Wildcard should be treated as string
-        assert!(is_affected("1.0.0", &ranges));
-        assert!(is_affected("2.0.0", &ranges));
+        // Wildcard는 유효한 SemVer가 아니므로 범위가 무효로 처리됨
+        // (파싱 실패 시 매칭 실패 정책)
+        assert!(!is_affected("1.0.0", &ranges));
+        assert!(!is_affected("2.0.0", &ranges));
     }
 
     #[test]
@@ -230,13 +249,13 @@ mod tests {
     }
 
     #[test]
-    fn malformed_semver_falls_back_to_string_comparison() {
+    fn malformed_semver_conservatively_not_matched() {
         let ranges = vec![VersionRange {
             introduced: Some("not-a-semver".to_owned()),
             fixed: Some("zzz".to_owned()),
         }];
-        // String comparison: "not-a-semver" <= "some-version" < "zzz"
-        assert!(is_affected("some-version", &ranges));
+        // 비표준 버전은 보수적으로 매칭하지 않음
+        assert!(!is_affected("some-version", &ranges));
         assert!(!is_affected("aaa", &ranges));
     }
 
@@ -305,8 +324,8 @@ mod tests {
             introduced: Some("1.0.0".to_owned()),
             fixed: Some("2.0.0".to_owned()),
         }];
-        // Unicode version should fall back to string comparison
-        assert!(is_affected("1.5.0-日本語", &ranges));
+        // Unicode 버전은 SemVer 파싱 실패 → 보수적으로 매칭하지 않음
+        assert!(!is_affected("1.5.0-日本語", &ranges));
     }
 
     #[test]
@@ -315,10 +334,9 @@ mod tests {
             introduced: Some("1.0.0".to_owned()),
             fixed: Some("1.0.5".to_owned()),
         }];
-        // semver crate doesn't parse "v1.0.3", should fall back to string comparison
-        // String comparison: "1.0.0" <= "v1.0.3" is false because 'v' > '1' in ASCII
+        // leading 'v' 제거 후 "1.0.3"으로 파싱되어 정상 매칭
         let result = is_affected("v1.0.3", &ranges);
-        assert!(!result); // Correct behavior: "v1.0.3" is not in range via string comparison
+        assert!(result); // "v1.0.3" → "1.0.3" → 범위 [1.0.0, 1.0.5) 내에 있음
     }
 
     #[test]

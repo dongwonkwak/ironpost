@@ -21,7 +21,7 @@ use ironpost_core::types::{Severity, Vulnerability};
 use crate::error::SbomScannerError;
 use crate::types::{Ecosystem, Package, PackageGraph, SbomDocument};
 
-pub use db::{VulnDb, VulnDbEntry, VersionRange};
+pub use db::{VersionRange, VulnDb, VulnDbEntry};
 
 /// 스캔에서 발견된 단일 취약점
 #[derive(Debug, Clone)]
@@ -130,10 +130,7 @@ impl VulnMatcher {
     /// # Returns
     ///
     /// 발견된 취약점 목록 (`Vec<ScanFinding>`)
-    pub fn scan(
-        &self,
-        graph: &PackageGraph,
-    ) -> Result<Vec<ScanFinding>, SbomScannerError> {
+    pub fn scan(&self, graph: &PackageGraph) -> Result<Vec<ScanFinding>, SbomScannerError> {
         let mut findings = Vec::new();
 
         for package in &graph.packages {
@@ -248,7 +245,10 @@ mod tests {
 
         // Should find CVE-2024-0001 for vulnerable-pkg and CVE-2024-0002 for another-pkg
         assert!(findings.len() >= 1);
-        let cve_ids: Vec<&str> = findings.iter().map(|f| f.vulnerability.cve_id.as_str()).collect();
+        let cve_ids: Vec<&str> = findings
+            .iter()
+            .map(|f| f.vulnerability.cve_id.as_str())
+            .collect();
         assert!(cve_ids.contains(&"CVE-2024-0001"));
     }
 
@@ -271,7 +271,10 @@ mod tests {
         let findings = matcher.scan(&sample_graph()).unwrap();
 
         // safe-pkg should not appear in findings
-        let pkgs: Vec<&str> = findings.iter().map(|f| f.vulnerability.package.as_str()).collect();
+        let pkgs: Vec<&str> = findings
+            .iter()
+            .map(|f| f.vulnerability.package.as_str())
+            .collect();
         assert!(!pkgs.contains(&"safe-pkg"));
     }
 

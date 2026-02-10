@@ -21,8 +21,8 @@ pub use config::IronpostConfig;
 // 이벤트
 pub use event::{
     ActionEvent, AlertEvent, EVENT_TYPE_ACTION, EVENT_TYPE_ALERT, EVENT_TYPE_LOG,
-    EVENT_TYPE_PACKET, EVENT_TYPE_SCAN, Event, EventMetadata, LogEvent,
-    MODULE_CONTAINER_GUARD, MODULE_EBPF, MODULE_LOG_PIPELINE, MODULE_SBOM_SCANNER, PacketEvent,
+    EVENT_TYPE_PACKET, EVENT_TYPE_SCAN, Event, EventMetadata, LogEvent, MODULE_CONTAINER_GUARD,
+    MODULE_EBPF, MODULE_LOG_PIPELINE, MODULE_SBOM_SCANNER, PacketEvent,
 };
 
 // 파이프라인 trait

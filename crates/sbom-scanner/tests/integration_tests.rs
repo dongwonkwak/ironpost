@@ -5,11 +5,9 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use ironpost_sbom_scanner::{
-    SbomScannerBuilder, SbomScannerConfig, SbomFormat,
-};
-use ironpost_core::types::Severity;
 use ironpost_core::pipeline::Pipeline;
+use ironpost_core::types::Severity;
+use ironpost_sbom_scanner::{SbomFormat, SbomScannerBuilder, SbomScannerConfig};
 
 fn fixture_path(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -22,7 +20,11 @@ fn fixture_path(name: &str) -> PathBuf {
 #[tokio::test]
 async fn test_e2e_cargo_lock_scan() {
     let test_lockfile = fixture_path("Cargo.lock");
-    let test_dir = test_lockfile.parent().unwrap().to_string_lossy().to_string();
+    let test_dir = test_lockfile
+        .parent()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
 
     let config = SbomScannerConfig {
         enabled: true,
@@ -35,10 +37,7 @@ async fn test_e2e_cargo_lock_scan() {
         max_packages: 10000,
     };
 
-    let (mut scanner, alert_rx_opt) = SbomScannerBuilder::new()
-        .config(config)
-        .build()
-        .unwrap();
+    let (mut scanner, alert_rx_opt) = SbomScannerBuilder::new().config(config).build().unwrap();
 
     let mut alert_rx = alert_rx_opt.unwrap();
 
@@ -77,7 +76,11 @@ async fn test_e2e_cargo_lock_scan() {
 #[tokio::test]
 async fn test_e2e_with_vuln_db() {
     let test_lockfile = fixture_path("Cargo.lock");
-    let test_dir = test_lockfile.parent().unwrap().to_string_lossy().to_string();
+    let test_dir = test_lockfile
+        .parent()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
 
     // Create temp dir for vuln DB
     let temp_dir = tempfile::tempdir().unwrap();
@@ -99,10 +102,7 @@ async fn test_e2e_with_vuln_db() {
         max_packages: 10000,
     };
 
-    let (mut scanner, alert_rx_opt) = SbomScannerBuilder::new()
-        .config(config)
-        .build()
-        .unwrap();
+    let (mut scanner, alert_rx_opt) = SbomScannerBuilder::new().config(config).build().unwrap();
 
     let mut alert_rx = alert_rx_opt.unwrap();
 
@@ -119,7 +119,11 @@ async fn test_e2e_with_vuln_db() {
         .unwrap();
 
     // Should find vulnerability (vulnerable-test-pkg 0.1.5 is in range 0.1.0-0.2.0)
-    assert_eq!(cargo_result.findings.len(), 1, "should find 1 vulnerability");
+    assert_eq!(
+        cargo_result.findings.len(),
+        1,
+        "should find 1 vulnerability"
+    );
 
     let finding = &cargo_result.findings[0];
     assert_eq!(finding.vulnerability.cve_id, "CVE-2024-TEST-0001");
@@ -137,8 +141,14 @@ async fn test_e2e_with_vuln_db() {
 
     // Verify metrics
     // Scanner finds both lockfiles in the fixtures directory
-    assert!(scanner.scans_completed() >= 1, "should complete at least one scan");
-    assert!(scanner.vulns_found() >= 1, "should find at least one vulnerability");
+    assert!(
+        scanner.scans_completed() >= 1,
+        "should complete at least one scan"
+    );
+    assert!(
+        scanner.vulns_found() >= 1,
+        "should find at least one vulnerability"
+    );
 
     scanner.stop().await.unwrap();
 }
@@ -147,7 +157,11 @@ async fn test_e2e_with_vuln_db() {
 #[tokio::test]
 async fn test_npm_package_lock_scan() {
     let test_lockfile = fixture_path("package-lock.json");
-    let test_dir = test_lockfile.parent().unwrap().to_string_lossy().to_string();
+    let test_dir = test_lockfile
+        .parent()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
 
     let temp_dir = tempfile::tempdir().unwrap();
     let vuln_db_path = temp_dir.path().to_string_lossy().to_string();
@@ -168,10 +182,7 @@ async fn test_npm_package_lock_scan() {
         max_packages: 10000,
     };
 
-    let (mut scanner, alert_rx_opt) = SbomScannerBuilder::new()
-        .config(config)
-        .build()
-        .unwrap();
+    let (mut scanner, alert_rx_opt) = SbomScannerBuilder::new().config(config).build().unwrap();
 
     let mut alert_rx = alert_rx_opt.unwrap();
 
@@ -190,7 +201,10 @@ async fn test_npm_package_lock_scan() {
 
     // lodash 4.17.20 is in vulnerable range [4.0.0, 4.17.21)
     assert_eq!(result.findings.len(), 1);
-    assert_eq!(result.findings[0].vulnerability.cve_id, "CVE-2024-TEST-0002");
+    assert_eq!(
+        result.findings[0].vulnerability.cve_id,
+        "CVE-2024-TEST-0002"
+    );
     assert_eq!(result.findings[0].vulnerability.severity, Severity::High);
 
     // Should receive at least one alert
@@ -203,7 +217,8 @@ async fn test_npm_package_lock_scan() {
     let title = &alert_event.alert.title;
     assert!(
         title.contains("CVE-2024-TEST-0002") || title.contains("CVE-2024-TEST-0001"),
-        "alert should contain a CVE ID, got: {}", title
+        "alert should contain a CVE ID, got: {}",
+        title
     );
 
     scanner.stop().await.unwrap();
@@ -223,10 +238,7 @@ async fn test_scanner_health_states() {
         max_packages: 10000,
     };
 
-    let (mut scanner, _) = SbomScannerBuilder::new()
-        .config(config)
-        .build()
-        .unwrap();
+    let (mut scanner, _) = SbomScannerBuilder::new().config(config).build().unwrap();
 
     // Before start: Unhealthy
     let health = scanner.health_check().await;
@@ -247,7 +259,11 @@ async fn test_scanner_health_states() {
 #[tokio::test]
 async fn test_max_packages_limit() {
     let test_lockfile = fixture_path("Cargo.lock");
-    let test_dir = test_lockfile.parent().unwrap().to_string_lossy().to_string();
+    let test_dir = test_lockfile
+        .parent()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
 
     let config = SbomScannerConfig {
         enabled: true,
@@ -260,10 +276,7 @@ async fn test_max_packages_limit() {
         max_packages: 2, // Lower than actual package count (3)
     };
 
-    let (mut scanner, _) = SbomScannerBuilder::new()
-        .config(config)
-        .build()
-        .unwrap();
+    let (mut scanner, _) = SbomScannerBuilder::new().config(config).build().unwrap();
 
     scanner.start().await.unwrap();
 
@@ -276,7 +289,10 @@ async fn test_max_packages_limit() {
         .find(|r| r.source_file.contains("Cargo.lock"));
 
     // Lockfile should be skipped due to package limit
-    assert!(cargo_result.is_none(), "should skip lockfile with too many packages");
+    assert!(
+        cargo_result.is_none(),
+        "should skip lockfile with too many packages"
+    );
 
     scanner.stop().await.unwrap();
 }
@@ -285,7 +301,11 @@ async fn test_max_packages_limit() {
 #[tokio::test]
 async fn test_concurrent_scans() {
     let test_lockfile = fixture_path("Cargo.lock");
-    let test_dir = test_lockfile.parent().unwrap().to_string_lossy().to_string();
+    let test_dir = test_lockfile
+        .parent()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
 
     let config = SbomScannerConfig {
         enabled: true,
@@ -298,10 +318,7 @@ async fn test_concurrent_scans() {
         max_packages: 10000,
     };
 
-    let (mut scanner, _) = SbomScannerBuilder::new()
-        .config(config)
-        .build()
-        .unwrap();
+    let (mut scanner, _) = SbomScannerBuilder::new().config(config).build().unwrap();
 
     scanner.start().await.unwrap();
 

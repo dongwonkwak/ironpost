@@ -3,9 +3,9 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use ironpost_sbom_scanner::{SbomScannerBuilder, SbomScannerConfig, SbomFormat};
-use ironpost_core::types::Severity;
 use ironpost_core::pipeline::Pipeline;
+use ironpost_core::types::Severity;
+use ironpost_sbom_scanner::{SbomFormat, SbomScannerBuilder, SbomScannerConfig};
 
 fn fixture_path(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -63,10 +63,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
         max_packages: 10000,
     };
 
-    let (mut scanner, _) = SbomScannerBuilder::new()
-        .config(config)
-        .build()
-        .unwrap();
+    let (mut scanner, _) = SbomScannerBuilder::new().config(config).build().unwrap();
 
     scanner.start().await.unwrap();
     let results = scanner.scan_once().await.unwrap();
@@ -126,17 +123,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
         max_packages: 10000,
     };
 
-    let (mut scanner, _) = SbomScannerBuilder::new()
-        .config(config)
-        .build()
-        .unwrap();
+    let (mut scanner, _) = SbomScannerBuilder::new().config(config).build().unwrap();
 
     scanner.start().await.unwrap();
     let results = scanner.scan_once().await.unwrap();
 
     assert!(!results.is_empty());
     assert_eq!(results[0].findings.len(), 1);
-    assert_eq!(results[0].findings[0].vulnerability.cve_id, "CVE-2024-RANGE");
+    assert_eq!(
+        results[0].findings[0].vulnerability.cve_id,
+        "CVE-2024-RANGE"
+    );
 
     scanner.stop().await.unwrap();
 }
@@ -188,10 +185,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
         max_packages: 10000,
     };
 
-    let (mut scanner, _) = SbomScannerBuilder::new()
-        .config(config)
-        .build()
-        .unwrap();
+    let (mut scanner, _) = SbomScannerBuilder::new().config(config).build().unwrap();
 
     scanner.start().await.unwrap();
     let results = scanner.scan_once().await.unwrap();
@@ -256,10 +250,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
         max_packages: 10000,
     };
 
-    let (mut scanner, _) = SbomScannerBuilder::new()
-        .config(config)
-        .build()
-        .unwrap();
+    let (mut scanner, _) = SbomScannerBuilder::new().config(config).build().unwrap();
 
     scanner.start().await.unwrap();
     let results = scanner.scan_once().await.unwrap();
@@ -284,7 +275,11 @@ async fn test_clean_scan_no_vulnerabilities() {
     std::fs::write(&cargo_db_path, cve_db).unwrap();
 
     let test_lockfile = fixture_path("Cargo.lock");
-    let test_dir = test_lockfile.parent().unwrap().to_string_lossy().to_string();
+    let test_dir = test_lockfile
+        .parent()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
 
     let config = SbomScannerConfig {
         enabled: true,
@@ -297,10 +292,7 @@ async fn test_clean_scan_no_vulnerabilities() {
         max_packages: 10000,
     };
 
-    let (mut scanner, alert_rx_opt) = SbomScannerBuilder::new()
-        .config(config)
-        .build()
-        .unwrap();
+    let (mut scanner, alert_rx_opt) = SbomScannerBuilder::new().config(config).build().unwrap();
 
     let mut alert_rx = alert_rx_opt.unwrap();
 
@@ -325,7 +317,11 @@ async fn test_clean_scan_no_vulnerabilities() {
 #[tokio::test]
 async fn test_sbom_format_cyclonedx() {
     let test_lockfile = fixture_path("Cargo.lock");
-    let test_dir = test_lockfile.parent().unwrap().to_string_lossy().to_string();
+    let test_dir = test_lockfile
+        .parent()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
 
     let config = SbomScannerConfig {
         enabled: true,
@@ -338,10 +334,7 @@ async fn test_sbom_format_cyclonedx() {
         max_packages: 10000,
     };
 
-    let (mut scanner, _) = SbomScannerBuilder::new()
-        .config(config)
-        .build()
-        .unwrap();
+    let (mut scanner, _) = SbomScannerBuilder::new().config(config).build().unwrap();
 
     scanner.start().await.unwrap();
     let results = scanner.scan_once().await.unwrap();
@@ -358,7 +351,11 @@ async fn test_sbom_format_cyclonedx() {
 #[tokio::test]
 async fn test_multiple_lockfiles_in_directory() {
     let test_lockfile = fixture_path("Cargo.lock");
-    let test_dir = test_lockfile.parent().unwrap().to_string_lossy().to_string();
+    let test_dir = test_lockfile
+        .parent()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
 
     let config = SbomScannerConfig {
         enabled: true,
@@ -371,10 +368,7 @@ async fn test_multiple_lockfiles_in_directory() {
         max_packages: 10000,
     };
 
-    let (mut scanner, _) = SbomScannerBuilder::new()
-        .config(config)
-        .build()
-        .unwrap();
+    let (mut scanner, _) = SbomScannerBuilder::new().config(config).build().unwrap();
 
     scanner.start().await.unwrap();
     let results = scanner.scan_once().await.unwrap();
@@ -397,7 +391,11 @@ async fn test_multiple_lockfiles_in_directory() {
 #[tokio::test]
 async fn test_scanner_lifecycle() {
     let test_lockfile = fixture_path("Cargo.lock");
-    let test_dir = test_lockfile.parent().unwrap().to_string_lossy().to_string();
+    let test_dir = test_lockfile
+        .parent()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
 
     let config = SbomScannerConfig {
         enabled: true,
@@ -410,10 +408,7 @@ async fn test_scanner_lifecycle() {
         max_packages: 10000,
     };
 
-    let (mut scanner, _) = SbomScannerBuilder::new()
-        .config(config)
-        .build()
-        .unwrap();
+    let (mut scanner, _) = SbomScannerBuilder::new().config(config).build().unwrap();
 
     // Before start: Unhealthy
     let health = scanner.health_check().await;
@@ -462,10 +457,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
         max_packages: 10000,
     };
 
-    let (mut scanner, _) = SbomScannerBuilder::new()
-        .config(config)
-        .build()
-        .unwrap();
+    let (mut scanner, _) = SbomScannerBuilder::new().config(config).build().unwrap();
 
     scanner.start().await.unwrap();
 
@@ -499,10 +491,7 @@ async fn test_malformed_lockfile_skipped() {
         max_packages: 10000,
     };
 
-    let (mut scanner, _) = SbomScannerBuilder::new()
-        .config(config)
-        .build()
-        .unwrap();
+    let (mut scanner, _) = SbomScannerBuilder::new().config(config).build().unwrap();
 
     scanner.start().await.unwrap();
 

@@ -4,6 +4,7 @@
 
 use serde::Serialize;
 
+use super::util;
 use crate::error::SbomScannerError;
 use crate::types::{PackageGraph, SbomDocument, SbomFormat};
 
@@ -61,9 +62,10 @@ pub fn generate(graph: &PackageGraph) -> Result<SbomDocument, SbomScannerError> 
                 .checksum
                 .as_ref()
                 .map(|c| {
+                    let (algorithm, hash_value) = util::parse_checksum_algorithm(c, &pkg.ecosystem);
                     vec![CycloneDxHash {
-                        alg: "SHA-256".to_owned(),
-                        content: c.clone(),
+                        alg: algorithm.to_owned(),
+                        content: hash_value.to_owned(),
                     }]
                 })
                 .unwrap_or_default();
@@ -85,7 +87,7 @@ pub fn generate(graph: &PackageGraph) -> Result<SbomDocument, SbomScannerError> 
         spec_version: "1.5".to_owned(),
         version: 1,
         metadata: CycloneDxMetadata {
-            timestamp: current_timestamp(),
+            timestamp: util::current_timestamp(),
             tools: vec![CycloneDxTool {
                 name: "ironpost-sbom-scanner".to_owned(),
                 version: env!("CARGO_PKG_VERSION").to_owned(),
@@ -103,15 +105,6 @@ pub fn generate(graph: &PackageGraph) -> Result<SbomDocument, SbomScannerError> 
         content,
         component_count,
     })
-}
-
-/// 현재 시각을 ISO 8601 형식으로 반환합니다.
-fn current_timestamp() -> String {
-    let now = std::time::SystemTime::now();
-    match now.duration_since(std::time::UNIX_EPOCH) {
-        Ok(d) => format!("{}Z", d.as_secs()),
-        Err(_) => "unknown".to_owned(),
-    }
 }
 
 #[cfg(test)]

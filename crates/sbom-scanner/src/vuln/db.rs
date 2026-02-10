@@ -40,6 +40,21 @@ const MAX_VULN_DB_FILE_SIZE: u64 = 50 * 1024 * 1024;
 /// 전체 취약점 DB 엔트리 최대 개수 (1,000,000개)
 const MAX_VULN_DB_ENTRIES: usize = 1_000_000;
 
+/// CVE ID 최대 길이
+const MAX_CVE_ID_LEN: usize = 256;
+
+/// 패키지 이름 최대 길이
+const MAX_PACKAGE_NAME_LEN: usize = 512;
+
+/// 설명 최대 길이
+const MAX_DESCRIPTION_LEN: usize = 8192;
+
+/// 버전 문자열 최대 길이
+const MAX_VERSION_LEN: usize = 256;
+
+/// 단일 엔트리의 최대 affected_ranges 개수
+const MAX_AFFECTED_RANGES: usize = 100;
+
 /// 취약점 DB 엔트리
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VulnDbEntry {
@@ -78,11 +93,20 @@ pub struct VersionRange {
 /// # 인덱싱
 ///
 /// O(1) 조회를 위해 `(package_name, ecosystem)` 쌍으로 인덱싱된 HashMap을 사용합니다.
+///
+/// # 공유 패턴
+///
+/// `VulnDb`는 `Clone`을 구현하지만, 프로덕션에서는 `Arc<VulnDb>`로 감싸서
+/// 여러 스캔 태스크 간에 공유하는 것을 권장합니다. DB 로드는 비용이 크므로
+/// 복사보다 공유가 적절합니다.
+#[derive(Clone)]
 pub struct VulnDb {
     /// 전체 취약점 엔트리
     entries: Vec<VulnDbEntry>,
     /// 패키지 이름과 생태계로 인덱싱된 조회 맵
-    index: std::collections::HashMap<(String, Ecosystem), Vec<usize>>,
+    /// 2단계 인덱싱: package_name -> ecosystem -> [entry_indices]
+    /// &str 키 조회를 위해 (String, Ecosystem) 튜플 대신 nested HashMap 사용
+    index: std::collections::HashMap<String, std::collections::HashMap<Ecosystem, Vec<usize>>>,
 }
 
 impl VulnDb {
@@ -95,11 +119,17 @@ impl VulnDb {
     }
 
     /// 인덱스를 구축합니다.
-    fn build_index(entries: &[VulnDbEntry]) -> std::collections::HashMap<(String, Ecosystem), Vec<usize>> {
+    fn build_index(
+        entries: &[VulnDbEntry],
+    ) -> std::collections::HashMap<String, std::collections::HashMap<Ecosystem, Vec<usize>>> {
         let mut index = std::collections::HashMap::new();
         for (idx, entry) in entries.iter().enumerate() {
-            let key = (entry.package.clone(), entry.ecosystem);
-            index.entry(key).or_insert_with(Vec::new).push(idx);
+            index
+                .entry(entry.package.clone())
+                .or_insert_with(std::collections::HashMap::new)
+                .entry(entry.ecosystem)
+                .or_insert_with(Vec::new)
+                .push(idx);
         }
         index
     }
@@ -113,13 +143,100 @@ impl VulnDb {
     /// JSON 문자열에서 데이터베이스를 파싱합니다.
     ///
     /// JSON 형식: `VulnDbEntry` 배열
+    ///
+    /// # 검증
+    ///
+    /// 각 엔트리의 필드 길이와 배열 크기를 검증하여 악성 DB로 인한 DoS를 방지합니다.
     pub fn from_json(json: &str) -> Result<Self, SbomScannerError> {
         let entries: Vec<VulnDbEntry> = serde_json::from_str(json).map_err(|e| {
             SbomScannerError::VulnDbParse(format!("failed to parse vuln db JSON: {e}"))
         })?;
 
+        // 엔트리 필드 검증
+        for (idx, entry) in entries.iter().enumerate() {
+            Self::validate_entry(entry, idx)?;
+        }
+
         let index = Self::build_index(&entries);
         Ok(Self { entries, index })
+    }
+
+    /// 단일 엔트리의 필드를 검증합니다.
+    fn validate_entry(entry: &VulnDbEntry, idx: usize) -> Result<(), SbomScannerError> {
+        if entry.cve_id.len() > MAX_CVE_ID_LEN {
+            return Err(SbomScannerError::VulnDbParse(format!(
+                "entry {}: cve_id length {} exceeds maximum {}",
+                idx,
+                entry.cve_id.len(),
+                MAX_CVE_ID_LEN
+            )));
+        }
+
+        if entry.package.len() > MAX_PACKAGE_NAME_LEN {
+            return Err(SbomScannerError::VulnDbParse(format!(
+                "entry {}: package name length {} exceeds maximum {}",
+                idx,
+                entry.package.len(),
+                MAX_PACKAGE_NAME_LEN
+            )));
+        }
+
+        if entry.description.len() > MAX_DESCRIPTION_LEN {
+            return Err(SbomScannerError::VulnDbParse(format!(
+                "entry {}: description length {} exceeds maximum {}",
+                idx,
+                entry.description.len(),
+                MAX_DESCRIPTION_LEN
+            )));
+        }
+
+        if entry.affected_ranges.len() > MAX_AFFECTED_RANGES {
+            return Err(SbomScannerError::VulnDbParse(format!(
+                "entry {}: affected_ranges count {} exceeds maximum {}",
+                idx,
+                entry.affected_ranges.len(),
+                MAX_AFFECTED_RANGES
+            )));
+        }
+
+        // 각 버전 범위의 버전 문자열 길이 검증
+        for (range_idx, range) in entry.affected_ranges.iter().enumerate() {
+            if let Some(ref intro) = range.introduced
+                && intro.len() > MAX_VERSION_LEN
+            {
+                return Err(SbomScannerError::VulnDbParse(format!(
+                    "entry {}, range {}: introduced version length {} exceeds maximum {}",
+                    idx,
+                    range_idx,
+                    intro.len(),
+                    MAX_VERSION_LEN
+                )));
+            }
+            if let Some(ref fixed) = range.fixed
+                && fixed.len() > MAX_VERSION_LEN
+            {
+                return Err(SbomScannerError::VulnDbParse(format!(
+                    "entry {}, range {}: fixed version length {} exceeds maximum {}",
+                    idx,
+                    range_idx,
+                    fixed.len(),
+                    MAX_VERSION_LEN
+                )));
+            }
+        }
+
+        if let Some(ref fixed_ver) = entry.fixed_version
+            && fixed_ver.len() > MAX_VERSION_LEN
+        {
+            return Err(SbomScannerError::VulnDbParse(format!(
+                "entry {}: fixed_version length {} exceeds maximum {}",
+                idx,
+                fixed_ver.len(),
+                MAX_VERSION_LEN
+            )));
+        }
+
+        Ok(())
     }
 
     /// 디렉토리에서 모든 생태계의 취약점 DB를 로드합니다.
@@ -177,12 +294,11 @@ impl VulnDb {
                 });
             }
 
-            let content = std::fs::read_to_string(&file_path).map_err(|e| {
-                SbomScannerError::VulnDbLoad {
+            let content =
+                std::fs::read_to_string(&file_path).map_err(|e| SbomScannerError::VulnDbLoad {
                     path: file_path.display().to_string(),
                     reason: e.to_string(),
-                }
-            })?;
+                })?;
 
             let entries: Vec<VulnDbEntry> = serde_json::from_str(&content).map_err(|e| {
                 SbomScannerError::VulnDbParse(format!(
@@ -190,6 +306,11 @@ impl VulnDb {
                     file_path.display()
                 ))
             })?;
+
+            // 엔트리 필드 검증
+            for (idx, entry) in entries.iter().enumerate() {
+                Self::validate_entry(entry, idx)?;
+            }
 
             // 전체 엔트리 수 제한 체크
             if all_entries.len() + entries.len() > MAX_VULN_DB_ENTRIES {
@@ -228,10 +349,20 @@ impl VulnDb {
     /// 패키지 이름과 생태계로 취약점을 조회합니다.
     ///
     /// O(1) 인덱스 조회를 통해 일치하는 모든 취약점 엔트리의 참조를 반환합니다.
+    ///
+    /// # Performance
+    ///
+    /// 2단계 HashMap 조회를 사용하여 &str 키로 직접 조회하므로 String 할당이 발생하지 않습니다.
     pub fn lookup(&self, package: &str, ecosystem: &Ecosystem) -> Vec<&VulnDbEntry> {
-        let key = (package.to_owned(), *ecosystem);
-        if let Some(indices) = self.index.get(&key) {
-            indices.iter().filter_map(|&idx| self.entries.get(idx)).collect()
+        if let Some(eco_map) = self.index.get(package) {
+            if let Some(indices) = eco_map.get(ecosystem) {
+                indices
+                    .iter()
+                    .filter_map(|&idx| self.entries.get(idx))
+                    .collect()
+            } else {
+                Vec::new()
+            }
         } else {
             Vec::new()
         }
@@ -471,7 +602,9 @@ mod tests {
 
     #[test]
     fn load_from_dir_nonexistent_directory() {
-        let result = VulnDb::load_from_dir(std::path::Path::new("/nonexistent/path/definitely/not/here"));
+        let result = VulnDb::load_from_dir(std::path::Path::new(
+            "/nonexistent/path/definitely/not/here",
+        ));
         // On some systems, accessing a non-existent directory returns an empty DB (no files found)
         // rather than an error. Both behaviors are acceptable.
         match result {

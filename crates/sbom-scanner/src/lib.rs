@@ -54,13 +54,13 @@ pub use event::ScanEvent;
 pub use types::{Ecosystem, Package, PackageGraph, SbomDocument, SbomFormat};
 
 // Parser
-pub use parser::{LockfileDetector, LockfileParser};
 pub use parser::cargo::CargoLockParser;
 pub use parser::npm::NpmLockParser;
+pub use parser::{LockfileDetector, LockfileParser};
 
 // SBOM Generator
 pub use sbom::SbomGenerator;
 
 // Vulnerability
+pub use vuln::db::{VersionRange, VulnDb, VulnDbEntry};
 pub use vuln::{ScanFinding, ScanResult, SeverityCounts, VulnMatcher};
-pub use vuln::db::{VulnDb, VulnDbEntry, VersionRange};

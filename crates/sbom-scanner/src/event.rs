@@ -48,6 +48,9 @@ pub struct ScanEvent {
 
 impl ScanEvent {
     /// 새로운 trace를 시작하는 스캔 이벤트를 생성합니다.
+    ///
+    /// 수동 스캔(`scan_once`) 또는 주기적 스캔처럼 새로운 작업 흐름을
+    /// 시작할 때 사용합니다. 내부적으로 새 `trace_id`가 자동 생성됩니다.
     pub fn new(scan_result: ScanResult) -> Self {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
@@ -57,6 +60,9 @@ impl ScanEvent {
     }
 
     /// 기존 trace에 연결된 스캔 이벤트를 생성합니다.
+    ///
+    /// 다른 모듈에서 시작된 작업 흐름(예: API 요청, 외부 트리거)의
+    /// `trace_id`를 이어받아 분산 추적을 유지할 때 사용합니다.
     pub fn with_trace(scan_result: ScanResult, trace_id: impl Into<String>) -> Self {
         Self {
             id: uuid::Uuid::new_v4().to_string(),

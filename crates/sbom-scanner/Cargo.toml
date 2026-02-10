@@ -15,8 +15,8 @@ thiserror = { workspace = true }
 uuid = { workspace = true }
 
 # SemVer version comparison
-semver = "1"
+semver = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util", "macros"] }
-tempfile = "3"
+tempfile = { workspace = true }

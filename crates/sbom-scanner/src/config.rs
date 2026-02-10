@@ -48,6 +48,8 @@ pub struct SbomScannerConfig {
     /// 스캐너 활성화 여부
     pub enabled: bool,
     /// 스캔 대상 디렉토리 목록
+    ///
+    /// Note: 재귀 스캔을 수행하지 않으며, 지정된 디렉토리의 직계 파일만 검색합니다.
     pub scan_dirs: Vec<String>,
     /// 로컬 취약점 DB 경로
     pub vuln_db_path: String,
@@ -73,7 +75,7 @@ impl Default for SbomScannerConfig {
             vuln_db_path: "/var/lib/ironpost/vuln-db".to_owned(),
             min_severity: Severity::Medium,
             output_format: SbomFormat::CycloneDx,
-            scan_interval_secs: 86400, // 24 hours
+            scan_interval_secs: 86400,       // 24 hours
             max_file_size: 10 * 1024 * 1024, // 10 MB
             max_packages: 50_000,
         }
@@ -90,10 +92,9 @@ impl SbomScannerConfig {
     ///
     /// core 설정에 없는 확장 필드는 기본값을 사용합니다.
     pub fn from_core(core: &ironpost_core::config::SbomConfig) -> Self {
-        let min_severity = Severity::from_str_loose(&core.min_severity)
-            .unwrap_or(Severity::Medium);
-        let output_format = SbomFormat::from_str_loose(&core.output_format)
-            .unwrap_or(SbomFormat::CycloneDx);
+        let min_severity = Severity::from_str_loose(&core.min_severity).unwrap_or(Severity::Medium);
+        let output_format =
+            SbomFormat::from_str_loose(&core.output_format).unwrap_or(SbomFormat::CycloneDx);
 
         Self {
             enabled: core.enabled,
@@ -118,9 +119,7 @@ impl SbomScannerConfig {
         if self.scan_interval_secs > 0 && self.scan_interval_secs < 60 {
             return Err(SbomScannerError::Config {
                 field: "scan_interval_secs".to_owned(),
-                reason: format!(
-                    "must be 0 (manual) or 60-{MAX_SCAN_INTERVAL_SECS}"
-                ),
+                reason: format!("must be 0 (manual) or 60-{MAX_SCAN_INTERVAL_SECS}"),
             });
         }
 
@@ -159,7 +158,7 @@ impl SbomScannerConfig {
             });
         }
 
-        // 경로 순회 공격 방어: ".." 패턴 검증
+        // 경로 순회 공격 방어: ".." 패턴 검증 + 심볼릭 링크 체크
         for scan_dir in &self.scan_dirs {
             if scan_dir.is_empty() {
                 return Err(SbomScannerError::Config {
@@ -168,7 +167,11 @@ impl SbomScannerConfig {
                 });
             }
 
-            if scan_dir.contains("..") {
+            // Path traversal 체크: Path::components()로 정확하게 ParentDir 컴포넌트 검출
+            if std::path::Path::new(scan_dir)
+                .components()
+                .any(|c| c == std::path::Component::ParentDir)
+            {
                 return Err(SbomScannerError::Config {
                     field: "scan_dirs".to_owned(),
                     reason: format!(
@@ -177,13 +180,40 @@ impl SbomScannerConfig {
                     ),
                 });
             }
+
+            // 경로 길이 제한 (DoS 방지)
+            const MAX_PATH_LEN: usize = 4096;
+            if scan_dir.len() > MAX_PATH_LEN {
+                return Err(SbomScannerError::Config {
+                    field: "scan_dirs".to_owned(),
+                    reason: format!(
+                        "scan directory path '{}' exceeds maximum length {}",
+                        scan_dir, MAX_PATH_LEN
+                    ),
+                });
+            }
         }
 
-        if self.enabled && self.vuln_db_path.contains("..") {
-            return Err(SbomScannerError::Config {
-                field: "vuln_db_path".to_owned(),
-                reason: "vuln_db_path contains path traversal pattern '..'".to_owned(),
-            });
+        if self.enabled {
+            // Path traversal 체크: Path::components()로 정확하게 ParentDir 컴포넌트 검출
+            if std::path::Path::new(&self.vuln_db_path)
+                .components()
+                .any(|c| c == std::path::Component::ParentDir)
+            {
+                return Err(SbomScannerError::Config {
+                    field: "vuln_db_path".to_owned(),
+                    reason: "vuln_db_path contains path traversal pattern '..'".to_owned(),
+                });
+            }
+
+            // 경로 길이 제한
+            const MAX_PATH_LEN: usize = 4096;
+            if self.vuln_db_path.len() > MAX_PATH_LEN {
+                return Err(SbomScannerError::Config {
+                    field: "vuln_db_path".to_owned(),
+                    reason: format!("vuln_db_path exceeds maximum length {}", MAX_PATH_LEN),
+                });
+            }
         }
 
         Ok(())

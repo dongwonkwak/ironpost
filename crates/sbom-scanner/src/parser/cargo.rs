@@ -24,6 +24,12 @@ use crate::error::SbomScannerError;
 use crate::parser::LockfileParser;
 use crate::types::{Ecosystem, Package, PackageGraph};
 
+/// 패키지 이름 최대 길이 (512자)
+const MAX_PACKAGE_NAME_LEN: usize = 512;
+
+/// 패키지 버전 최대 길이 (256자)
+const MAX_PACKAGE_VERSION_LEN: usize = 256;
+
 /// Cargo.lock 파서
 ///
 /// TOML 형식의 Cargo.lock 파일을 파싱합니다.
@@ -60,34 +66,43 @@ impl LockfileParser for CargoLockParser {
             .is_some_and(|name| name == "Cargo.lock")
     }
 
-    fn parse(
-        &self,
-        content: &str,
-        source_path: &str,
-    ) -> Result<PackageGraph, SbomScannerError> {
-        let lock_file: CargoLockFile = toml::from_str(content).map_err(|e| {
-            SbomScannerError::LockfileParse {
+    fn parse(&self, content: &str, source_path: &str) -> Result<PackageGraph, SbomScannerError> {
+        let lock_file: CargoLockFile =
+            toml::from_str(content).map_err(|e| SbomScannerError::LockfileParse {
                 path: source_path.to_owned(),
                 reason: e.to_string(),
-            }
-        })?;
+            })?;
 
         let mut packages = Vec::with_capacity(lock_file.package.len());
         let mut root_packages = Vec::new();
 
         for entry in &lock_file.package {
+            // 패키지 이름/버전 길이 검증
+            if entry.name.len() > MAX_PACKAGE_NAME_LEN {
+                tracing::warn!(
+                    name_len = entry.name.len(),
+                    max = MAX_PACKAGE_NAME_LEN,
+                    "skipping package with name exceeding length limit"
+                );
+                continue;
+            }
+            if entry.version.len() > MAX_PACKAGE_VERSION_LEN {
+                tracing::warn!(
+                    name = %entry.name,
+                    version_len = entry.version.len(),
+                    max = MAX_PACKAGE_VERSION_LEN,
+                    "skipping package with version exceeding length limit"
+                );
+                continue;
+            }
+
             let purl = Package::make_purl(&Ecosystem::Cargo, &entry.name, &entry.version);
 
             // 패키지 의존성에서 이름만 추출 (Cargo.lock의 deps는 "name version" 형식)
             let deps: Vec<String> = entry
                 .dependencies
                 .iter()
-                .map(|d| {
-                    d.split_whitespace()
-                        .next()
-                        .unwrap_or(d)
-                        .to_owned()
-                })
+                .map(|d| d.split_whitespace().next().unwrap_or(d).to_owned())
                 .collect();
 
             // source가 없으면 로컬(루트) 패키지
@@ -242,7 +257,7 @@ version = "1.0.0"
     }
 
     #[test]
-    fn parse_cargo_lock_with_very_long_package_name() {
+    fn parse_cargo_lock_with_very_long_package_name_skipped() {
         let parser = CargoLockParser;
         let long_name = "a".repeat(1000);
         let lockfile = format!(
@@ -251,16 +266,41 @@ version = "1.0.0"
 name = "{}"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
+name = "valid-pkg"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
 "#,
             long_name
         );
         let graph = parser.parse(&lockfile, "Cargo.lock").unwrap();
+        // Long name (1000 > 512) should be skipped, only valid-pkg remains
         assert_eq!(graph.packages.len(), 1);
-        assert_eq!(graph.packages[0].name.len(), 1000);
+        assert_eq!(graph.packages[0].name, "valid-pkg");
     }
 
     #[test]
-    fn parse_cargo_lock_with_very_long_version() {
+    fn parse_cargo_lock_with_name_at_limit() {
+        let parser = CargoLockParser;
+        let name_at_limit = "a".repeat(512);
+        let lockfile = format!(
+            r#"
+[[package]]
+name = "{}"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+"#,
+            name_at_limit
+        );
+        let graph = parser.parse(&lockfile, "Cargo.lock").unwrap();
+        // Exactly at limit should be accepted
+        assert_eq!(graph.packages.len(), 1);
+        assert_eq!(graph.packages[0].name.len(), 512);
+    }
+
+    #[test]
+    fn parse_cargo_lock_with_very_long_version_skipped() {
         let parser = CargoLockParser;
         let long_version = "1.".to_owned() + &"0".repeat(500);
         let lockfile = format!(
@@ -269,12 +309,37 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 name = "test-pkg"
 version = "{}"
 source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
+name = "valid-pkg"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
 "#,
             long_version
         );
         let graph = parser.parse(&lockfile, "Cargo.lock").unwrap();
+        // Long version (502 > 256) should be skipped, only valid-pkg remains
         assert_eq!(graph.packages.len(), 1);
-        assert_eq!(graph.packages[0].version, long_version);
+        assert_eq!(graph.packages[0].name, "valid-pkg");
+    }
+
+    #[test]
+    fn parse_cargo_lock_with_version_at_limit() {
+        let parser = CargoLockParser;
+        let version_at_limit = "1.".to_owned() + &"0".repeat(254);
+        let lockfile = format!(
+            r#"
+[[package]]
+name = "test-pkg"
+version = "{}"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+"#,
+            version_at_limit
+        );
+        let graph = parser.parse(&lockfile, "Cargo.lock").unwrap();
+        // Exactly at limit (256) should be accepted
+        assert_eq!(graph.packages.len(), 1);
+        assert_eq!(graph.packages[0].version, version_at_limit);
     }
 
     #[test]

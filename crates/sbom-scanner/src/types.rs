@@ -111,6 +111,11 @@ impl PackageGraph {
     }
 
     /// 이름으로 패키지를 검색합니다.
+    ///
+    /// # Performance
+    ///
+    /// O(n) 선형 탐색입니다. 현재 테스트 코드에서만 사용됩니다.
+    /// 프로덕션 핫 패스에서 사용할 경우 HashMap 인덱스를 추가하세요.
     pub fn find_package(&self, name: &str) -> Option<&Package> {
         self.packages.iter().find(|p| p.name == name)
     }
@@ -238,16 +243,14 @@ mod tests {
         let graph = PackageGraph {
             source_file: "Cargo.lock".to_owned(),
             ecosystem: Ecosystem::Cargo,
-            packages: vec![
-                Package {
-                    name: "serde".to_owned(),
-                    version: "1.0.204".to_owned(),
-                    ecosystem: Ecosystem::Cargo,
-                    purl: "pkg:cargo/serde@1.0.204".to_owned(),
-                    checksum: None,
-                    dependencies: vec![],
-                },
-            ],
+            packages: vec![Package {
+                name: "serde".to_owned(),
+                version: "1.0.204".to_owned(),
+                ecosystem: Ecosystem::Cargo,
+                purl: "pkg:cargo/serde@1.0.204".to_owned(),
+                checksum: None,
+                dependencies: vec![],
+            }],
             root_packages: vec!["serde".to_owned()],
         };
 
@@ -264,8 +267,14 @@ mod tests {
 
     #[test]
     fn sbom_format_from_str_loose() {
-        assert_eq!(SbomFormat::from_str_loose("cyclonedx"), Some(SbomFormat::CycloneDx));
-        assert_eq!(SbomFormat::from_str_loose("cdx"), Some(SbomFormat::CycloneDx));
+        assert_eq!(
+            SbomFormat::from_str_loose("cyclonedx"),
+            Some(SbomFormat::CycloneDx)
+        );
+        assert_eq!(
+            SbomFormat::from_str_loose("cdx"),
+            Some(SbomFormat::CycloneDx)
+        );
         assert_eq!(SbomFormat::from_str_loose("spdx"), Some(SbomFormat::Spdx));
         assert_eq!(SbomFormat::from_str_loose("SPDX"), Some(SbomFormat::Spdx));
         assert_eq!(SbomFormat::from_str_loose("xml"), None);

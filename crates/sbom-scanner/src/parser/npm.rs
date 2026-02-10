@@ -21,6 +21,16 @@ use std::path::Path;
 
 use serde::Deserialize;
 
+/// NPM lockfile 파싱 시 최대 허용 패키지 수 (DoS 방지)
+/// scanner.rs의 max_packages 설정과 동일한 값을 사용합니다.
+const MAX_NPM_PACKAGES: usize = 50_000;
+
+/// 패키지 이름 최대 길이 (512자)
+const MAX_PACKAGE_NAME_LEN: usize = 512;
+
+/// 패키지 버전 최대 길이 (256자)
+const MAX_PACKAGE_VERSION_LEN: usize = 256;
+
 use crate::error::SbomScannerError;
 use crate::parser::LockfileParser;
 use crate::types::{Ecosystem, Package, PackageGraph};
@@ -31,25 +41,24 @@ use crate::types::{Ecosystem, Package, PackageGraph};
 pub struct NpmLockParser;
 
 /// package-lock.json 구조 (파싱용)
+///
+/// `name`, `lockfileVersion` 등 사용하지 않는 필드는 의도적으로 선언하지 않았습니다.
+/// `serde_json`은 기본적으로 알 수 없는 필드를 무시합니다.
 #[derive(Deserialize)]
 struct NpmLockFile {
-    #[serde(default)]
-    _name: Option<String>,
-    #[serde(default, rename = "lockfileVersion")]
-    _lockfile_version: Option<u32>,
     #[serde(default)]
     packages: HashMap<String, NpmPackageEntry>,
 }
 
 /// package-lock.json 내 개별 패키지 (파싱용)
+///
+/// `resolved` 등 사용하지 않는 필드는 의도적으로 선언하지 않았습니다.
 #[derive(Deserialize)]
 struct NpmPackageEntry {
     #[serde(default)]
     name: Option<String>,
     #[serde(default)]
     version: Option<String>,
-    #[serde(default)]
-    _resolved: Option<String>,
     #[serde(default)]
     integrity: Option<String>,
     #[serde(default)]
@@ -67,17 +76,24 @@ impl LockfileParser for NpmLockParser {
             .is_some_and(|name| name == "package-lock.json")
     }
 
-    fn parse(
-        &self,
-        content: &str,
-        source_path: &str,
-    ) -> Result<PackageGraph, SbomScannerError> {
-        let lock_file: NpmLockFile = serde_json::from_str(content).map_err(|e| {
-            SbomScannerError::LockfileParse {
+    fn parse(&self, content: &str, source_path: &str) -> Result<PackageGraph, SbomScannerError> {
+        let lock_file: NpmLockFile =
+            serde_json::from_str(content).map_err(|e| SbomScannerError::LockfileParse {
                 path: source_path.to_owned(),
                 reason: e.to_string(),
-            }
-        })?;
+            })?;
+
+        // 파싱 직후 패키지 개수 체크 (메모리 할당 후이지만, 추가 처리 전에 조기 차단)
+        if lock_file.packages.len() > MAX_NPM_PACKAGES {
+            return Err(SbomScannerError::LockfileParse {
+                path: source_path.to_owned(),
+                reason: format!(
+                    "too many packages: {} exceeds limit {}",
+                    lock_file.packages.len(),
+                    MAX_NPM_PACKAGES
+                ),
+            });
+        }
 
         let mut packages = Vec::new();
         let mut root_packages = Vec::new();
@@ -97,6 +113,25 @@ impl LockfileParser for NpmLockParser {
                 Some(v) => v.clone(),
                 None => continue, // 버전 없는 항목은 건너뜀
             };
+
+            // 패키지 이름/버전 길이 검증
+            if name.len() > MAX_PACKAGE_NAME_LEN {
+                tracing::warn!(
+                    name_len = name.len(),
+                    max = MAX_PACKAGE_NAME_LEN,
+                    "skipping npm package with name exceeding length limit"
+                );
+                continue;
+            }
+            if version.len() > MAX_PACKAGE_VERSION_LEN {
+                tracing::warn!(
+                    name = %name,
+                    version_len = version.len(),
+                    max = MAX_PACKAGE_VERSION_LEN,
+                    "skipping npm package with version exceeding length limit"
+                );
+                continue;
+            }
 
             let purl = Package::make_purl(&Ecosystem::Npm, &name, &version);
 
@@ -185,7 +220,9 @@ mod tests {
     #[test]
     fn parse_sample_package_lock() {
         let parser = NpmLockParser;
-        let graph = parser.parse(SAMPLE_PACKAGE_LOCK, "package-lock.json").unwrap();
+        let graph = parser
+            .parse(SAMPLE_PACKAGE_LOCK, "package-lock.json")
+            .unwrap();
 
         assert_eq!(graph.ecosystem, Ecosystem::Npm);
         assert_eq!(graph.source_file, "package-lock.json");
@@ -280,9 +317,32 @@ mod tests {
     }
 
     #[test]
-    fn parse_package_lock_very_long_package_name() {
+    fn parse_package_lock_very_long_package_name_skipped() {
         let parser = NpmLockParser;
         let long_name = "a".repeat(2000);
+        let json = format!(
+            r#"{{
+  "packages": {{
+    "node_modules/{}": {{
+      "version": "1.0.0"
+    }},
+    "node_modules/valid-pkg": {{
+      "version": "2.0.0"
+    }}
+  }}
+}}"#,
+            long_name
+        );
+        let graph = parser.parse(&json, "package-lock.json").unwrap();
+        // Long name (2000 > 512) should be skipped, only valid-pkg remains
+        assert_eq!(graph.packages.len(), 1);
+        assert_eq!(graph.packages[0].name, "valid-pkg");
+    }
+
+    #[test]
+    fn parse_package_lock_name_at_limit() {
+        let parser = NpmLockParser;
+        let name_at_limit = "a".repeat(512);
         let json = format!(
             r#"{{
   "packages": {{
@@ -291,17 +351,41 @@ mod tests {
     }}
   }}
 }}"#,
-            long_name
+            name_at_limit
         );
         let graph = parser.parse(&json, "package-lock.json").unwrap();
+        // Exactly at limit should be accepted
         assert_eq!(graph.packages.len(), 1);
-        assert_eq!(graph.packages[0].name.len(), 2000);
+        assert_eq!(graph.packages[0].name.len(), 512);
     }
 
     #[test]
-    fn parse_package_lock_very_long_version() {
+    fn parse_package_lock_very_long_version_skipped() {
         let parser = NpmLockParser;
         let long_version = "1.0.0-beta.".to_owned() + &"0".repeat(1000);
+        let json = format!(
+            r#"{{
+  "packages": {{
+    "node_modules/test-pkg": {{
+      "version": "{}"
+    }},
+    "node_modules/valid-pkg": {{
+      "version": "2.0.0"
+    }}
+  }}
+}}"#,
+            long_version
+        );
+        let graph = parser.parse(&json, "package-lock.json").unwrap();
+        // Long version (1011 > 256) should be skipped, only valid-pkg remains
+        assert_eq!(graph.packages.len(), 1);
+        assert_eq!(graph.packages[0].name, "valid-pkg");
+    }
+
+    #[test]
+    fn parse_package_lock_version_at_limit() {
+        let parser = NpmLockParser;
+        let version_at_limit = "1.0.0-beta.".to_owned() + &"0".repeat(245);
         let json = format!(
             r#"{{
   "packages": {{
@@ -310,11 +394,12 @@ mod tests {
     }}
   }}
 }}"#,
-            long_version
+            version_at_limit
         );
         let graph = parser.parse(&json, "package-lock.json").unwrap();
+        // Exactly at limit (256) should be accepted
         assert_eq!(graph.packages.len(), 1);
-        assert_eq!(graph.packages[0].version, long_version);
+        assert_eq!(graph.packages[0].version, version_at_limit);
     }
 
     #[test]

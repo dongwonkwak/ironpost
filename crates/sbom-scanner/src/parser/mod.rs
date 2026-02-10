@@ -39,11 +39,7 @@ pub trait LockfileParser: Send + Sync {
     ///
     /// - `content`: lockfile 파일 내용 (UTF-8 문자열)
     /// - `source_path`: 원본 파일 경로 (에러 메시지용)
-    fn parse(
-        &self,
-        content: &str,
-        source_path: &str,
-    ) -> Result<PackageGraph, SbomScannerError>;
+    fn parse(&self, content: &str, source_path: &str) -> Result<PackageGraph, SbomScannerError>;
 }
 
 /// Lockfile 탐지기
@@ -78,7 +74,9 @@ impl LockfileDetector {
             None => return false,
         };
 
-        self.known_filenames.iter().any(|(known, _)| known == file_name)
+        self.known_filenames
+            .iter()
+            .any(|(known, _)| known == file_name)
     }
 
     /// lockfile의 생태계를 반환합니다.

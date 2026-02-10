@@ -1,35 +1,56 @@
-# Code Review: ironpost-sbom-scanner (Phase 5)
+# Code Review: ironpost-sbom-scanner (Phase 5) -- Re-review
 
 ## Summary
 - Reviewer: reviewer (security-focused)
 - Date: 2026-02-10
-- Target: `crates/sbom-scanner/` -- 15 source files, 2 test files, 3 fixture files
-- Tests: 183 total (165 unit + 16 integration + 2 doc tests), all passing
-- Clippy: Clean (no warnings)
-- Result: **Conditional Approval** -- 3 Critical, 5 High, 8 Medium, 7 Low findings
+- Target: `crates/sbom-scanner/` -- 16 source files, 2 test files, 3 fixture files
+- Tests: 183 total (165 unit + 10 CVE integration + 6 pipeline integration + 2 doc tests), all passing
+- Clippy: Clean (no warnings with `-D warnings`)
+- Fmt: Clean (no formatting issues)
+- Result: **Conditional Approval** -- 1 Critical, 3 High, 9 Medium, 8 Low findings (21 total)
+- Previous review: 23 findings (C3, H5 resolved; this review is on post-fix code with fresh analysis)
 
 ## Files Reviewed
 
 | File | Lines | Purpose |
 |------|-------|---------|
 | `src/lib.rs` | 67 | Module root, re-exports |
-| `src/error.rs` | 263 | SbomScannerError (9 variants) |
-| `src/config.rs` | 429 | SbomScannerConfig + builder |
-| `src/event.rs` | 143 | ScanEvent + Event trait |
-| `src/types.rs` | 274 | Ecosystem, Package, PackageGraph, SbomFormat, SbomDocument |
-| `src/scanner.rs` | 758 | SbomScanner orchestrator + Pipeline impl |
-| `src/parser/mod.rs` | 143 | LockfileParser trait + LockfileDetector |
-| `src/parser/cargo.rs` | 371 | CargoLockParser |
-| `src/parser/npm.rs` | 442 | NpmLockParser |
-| `src/sbom/mod.rs` | 111 | SbomGenerator |
-| `src/sbom/cyclonedx.rs` | 195 | CycloneDX 1.5 JSON |
-| `src/sbom/spdx.rs` | 224 | SPDX 2.3 JSON |
-| `src/vuln/mod.rs` | 624 | VulnMatcher, ScanFinding, ScanResult |
-| `src/vuln/db.rs` | 489 | VulnDb, VulnDbEntry, VersionRange |
-| `src/vuln/version.rs` | 347 | SemVer version range matching |
-| `tests/integration_tests.rs` | 316 | E2E integration tests |
-| `tests/cve_matching_tests.rs` | 518 | CVE matching edge case tests |
+| `src/error.rs` | 279 | SbomScannerError (9 variants) + IronpostError conversion |
+| `src/config.rs` | 476 | SbomScannerConfig + builder + validation |
+| `src/event.rs` | 143 | ScanEvent + Event trait impl |
+| `src/types.rs` | 278 | Ecosystem, Package, PackageGraph, SbomFormat, SbomDocument |
+| `src/scanner.rs` | 767 | SbomScanner orchestrator + Pipeline impl + scan_directory |
+| `src/parser/mod.rs` | 141 | LockfileParser trait + LockfileDetector |
+| `src/parser/cargo.rs` | 361 | CargoLockParser (TOML) |
+| `src/parser/npm.rs` | 439 | NpmLockParser (JSON v2/v3) |
+| `src/sbom/mod.rs` | 110 | SbomGenerator dispatch |
+| `src/sbom/cyclonedx.rs` | 257 | CycloneDX 1.5 JSON generation |
+| `src/sbom/spdx.rs` | 280 | SPDX 2.3 JSON generation |
+| `src/vuln/mod.rs` | 627 | VulnMatcher, ScanFinding, ScanResult, SeverityCounts |
+| `src/vuln/db.rs` | 671 | VulnDb + HashMap index + field validation |
+| `src/vuln/version.rs` | 370 | SemVer version range matching + string fallback |
+| `tests/integration_tests.rs` | 333 | E2E pipeline integration tests |
+| `tests/cve_matching_tests.rs` | 507 | CVE matching edge case integration tests |
 | `Cargo.toml` | 23 | Crate manifest |
+
+---
+
+## Previous Review Status
+
+The initial review (2026-02-10) identified 23 findings. The following were addressed in commit `14ac3f7`:
+
+| ID | Status | Description |
+|----|--------|-------------|
+| C1 | Fixed | VulnDb file size limit (50MB) + entry limit (1M) |
+| C2 | Fixed | VulnDb HashMap indexing for O(1) lookup |
+| C3 | Fixed | TOCTOU exists() checks removed |
+| H1 | Fixed | scan_directory() shared function extracted |
+| H2 | Deferred | Graceful shutdown (Phase 6) |
+| H3 | Fixed | Stopped state start() rejection |
+| H4 | Fixed | scan_dirs path traversal validation |
+| H5 | Fixed | VulnDb entry count cap |
+
+This re-review validates those fixes and performs a fresh, thorough analysis of the current codebase.
 
 ---
 
@@ -37,339 +58,403 @@
 
 ### Critical (must fix before production)
 
-#### C1: VulnDb file size not limited -- potential OOM via crafted vuln DB JSON
+#### NEW-C1: VulnDb `lookup()` allocates a String on every call for HashMap key
 
-**Status:** ✅ 수정 완료
+**File:** `crates/sbom-scanner/src/vuln/db.rs`, line 340
 
-**Fix applied:**
-- Added `MAX_VULN_DB_FILE_SIZE` constant (50 MB per file)
-- Added `MAX_VULN_DB_ENTRIES` constant (1,000,000 total entries)
-- Added metadata size check before reading files in `load_from_dir`
-- Added total entry count validation with truncation warning
-- Files exceeding size limit return `VulnDbLoad` error
+**Problem:** The `lookup()` method creates a `(String, Ecosystem)` tuple on every call via `package.to_owned()`. In the scan loop (`vuln/mod.rs:137`), this is called once per package per scan. With a graph of 50,000 packages, that is 50,000 heap allocations per scan. Since the HashMap index uses owned `String` keys, each lookup requires allocating a new String to construct the lookup key, only to discard it immediately after the lookup.
 
----
+```rust
+pub fn lookup(&self, package: &str, ecosystem: &Ecosystem) -> Vec<&VulnDbEntry> {
+    let key = (package.to_owned(), *ecosystem);  // allocation on every call
+    if let Some(indices) = self.index.get(&key) {
+```
 
-#### C2: VulnDb lookup is O(n) linear scan -- DoS risk with large DB + many packages
+More critically, when a package is NOT in the database (the common case -- most packages have no CVEs), the allocation is completely wasted. This creates unnecessary GC pressure on large scans.
 
-**Status:** ✅ 수정 완료
+**Severity justification:** While not a security vulnerability itself, this is a performance-critical hot path. With `max_packages = 50,000` and periodic scans, this creates significant allocation churn. Classified as Critical because it directly impacts the algorithmic improvement from C2 (the HashMap indexing fix).
 
-**Fix applied:**
-- Added `index: HashMap<(String, Ecosystem), Vec<usize>>` field to `VulnDb`
-- Implemented `build_index()` method to create O(1) lookup index at load time
-- Updated `lookup()` to use HashMap index instead of linear iteration
-- Updated `empty()`, `from_entries()`, `from_json()`, and `load_from_dir()` to build index
-
----
-
-#### C3: TOCTOU race in VulnDb path.exists() check before load
-
-**Status:** ✅ 수정 완료
-
-**Fix applied:**
-- Removed `path.exists()` check in `scanner.rs::start()` (line 265-271)
-- Changed to direct `VulnDb::load_from_dir(path)` call with error handling
-- Removed `file_path.exists()` check in `db.rs::load_from_dir()` (line 123)
-- Changed to direct `std::fs::metadata()` call, handle `NotFound` error gracefully
-- Removed `dir.exists()` check in `scanner.rs::discover_lockfiles()` (line 596)
-- Changed to direct `std::fs::read_dir()` call with `NotFound` error handling
+**Suggested fix:** Use a `HashMap<String, HashMap<Ecosystem, Vec<usize>>>` structure that allows `&str` key lookup via the `get()` method (which accepts `&str` via `Borrow<str>` on `String`). Alternatively, use the `hashbrown` crate's `raw_entry_mut` API, or restructure the index as `HashMap<String, Vec<(Ecosystem, usize)>>` with a secondary filter. The simplest fix is to change the index to use `String` as the outer key and do a two-step lookup.
 
 ---
 
 ### High (strongly recommended fix)
 
-#### H1: Massive code duplication between scan_once and periodic scan task
+#### NEW-H1: Periodic scan task loop has no cancellation check -- runs indefinitely after scanner drop
 
-**Status:** ✅ 수정 완료
+**File:** `crates/sbom-scanner/src/scanner.rs`, lines 237-283
 
-**Fix applied:**
-- Extracted shared `scan_directory()` function containing all scan logic
-- Created `ScanContext` struct to group function parameters (avoiding clippy::too_many_arguments)
-- Both `scan_once()` and periodic task now call `scan_directory()` with appropriate context
-- Eliminated ~130 lines of duplicated logic
-- Single source of truth for scan behavior
+**Problem:** The periodic scan task is spawned as a `tokio::spawn` with an infinite `loop` containing `interval.tick().await`. While `stop()` calls `task.abort()`, if `stop()` is never called (e.g., the `SbomScanner` is dropped without explicit stop), the spawned task continues running indefinitely because there is no `CancellationToken`, no `watch` channel, and no `WeakSender` pattern to detect that the parent is gone.
 
----
+The `alert_tx.try_send()` will eventually return `Err` when the receiver is dropped, but the task continues looping, performing filesystem scans, and consuming CPU/IO resources.
 
-#### H2: Periodic scan task never gracefully stops -- immediate abort may lose in-progress scans
+```rust
+let task = tokio::spawn(async move {
+    loop {                          // <-- infinite loop
+        interval.tick().await;
+        // ... scan logic ...
+    }
+});
+```
 
-**Status:** ⚠️ Deferred to Phase 6 (polishing)
-
-**Rationale:** While `task.abort()` is not ideal, implementing graceful shutdown with `CancellationToken` requires significant refactoring of the periodic task loop. The current implementation is functionally correct for Phase 5, and graceful shutdown is a polishing item that doesn't affect correctness or security.
-
-**Note:** Will be addressed in Phase 6 as part of overall daemon lifecycle improvements.
+**Suggested fix:** Use `tokio_util::sync::CancellationToken` or a `tokio::sync::watch` channel to signal shutdown. Alternatively, check if `alert_tx.is_closed()` at the start of each iteration and break if so.
 
 ---
 
-#### H3: No stop/restart support -- stopped scanner cannot be restarted
+#### NEW-H2: `discover_lockfiles` metadata-to-content TOCTOU gap
 
-**Status:** ✅ 수정 완료
+**File:** `crates/sbom-scanner/src/scanner.rs`, lines 609-657
 
-**Fix applied:**
-- Added explicit check in `start()` to reject `Stopped` state
-- Returns `SbomError::ScanFailed` with clear message: "cannot restart stopped scanner, create a new instance"
-- Matches design doc intent and prevents undefined behavior
+**Problem:** The function calls `std::fs::symlink_metadata(&path)` to check file type and size (lines 609-615), then later calls `std::fs::read_to_string(&path)` (line 651). Between these two operations, the file could be replaced with a different file (symlink or larger file). This is a classic TOCTOU race condition.
+
+While this is mitigated by the single-level scan and the fact that the scan directory itself requires write access by an attacker, in a multi-tenant environment an attacker who controls the scan directory content could:
+1. Place a small file that passes the size check
+2. Replace it with a large file (or symlink to `/dev/zero`) before `read_to_string`
+3. Cause OOM by reading an unbounded file
+
+```rust
+// Line 609: size check
+let metadata = match std::fs::symlink_metadata(&path) { ... };
+let file_size = usize::try_from(metadata.len()).unwrap_or(usize::MAX);
+if file_size > max_file_size { ... }
+
+// Gap: file could be replaced here
+
+// Line 651: actual read
+let content = match std::fs::read_to_string(&path) { ... };
+```
+
+**Suggested fix:** Open the file once using `std::fs::File::open()`, check metadata via `file.metadata()`, then read from the same file handle. This eliminates the TOCTOU gap because the kernel maintains the file descriptor to the original inode.
 
 ---
 
-#### H4: scan_dirs paths not validated for path traversal or symlinks
+#### NEW-H3: `unix_to_rfc3339` duplicated code -- 55 identical lines in cyclonedx.rs and spdx.rs
 
-**Status:** ✅ 수정 완료
+**File:** `crates/sbom-scanner/src/sbom/cyclonedx.rs`, lines 122-177 and `spdx.rs`, lines 142-197
 
-**Fix applied:**
-- Added validation in `SbomScannerConfig::validate()` to reject empty `scan_dirs` entries
-- Added validation to reject paths containing `..` (path traversal pattern)
-- Applied same validation to `vuln_db_path`
-- Returns `Config` error with clear message on validation failure
+**Problem:** The `current_timestamp()`, `unix_to_rfc3339()`, and `is_leap_year()` functions are identically duplicated across both SBOM generation modules. This is 55 lines of non-trivial date calculation code duplicated, making it a maintenance hazard. Any bug fix or improvement would need to be applied to both copies simultaneously.
 
-**Note:** Symlink validation deferred to Phase 6 as it requires `std::fs::canonicalize()` which can fail on non-existent paths, adding complexity.
+This was noted as L1 in the previous review, but the code has since been significantly expanded (from 7 lines of epoch formatting to 55 lines of full calendar calculation), which elevates this to High severity. A bug in one copy but not the other would produce different timestamps in CycloneDX vs SPDX outputs from the same scan.
 
----
-
-#### H5: No upper bound on VulnDb entries after loading
-
-**Status:** ✅ 수정 완료 (part of C1 fix)
-
-**Fix applied:**
-- Added `MAX_VULN_DB_ENTRIES` constant (1,000,000)
-- Added entry count check in `load_from_dir()` after each ecosystem file
-- Truncates to remaining capacity when limit reached
-- Logs warning with current/new/max counts when truncating
+**Suggested fix:** Move `current_timestamp()`, `unix_to_rfc3339()`, and `is_leap_year()` to a shared module (e.g., `sbom/mod.rs` or a new `sbom/util.rs`). Both `cyclonedx.rs` and `spdx.rs` should call the shared implementation.
 
 ---
 
 ### Medium (recommended fix)
 
-#### M1: Timestamp format is non-standard -- seconds since epoch, not ISO 8601
+#### M1: Version string fallback comparison is semantically incorrect and can cause false negatives
 
-**File:** `crates/sbom-scanner/src/sbom/cyclonedx.rs`, lines 109-115 and `spdx.rs`, lines 133-139
+**File:** `crates/sbom-scanner/src/vuln/version.rs`, lines 89-103
 
-**Problem:** The `current_timestamp()` function returns `"{epoch_seconds}Z"` (e.g., `"1707500000Z"`), which is not valid ISO 8601 format. CycloneDX 1.5 spec requires ISO 8601 timestamps like `"2024-02-10T12:00:00Z"`. SPDX 2.3 similarly requires `"YYYY-MM-DDThh:mm:ssZ"` format. This makes the generated SBOM documents non-compliant with their respective specifications.
+**Problem:** When SemVer parsing fails for the package version, the code falls back to lexicographic string comparison. This produces incorrect results for many real-world version strings:
+
+- `"v1.0.3"` vs range `["1.0.0", "1.0.5")`: Not matched because `'v' > '1'` lexicographically. This is a **false negative** -- a vulnerable package would not be flagged.
+- `"10.0.0"` vs `"2.0.0"`: `"10.0.0" < "2.0.0"` in string comparison because `'1' < '2'`.
+
+The test at line 343-344 explicitly documents and asserts this incorrect behavior, which means it was a conscious design decision. However, in a security-critical vulnerability scanner, false negatives are dangerous because they silently miss known vulnerabilities.
 
 ```rust
-fn current_timestamp() -> String {
-    let now = std::time::SystemTime::now();
-    match now.duration_since(std::time::UNIX_EPOCH) {
-        Ok(d) => format!("{}Z", d.as_secs()),
-        Err(_) => "unknown".to_owned(),
+fn is_in_range_string(version: &str, range: &VersionRange) -> bool {
+    if let Some(ref introduced) = range.introduced
+        && version < introduced.as_str() {   // lexicographic comparison
+        return false;
     }
-}
 ```
 
-**Suggested fix:** Use the `time` or `chrono` crate (or manual formatting) to produce proper ISO 8601 timestamps. Alternatively, compute year/month/day/hour/min/sec from the epoch seconds using a simple conversion.
+**Suggested fix:** Before falling back to string comparison, try stripping a leading `v`/`V` prefix and re-parsing as SemVer. For truly non-SemVer strings, log a warning and return `false` (conservative: do not match) instead of using unreliable string comparison. Add a separate function `try_normalize_version()` that handles common non-standard prefixes.
 
 ---
 
-#### M2: SPDX SPDXID uses numeric index instead of stable package identifier
+#### M2: SPDX SPDXID uses numeric index -- non-deterministic across runs
 
-**File:** `crates/sbom-scanner/src/sbom/spdx.rs`, lines 69-71
+**File:** `crates/sbom-scanner/src/sbom/spdx.rs`, line 71
 
-**Problem:** The SPDX package identifier is generated as `SPDXRef-Package-{idx}` using the iteration index. This means the same package will get different IDs depending on its position in the packages Vec. The SPDX spec recommends stable, deterministic identifiers. Using the package name would be more meaningful: `SPDXRef-Package-{name}-{version}`.
+**Problem:** The SPDX package identifier is `SPDXRef-Package-{idx}` using the iteration index. Since `PackageGraph.packages` is a `Vec<Package>` and the NPM parser iterates over a `HashMap` (whose iteration order is non-deterministic), the same set of packages can produce different SPDX IDs across runs. This breaks reproducible builds and makes SBOM diffing unreliable.
 
 ```rust
 let spdx_id = format!("SPDXRef-Package-{}", idx);
 ```
 
-**Suggested fix:** Use `format!("SPDXRef-Package-{}-{}", pkg.name, pkg.version)` with non-alphanumeric characters replaced (SPDX IDs only allow `[a-zA-Z0-9.-]`).
+**Suggested fix:** Use `format!("SPDXRef-Package-{}", sanitize_spdx_id(&pkg.name, &pkg.version))` where `sanitize_spdx_id` replaces non-alphanumeric characters with hyphens (SPDX IDs only allow `[a-zA-Z0-9.-]`). This produces stable, meaningful identifiers.
 
 ---
 
-#### M3: CycloneDX checksum always labeled SHA-256 regardless of actual algorithm
+#### M3: CycloneDX checksum hardcodes SHA-256 regardless of actual algorithm
 
-**File:** `crates/sbom-scanner/src/sbom/cyclonedx.rs`, lines 63-66
+**File:** `crates/sbom-scanner/src/sbom/cyclonedx.rs`, lines 63-67
 
-**Problem:** The checksum from Cargo.lock is always labeled as `SHA-256`, and from NPM's `integrity` field it is also labeled `SHA-256`. However, NPM's integrity field uses base64-encoded SRI hashes prefixed with the algorithm (e.g., `sha512-...`). Mislabeling the algorithm produces incorrect SBOM metadata.
+**Problem:** NPM's `integrity` field uses SRI hashes (e.g., `sha512-PlhdFcill...`), but the CycloneDX output always labels them as `SHA-256`. This produces factually incorrect SBOM metadata. Similarly, the SPDX output labels checksums as `SHA256` regardless.
 
 ```rust
 vec![CycloneDxHash {
-    alg: "SHA-256".to_owned(),
+    alg: "SHA-256".to_owned(),    // hardcoded, wrong for NPM
     content: c.clone(),
 }]
 ```
 
-**Suggested fix:** Parse the checksum/integrity value to detect the algorithm prefix (e.g., `sha512-` for NPM) and map it accordingly. For Cargo.lock, SHA-256 is correct.
+**Suggested fix:** Add a field to `Package` indicating the checksum algorithm, or parse the checksum value to detect the algorithm prefix. For Cargo.lock, SHA-256 is correct. For NPM integrity values, parse the `shaXXX-` prefix.
 
 ---
 
-#### M4: String comparison fallback in version matching is semantically incorrect
-
-**File:** `crates/sbom-scanner/src/vuln/version.rs`, lines 67-81
-
-**Problem:** When SemVer parsing fails, the code falls back to lexicographic string comparison. This produces incorrect results for many real-world version strings. For example, `"v1.0.3"` would not match a range of `["1.0.0", "1.0.5")` because `'v' > '1'` lexicographically. Similarly, `"10.0.0"` would compare as less than `"2.0.0"` in string comparison because `'1' < '2'`. The test at line 321 even documents this incorrect behavior.
-
-```rust
-fn is_in_range_string(version: &str, range: &VersionRange) -> bool {
-    if let Some(ref introduced) = range.introduced
-        && version < introduced.as_str() { ... }
-```
-
-**Suggested fix:** Before falling back to string comparison, try stripping a leading `v`/`V` prefix and re-parsing as SemVer. For truly non-SemVer strings, consider skipping the match with a warning log instead of using unreliable string comparison.
-
----
-
-#### M5: NPM parser does not validate or limit HashMap size from untrusted JSON
+#### M4: NPM parser does not limit HashMap size from untrusted JSON input
 
 **File:** `crates/sbom-scanner/src/parser/npm.rs`, lines 41, 56
 
-**Problem:** The `NpmLockFile.packages` field is a `HashMap<String, NpmPackageEntry>`, and `NpmPackageEntry.dependencies` is `Option<HashMap<String, String>>`. These are deserialized directly from untrusted JSON input without any size limit on the number of keys. A crafted `package-lock.json` with millions of entries could cause excessive memory allocation. While `max_file_size` limits the file size, JSON is compact and can represent many keys within that limit.
+**Problem:** The `NpmLockFile.packages` HashMap and `NpmPackageEntry.dependencies` HashMap are deserialized from untrusted JSON without size limits. A crafted `package-lock.json` within the 10MB `max_file_size` limit could contain millions of tiny entries (e.g., `"a":{"version":"1"},...`), causing excessive memory allocation during HashMap construction. The `max_packages` check in `scanner.rs:456` happens after parsing is already complete.
 
-**Suggested fix:** After deserialization, check `lock_file.packages.len()` against a reasonable limit before processing. This complements the existing `max_packages` check in `scanner.rs`.
+**Suggested fix:** After deserialization, immediately check `lock_file.packages.len()` against a limit (e.g., `max_packages`) before iterating. If it exceeds the limit, return a `LockfileParse` error instead of proceeding.
 
 ---
 
-#### M6: `semver` crate not managed through workspace.dependencies
+#### M5: `semver` crate not managed through workspace.dependencies
 
 **File:** `crates/sbom-scanner/Cargo.toml`, line 18
 
-**Problem:** All other dependencies use `workspace = true` from the workspace `Cargo.toml`, but `semver` is directly specified as `semver = "1"`. This violates the project convention of version centralization via `workspace.dependencies`.
+**Problem:** All other dependencies use `workspace = true`, but `semver` is directly specified as `semver = "1"`. This violates the project convention of version centralization via `workspace.dependencies`.
 
 ```toml
 semver = "1"
 ```
 
-**Suggested fix:** Add `semver = "1"` to the workspace `[workspace.dependencies]` in the root `Cargo.toml` and change this to `semver = { workspace = true }`.
+**Suggested fix:** Add `semver = "1"` to `[workspace.dependencies]` in the root `Cargo.toml` and change this to `semver = { workspace = true }`.
 
 ---
 
-#### M7: discover_lockfiles only scans 1 level deep -- not documented in config
+#### M6: `discover_lockfiles` does not limit the number of lockfiles processed
 
-**File:** `crates/sbom-scanner/src/scanner.rs`, lines 601-602
+**File:** `crates/sbom-scanner/src/scanner.rs`, lines 560-663
 
-**Problem:** The comment says "no recursion, 1 level only" but this is not documented in the `scan_dirs` config field. Users may expect recursive directory scanning when configuring `scan_dirs: ["/opt/projects"]`. The design doc mentions "lockfile detection" but does not explicitly state the single-level limitation.
+**Problem:** The `discover_lockfiles` function reads all matching lockfiles in a directory without any count limit. If a scan directory contains thousands of lockfiles (e.g., a CI artifact directory), all of them will be read into memory simultaneously via the `results` Vec. There is no upper bound on the number of `(String, String)` tuples accumulated.
 
-```rust
-// 재귀 없이 1단계만 탐색 (깊은 탐색은 향후 확장)
-let entries = std::fs::read_dir(dir).map_err(|e| SbomScannerError::Io { ... })?;
-```
-
-**Suggested fix:** Add clear documentation to the `scan_dirs` config field noting that only the immediate directory is scanned (not recursive). Consider adding a `recursive: bool` config option for future flexibility.
+**Suggested fix:** Add a `max_lockfiles_per_dir` constant (e.g., 100) and stop discovery after reaching it, logging a warning.
 
 ---
 
-#### M8: SPDX document name includes raw source_file which may contain special characters
+#### M7: `discover_lockfiles` only scans 1 level deep -- undocumented limitation
 
-**File:** `crates/sbom-scanner/src/sbom/spdx.rs`, line 111
+**File:** `crates/sbom-scanner/src/scanner.rs`, line 568-569 and `config.rs` line 39-40
 
-**Problem:** The SPDX document name is constructed as `format!("ironpost-scan-{}", graph.source_file)`. If `source_file` contains characters like `/`, spaces, or other special characters from the file path, the document name will be malformed.
+**Problem:** The function only scans the immediate directory (1 level), but the `scan_dirs` config field documentation does not mention this limitation. Users configuring `scan_dirs: ["/opt/projects"]` would expect recursive scanning. The comment in the source says "1 level only (deep scanning for future extension)" but this is not reflected in the public API documentation.
+
+**Suggested fix:** Add `/// Note: Only the immediate directory is scanned (not recursive).` to the `scan_dirs` field documentation in `SbomScannerConfig`.
+
+---
+
+#### M8: SPDX document name includes raw file path -- potential information disclosure
+
+**File:** `crates/sbom-scanner/src/sbom/spdx.rs`, line 108
+
+**Problem:** The SPDX document name is `format!("ironpost-scan-{}", graph.source_file)`. The `source_file` contains the full filesystem path (e.g., `/home/user/project/Cargo.lock`), which leaks internal directory structure in the generated SBOM document. If the SBOM is shared externally, this reveals server paths.
 
 ```rust
 name: format!("ironpost-scan-{}", graph.source_file),
 ```
 
-**Suggested fix:** Sanitize the `source_file` value by extracting only the filename (not the full path) and replacing any non-alphanumeric characters with hyphens.
+**Suggested fix:** Extract only the filename component using `Path::file_name()` or use a hash of the path.
+
+---
+
+#### M9: Path traversal check uses simple string contains("..") -- bypassable
+
+**File:** `crates/sbom-scanner/src/config.rs`, lines 168, 192
+
+**Problem:** The path traversal validation uses `scan_dir.contains("..")` which checks for the literal substring `..` anywhere in the path. While this catches obvious cases like `../../etc/passwd`, it:
+1. Produces false positives for legitimate directory names containing `..` (e.g., `/opt/my..project/`)
+2. Does not normalize paths before checking (e.g., `/opt/project/./../../etc` after normalization)
+
+A more robust check would use `Path::components()` to look for `Component::ParentDir`.
+
+```rust
+if scan_dir.contains("..") {
+    return Err(SbomScannerError::Config { ... });
+}
+```
+
+**Suggested fix:** Use `std::path::Path::new(scan_dir).components().any(|c| c == std::path::Component::ParentDir)` for reliable detection. This correctly handles all path component variations.
 
 ---
 
 ### Low (optional improvements)
 
-#### L1: `current_timestamp()` function duplicated in cyclonedx.rs and spdx.rs
-
-**File:** `crates/sbom-scanner/src/sbom/cyclonedx.rs`, lines 109-115 and `spdx.rs`, lines 133-139
-
-**Problem:** The identical `current_timestamp()` function is defined in both modules. DRY principle violation.
-
-**Suggested fix:** Move to a shared utility function in `sbom/mod.rs` or a `util.rs` module.
-
----
-
-#### L2: Error conversion uses `err.to_string()` + `msg.clone()` redundantly
+#### L1: Error conversion uses `match &err` causing unnecessary String clones -- FIXED
 
 **File:** `crates/sbom-scanner/src/error.rs`, lines 99-130
 
-**Problem:** The `From<SbomScannerError> for IronpostError` implementation alternates between `err.to_string()` (for struct variants) and `msg.clone()` (for tuple variants). Since the method takes ownership via `match &err`, it borrows while it could consume. Using `match err` (by value) would avoid unnecessary string cloning.
+**Problem:** The `From<SbomScannerError> for IronpostError` implementation matches on `&err` (borrowed), then calls `msg.clone()` on tuple variant inner strings and `err.to_string()` on struct variants. Since the method takes `err` by value, matching by value would allow moving the inner strings instead of cloning them.
 
-**Suggested fix:** Match by value instead of reference to avoid cloning inner strings. Use `err.to_string()` consistently, or destructure and move the inner values.
+**Suggested fix:** Change `match &err` to `match err` and destructure the variants to move inner strings directly.
+
+**Resolution:** Changed `match &err` to `match err`, destructuring all variants to move inner strings directly. Tuple variants (`SbomGeneration`, `VulnDbParse`, `Channel`) now move the string instead of cloning. Struct variants format the message inline to match `thiserror` Display output.
 
 ---
 
-#### L3: `PackageGraph::find_package` is O(n) linear search
+#### L2: `PackageGraph::find_package` is O(n) linear search -- FIXED
 
 **File:** `crates/sbom-scanner/src/types.rs`, lines 114-116
 
-**Problem:** `find_package` iterates through all packages. With large package graphs (50K packages), this could be slow if called frequently. Currently only used in tests, so this is low severity.
+**Problem:** `find_package` iterates through all packages. With large package graphs (50K packages), this is slow. Currently only used in tests, so this is low priority.
 
-**Suggested fix:** If performance becomes a concern, consider adding a `HashMap<String, usize>` index from package name to position.
+**Suggested fix:** Consider a HashMap index if `find_package` is ever used in production hot paths.
 
----
-
-#### L4: NpmLockFile struct fields prefixed with underscore are deserialized but unused
-
-**File:** `crates/sbom-scanner/src/parser/npm.rs`, lines 37-39, 52
-
-**Problem:** `_name`, `_lockfile_version`, and `_resolved` are deserialized from JSON but never used. This wastes deserialization effort and memory. While the underscore prefix prevents dead code warnings, the data is still parsed.
-
-**Suggested fix:** Use `#[serde(skip)]` or remove these fields entirely. If the fields might be used in the future, keep them but add a comment explaining the intent.
+**Resolution:** Added doc comment documenting O(n) complexity and recommendation to add HashMap index if ever used in production hot paths.
 
 ---
 
-#### L5: Package name/version lengths not validated in parsers
+#### L3: NpmLockFile unused deserialized fields waste memory -- FIXED
 
-**File:** `crates/sbom-scanner/src/parser/cargo.rs`, lines 78-106 and `npm.rs`, lines 85-121
+**File:** `crates/sbom-scanner/src/parser/npm.rs`, lines 37-39, 52-53
 
-**Problem:** Package names and versions are accepted at any length. While the tests show handling of 1000-2000 character names, there is no upper bound enforced. Extremely long strings (>64KB) from crafted lockfiles could waste memory during PURL generation and SBOM serialization (multiple copies of the string).
+**Problem:** `_name`, `_lockfile_version`, and `_resolved` are deserialized from JSON but never used. The underscore prefix suppresses warnings, but the data is still parsed and allocated.
 
-**Suggested fix:** Add a constant like `MAX_PACKAGE_NAME_LEN = 256` and `MAX_VERSION_LEN = 128`, and skip packages that exceed these limits with a warning log.
+**Suggested fix:** Remove these fields or use `#[serde(skip)]`.
+
+**Resolution:** Removed `_name`, `_lockfile_version` from `NpmLockFile` and `_resolved` from `NpmPackageEntry`. Added doc comments explaining the intent (serde_json ignores unknown fields by default).
 
 ---
 
-#### L6: Cargo.lock dependency parsing uses `unwrap_or` pattern that is always safe but unclear
+#### L4: Package name/version lengths not validated in parsers -- FIXED
 
-**File:** `crates/sbom-scanner/src/parser/cargo.rs`, lines 86-90
+**File:** `crates/sbom-scanner/src/parser/cargo.rs`, lines 73-95 and `npm.rs`, lines 80-115
 
-**Problem:** The dependency name extraction uses `.split_whitespace().next().unwrap_or(d)`. While this is technically safe (split on a non-empty string always yields at least one element, and `unwrap_or(d)` handles the case), the control flow is not immediately obvious. The test at line 340 covers this case.
+**Problem:** Package names and versions from lockfiles are accepted at any length. Tests demonstrate handling of 1000-2000 character names, but there is no enforced upper bound. While `max_file_size` limits total input, crafted lockfiles could have very long individual field values that are cloned multiple times during PURL generation and SBOM serialization.
+
+**Suggested fix:** Add length limits (e.g., 512 for names, 256 for versions) and skip packages exceeding them.
+
+**Resolution:** Added `MAX_PACKAGE_NAME_LEN = 512` and `MAX_PACKAGE_VERSION_LEN = 256` constants to both parsers. Packages exceeding limits are skipped with `tracing::warn!`. Updated tests to verify skipping behavior and boundary cases (at-limit values accepted).
+
+---
+
+#### L5: VulnDb does not implement Clone -- FIXED
+
+**File:** `crates/sbom-scanner/src/vuln/db.rs`, line 96
+
+**Problem:** `VulnDb` does not derive `Clone`. It is always used behind `Arc<VulnDb>`, but lacking `Clone` limits flexibility for testing and alternative patterns.
+
+**Suggested fix:** Add `#[derive(Clone)]` or document the intent of always using `Arc`.
+
+**Resolution:** Added `#[derive(Clone)]` to `VulnDb` and documented the `Arc<VulnDb>` sharing pattern recommendation in the struct doc comment.
+
+---
+
+#### L6: Redundant `_clone` suffix in periodic task variable names -- FIXED
+
+**File:** `crates/sbom-scanner/src/scanner.rs`, lines 244-253
+
+**Problem:** Variables like `scan_dir_clone`, `parsers_clone`, `generator_clone`, `matcher_clone` use the `_clone` suffix which is noise. The `let` binding in the inner scope already makes it clear these are copies for the closure.
 
 ```rust
-d.split_whitespace()
-    .next()
-    .unwrap_or(d)
-    .to_owned()
+let scan_dir_clone = scan_dir.clone();
+let parsers_clone: Vec<Box<dyn LockfileParser>> = vec![...];
+let generator_clone = generator;
+let matcher_clone = matcher_opt.clone();
 ```
 
-**Suggested fix:** Minor -- consider using a match or if-let for clarity. This is functionally correct.
+**Suggested fix:** Use clearer names like `dir`, `parsers`, `gen`, `matcher` in the inner scope.
+
+**Resolution:** Renamed to `dir`, `parsers`, `sbom_gen` (not `gen` -- reserved keyword in Rust 2024), `matcher`, `tx`, `completed`, `found`.
 
 ---
 
-#### L7: `VulnDb` does not implement `Clone` -- limits flexibility
+#### L7: `ScanEvent::with_trace` accepts `impl Into<String>` but `EventMetadata::new` may expect specific types -- FIXED
 
-**File:** `crates/sbom-scanner/src/vuln/db.rs`, lines 71-74
+**File:** `crates/sbom-scanner/src/event.rs`, line 60
 
-**Problem:** `VulnDb` struct does not derive `Clone`. It is used exclusively behind `Arc<VulnDb>`, so this is not blocking, but it prevents direct cloning when needed for testing or alternative architectures.
+**Problem:** Minor API inconsistency. `with_trace` uses `impl Into<String>` for `trace_id`, which is ergonomic, but the corresponding `new` method in `ScanEvent` (line 51) does not take a trace_id parameter. This asymmetry is minor but could confuse callers about which constructor to use.
 
-**Suggested fix:** Consider adding `#[derive(Clone)]` if `VulnDbEntry` already derives `Clone` (it does).
+**Suggested fix:** Add doc comments explaining when to use `new()` (starts new trace) vs `with_trace()` (continues existing trace).
+
+**Resolution:** Added doc comments to both `new()` and `with_trace()` explaining their use cases: `new()` for starting new work flows (scan_once, periodic scans), `with_trace()` for continuing existing traces from other modules (API requests, external triggers).
+
+---
+
+#### L8: `tempfile` dev-dependency not managed through workspace -- FIXED (with M5)
+
+**File:** `crates/sbom-scanner/Cargo.toml`, line 22
+
+**Problem:** Similar to M5, `tempfile = "3"` is directly specified instead of using workspace dependencies. This is a dev-dependency so it is lower priority, but it still violates the workspace convention.
+
+**Suggested fix:** Add `tempfile = "3"` to `[workspace.dependencies]` if not already present.
+
+**Resolution:** Previously fixed together with M5.
+
+---
+
+## Verification of Previous Fix Quality
+
+### C1 Fix (VulnDb file size limit): VERIFIED
+- `MAX_VULN_DB_FILE_SIZE = 50 * 1024 * 1024` (50MB) at `db.rs:38`
+- `MAX_VULN_DB_ENTRIES = 1_000_000` at `db.rs:41`
+- File size check via `metadata.len()` at `db.rs:274`
+- Entry count check at `db.rs:303`
+- Truncation with warning at `db.rs:309-311`
+- Field-level validation (CVE ID, package name, description, version lengths) at `db.rs:152-227`
+
+### C2 Fix (HashMap indexing): VERIFIED
+- `index: HashMap<(String, Ecosystem), Vec<usize>>` at `db.rs:100`
+- `build_index()` at `db.rs:113-122`
+- `lookup()` uses `self.index.get(&key)` at `db.rs:341`
+- All constructors (`empty`, `from_entries`, `from_json`, `load_from_dir`) build index
+
+### C3 Fix (TOCTOU removal): VERIFIED
+- `scanner.rs:start()` directly calls `VulnDb::load_from_dir()` with error handling (lines 188-214)
+- `discover_lockfiles()` directly calls `read_dir()` with `NotFound` handling (lines 569-581)
+- `db.rs:load_from_dir()` directly calls `metadata()` with `NotFound` handling (lines 259-271)
+- Symlink checking via `symlink_metadata()` at `scanner.rs:609`
+- Canonical path containment check at `scanner.rs:627-637`
+
+### H1 Fix (scan_directory shared function): VERIFIED
+- `ScanContext` struct at `scanner.rs:412-421`
+- `scan_directory()` function at `scanner.rs:426-555`
+- Used by both `scan_once()` (line 146) and periodic task (line 267)
+
+### H3 Fix (stop/restart rejection): VERIFIED
+- Explicit `Stopped` state check at `scanner.rs:175-181`
+- Clear error message returned
+
+### H4 Fix (path traversal validation): VERIFIED
+- `contains("..")` check at `config.rs:168` (scan_dirs) and `config.rs:192` (vuln_db_path)
+- Empty path check at `config.rs:162`
+- Path length limit (4096) at `config.rs:179-180`
+- Symlink skip in `discover_lockfiles` at `scanner.rs:618-624`
+- Canonical path containment check at `scanner.rs:627-637`
 
 ---
 
 ## Positive Observations
 
-1. **No `as` casting in production code.** The entire crate correctly uses `TryFrom`/`try_from` (e.g., `u64::try_from(finding_count).unwrap_or(u64::MAX)` at `scanner.rs:236`) instead of forbidden `as` casts. This fully complies with CLAUDE.md conventions.
+1. **No `as` casting in production code.** Correctly uses `TryFrom`/`try_from` (e.g., `u64::try_from(finding_count).unwrap_or(u64::MAX)` at `scanner.rs:541`, `usize::try_from(metadata.len()).unwrap_or(usize::MAX)` at `scanner.rs:640`).
 
-2. **No `unsafe` code anywhere.** The crate has zero `unsafe` blocks, which is ideal for a file-parsing and data-processing module.
+2. **No `unsafe` code anywhere.** Zero unsafe blocks across all 16 source files.
 
-3. **No `println!`/`eprintln!` usage.** All logging consistently uses `tracing` macros (`info!`, `warn!`, `debug!`).
+3. **No `println!`/`eprintln!` usage.** All logging uses `tracing` macros (`info!`, `warn!`, `debug!`).
 
-4. **No `std::sync::Mutex` usage.** Shared counters use `AtomicU64` appropriately, avoiding async mutex overhead for simple counters.
+4. **No `std::sync::Mutex` usage.** Shared counters use `AtomicU64` with appropriate `Ordering::Relaxed`.
 
-5. **Proper `thiserror` error definitions.** `SbomScannerError` has well-structured variants with meaningful context fields, and the `From<SbomScannerError> for IronpostError` conversion is complete.
+5. **No `panic!()`/`todo!()`/`unimplemented!()` in production code.** These only appear in `#[cfg(test)]` blocks.
 
-6. **File size limits enforced.** The `max_file_size` config is properly checked in `discover_lockfiles` before reading file content, preventing OOM from oversized lockfiles.
+6. **Proper `thiserror` error definitions.** `SbomScannerError` has 9 well-structured variants with context fields.
 
-7. **Graceful per-file error recovery.** Both `scan_once()` and the periodic task handle individual file parse failures with `warn!` + `continue`, never aborting the entire scan due to one bad file.
+7. **File size limits enforced.** Both lockfile size (`max_file_size` config) and VulnDb file size (`MAX_VULN_DB_FILE_SIZE`) are checked before reading content.
 
-8. **Bounded alert channel.** The `SbomScannerBuilder` uses `mpsc::channel(capacity)` (bounded), not `unbounded_channel`, with `try_send` to handle backpressure gracefully.
+8. **Graceful per-file error recovery.** Individual lockfile parse failures are logged and skipped, never aborting the full scan.
 
-9. **Blocking I/O properly wrapped.** All filesystem operations (`discover_lockfiles`, `VulnDb::load_from_dir`) are called inside `tokio::task::spawn_blocking`, preventing async runtime starvation.
+9. **Bounded alert channel.** Uses `mpsc::channel(capacity)` with `try_send` for backpressure.
 
-10. **Comprehensive test coverage.** 183 tests covering unit, integration, and edge cases. The test suite includes malformed input, unicode, long strings, empty inputs, severity filtering, and lifecycle management.
+10. **Blocking I/O properly wrapped.** All filesystem operations run inside `tokio::task::spawn_blocking`.
 
-11. **Clean architecture.** The crate follows the module-only-depends-on-core rule. No peer dependencies on `ebpf-engine`, `log-pipeline`, or `container-guard`.
+11. **Clean architecture.** No peer-to-peer module dependencies; only depends on `ironpost-core`.
 
-12. **Good trait design.** `LockfileParser` trait enables clean extensibility for new lockfile formats. `SbomGenerator` delegates to format-specific modules via clean match dispatch.
+12. **Good trait design.** `LockfileParser` trait enables extensibility. `SbomGenerator` cleanly delegates to format modules.
 
-13. **Config validation is thorough.** Both bounds checking (min/max) and contextual validation (empty scan_dirs when enabled) are properly implemented.
+13. **Comprehensive test coverage.** 183 tests including malformed input, unicode, long strings, empty inputs, severity filtering, lifecycle management, and full E2E pipeline tests.
 
-14. **CycloneDX and SPDX outputs are valid JSON.** Tests verify JSON structure and required fields.
+14. **TOCTOU mitigations applied.** Direct open-and-handle-error pattern used consistently throughout. Symlink detection and canonical path containment checks add defense in depth.
 
-15. **Metrics use AtomicU64 with Relaxed ordering** -- appropriate for monotonically increasing counters that don't need cross-thread synchronization guarantees.
+15. **VulnDb entry validation.** Individual entry fields (CVE ID, package name, description, version strings) are length-checked after parsing, preventing memory abuse from crafted DB files.
+
+16. **Deterministic SBOM timestamps.** The custom `unix_to_rfc3339()` implementation produces proper ISO 8601 format without external datetime dependencies. The leap year calculation appears correct.
+
+17. **Config validation is thorough.** Bounds checking, contextual validation, and path security checks are all present.
 
 ---
 
@@ -377,33 +462,43 @@ d.split_whitespace()
 
 | Severity | Count | Must Fix |
 |----------|-------|----------|
-| Critical | 3 | Yes |
-| High | 5 | Strongly recommended |
-| Medium | 8 | Recommended |
-| Low | 7 | Optional |
-| **Total** | **23** | |
+| Critical | 1 | Yes (performance in hot path) |
+| High | 3 | Strongly recommended |
+| Medium | 9 | Recommended |
+| Low | 8 | Optional |
+| **Total** | **21** | |
 
-### Critical fixes required before production:
-- ✅ **C1**: Add file size limit for VulnDb JSON files
-- ✅ **C2**: Index VulnDb with HashMap for O(1) lookups instead of O(n)
-- ✅ **C3**: Remove TOCTOU `exists()` checks; use direct open + error handling
+### Critical:
+- **NEW-C1**: VulnDb lookup allocates String on every call in hot path
 
-### High priority recommendations:
-- ✅ **H1**: Extract shared scan logic to eliminate ~130 lines of duplication
-- ⚠️ **H2**: Use CancellationToken for graceful periodic task shutdown (deferred to Phase 6)
-- ✅ **H3**: Explicitly reject start() from Stopped state
-- ✅ **H4**: Validate scan_dirs paths for traversal and symlink attacks
-- ✅ **H5**: Cap total VulnDb entry count after loading
+### High priority:
+- **NEW-H1**: Periodic task runs indefinitely after scanner drop (no cancellation)
+- **NEW-H2**: Metadata-to-read TOCTOU gap in discover_lockfiles
+- **NEW-H3**: 55 lines of date calculation code duplicated across CycloneDX and SPDX
+
+### Medium priority:
+- **M1**: String comparison fallback causes false negatives in version matching
+- **M2**: SPDX IDs are non-deterministic (index-based)
+- **M3**: Checksum algorithm hardcoded as SHA-256 (wrong for NPM)
+- **M4**: NPM parser HashMap size unbounded from untrusted input
+- **M5**: `semver` crate not in workspace.dependencies
+- **M6**: No limit on lockfiles discovered per directory
+- **M7**: 1-level scan depth undocumented in config API
+- **M8**: SPDX document name leaks filesystem paths
+- **M9**: Path traversal check uses naive string contains("..") -- bypassable
+
+### Previously resolved (verified):
+- C1, C2, C3, H1, H3, H4, H5 from initial review -- all correctly implemented
 
 ---
 
-## Fix Summary (2026-02-10)
+## Production Readiness Assessment
 
-**Fixed:** Critical 3/3, High 4/5 (1 deferred to Phase 6)
-**Commit:** 14ac3f7
-**Tests:** 183 passing (165 unit + 10 CVE + 6 integration + 2 doc)
-**Clippy:** Clean (no warnings)
+**Overall:** The crate is well-structured, follows project conventions, and has good test coverage. The previous Critical fixes (file size limits, HashMap indexing, TOCTOU removal) have been properly implemented. The remaining findings are primarily:
 
-**Deferred to Phase 6:**
-- H2: Graceful shutdown with CancellationToken (functional correctness not affected)
-- Medium 8 issues, Low 7 issues (polishing items)
+1. **Performance** (NEW-C1): Hot-path allocation in VulnDb lookup
+2. **Robustness** (NEW-H1, NEW-H2): Resource cleanup and TOCTOU mitigation
+3. **Compliance** (M1-M3, M8): SBOM spec conformance and version matching accuracy
+4. **Defense in depth** (M4, M6, M9): Input validation improvements
+
+**Recommendation:** Fix NEW-C1 and NEW-H1 before production deployment. The remaining items can be addressed in Phase 6 polishing.

@@ -63,8 +63,6 @@ pub struct SbomScanner {
     config: SbomScannerConfig,
     /// 현재 상태
     state: ScannerState,
-    /// lockfile 파서 목록
-    parsers: Vec<Box<dyn LockfileParser>>,
     /// SBOM 생성기
     generator: SbomGenerator,
     /// 취약점 매처 (VulnDb 로드 후 설정)
@@ -110,23 +108,58 @@ impl SbomScanner {
     ///
     /// 설정된 모든 scan_dirs를 스캔하고 결과를 반환합니다.
     /// 발견된 취약점은 AlertEvent로 자동 전송됩니다.
+    ///
+    /// # 에러 처리
+    ///
+    /// 개별 디렉토리 스캔 실패는 로깅되고 다른 디렉토리 스캔은 계속됩니다.
+    /// 부분 결과를 반환하여 일부 실패가 전체 스캔을 막지 않도록 합니다.
     pub async fn scan_once(&self) -> Result<Vec<ScanResult>, SbomScannerError> {
         let mut all_results = Vec::new();
 
-        let ctx = ScanContext {
-            parsers: &self.parsers,
-            generator: &self.generator,
-            matcher: &self.matcher,
-            alert_tx: &self.alert_tx,
-            max_file_size: self.config.max_file_size,
-            max_packages: self.config.max_packages,
-            scans_completed: &self.scans_completed,
-            vulns_found: &self.vulns_found,
-        };
-
+        // 각 scan_dir마다 별도 태스크로 블로킹 I/O 수행
         for scan_dir in &self.config.scan_dirs {
-            let results = scan_directory(scan_dir, &ctx)?;
-            all_results.extend(results);
+            let scan_dir_clone = scan_dir.clone();
+            let max_file_size = self.config.max_file_size;
+            let max_packages = self.config.max_packages;
+
+            // 파서, 제너레이터, 매처를 클론하여 spawn_blocking으로 전달
+            let parsers: Vec<Box<dyn LockfileParser>> =
+                vec![Box::new(CargoLockParser), Box::new(NpmLockParser)];
+            let generator = self.generator;
+            let matcher_opt = self.matcher.clone();
+            let alert_tx = self.alert_tx.clone();
+            let scans_completed = Arc::clone(&self.scans_completed);
+            let vulns_found = Arc::clone(&self.vulns_found);
+
+            // spawn_blocking으로 동기 I/O 격리
+            let scan_result = tokio::task::spawn_blocking(move || {
+                let ctx = ScanContext {
+                    parsers: &parsers,
+                    generator: &generator,
+                    matcher: &matcher_opt,
+                    alert_tx: &alert_tx,
+                    max_file_size,
+                    max_packages,
+                    scans_completed: &scans_completed,
+                    vulns_found: &vulns_found,
+                };
+                scan_directory(&scan_dir_clone, &ctx)
+            })
+            .await;
+
+            match scan_result {
+                Ok(Ok(results)) => {
+                    all_results.extend(results);
+                }
+                Ok(Err(e)) => {
+                    // 개별 디렉토리 스캔 실패는 로깅만 하고 다음 디렉토리 진행
+                    warn!(dir = %scan_dir, error = %e, "scan failed for directory, continuing with others");
+                }
+                Err(e) => {
+                    // spawn_blocking 실패 (매우 드문 경우)
+                    warn!(dir = %scan_dir, error = %e, "spawn_blocking failed, continuing with others");
+                }
+            }
         }
 
         Ok(all_results)
@@ -140,9 +173,11 @@ impl Pipeline for SbomScanner {
         }
 
         if self.state == ScannerState::Stopped {
-            return Err(IronpostError::Sbom(ironpost_core::error::SbomError::ScanFailed(
-                "cannot restart stopped scanner, create a new instance".to_owned(),
-            )));
+            return Err(IronpostError::Sbom(
+                ironpost_core::error::SbomError::ScanFailed(
+                    "cannot restart stopped scanner, create a new instance".to_owned(),
+                ),
+            ));
         }
 
         info!("starting sbom scanner");
@@ -170,10 +205,7 @@ impl Pipeline for SbomScanner {
                 } else {
                     warn!("vulnerability database is empty, running in SBOM-only mode");
                 }
-                self.matcher = Some(VulnMatcher::new(
-                    Arc::new(db),
-                    self.config.min_severity,
-                ));
+                self.matcher = Some(VulnMatcher::new(Arc::new(db), self.config.min_severity));
             }
             Err(e) => {
                 // 디렉토리 미존재 등의 에러는 경고만 출력하고 계속 진행 (SBOM 전용 모드)
@@ -190,10 +222,6 @@ impl Pipeline for SbomScanner {
             let output_format = self.config.output_format;
 
             // 공유 컴포넌트
-            let parsers: Vec<Box<dyn LockfileParser>> = vec![
-                Box::new(CargoLockParser),
-                Box::new(NpmLockParser),
-            ];
             let generator = SbomGenerator::new(output_format);
             let matcher_opt = self.matcher.clone();
             let alert_tx = self.alert_tx.clone();
@@ -201,37 +229,58 @@ impl Pipeline for SbomScanner {
             let vulns_found = Arc::clone(&self.vulns_found);
 
             let task = tokio::spawn(async move {
-                let mut interval = tokio::time::interval(
-                    tokio::time::Duration::from_secs(interval_secs)
-                );
+                let mut interval =
+                    tokio::time::interval(tokio::time::Duration::from_secs(interval_secs));
 
                 info!(interval_secs, "periodic scan task started");
 
                 loop {
                     interval.tick().await;
 
+                    // Scanner가 드롭되어 alert receiver가 닫힌 경우 태스크 종료
+                    if alert_tx.is_closed() {
+                        info!("alert receiver closed, stopping periodic scan task");
+                        break;
+                    }
+
                     info!("starting periodic scan");
 
-                    let ctx = ScanContext {
-                        parsers: &parsers,
-                        generator: &generator,
-                        matcher: &matcher_opt,
-                        alert_tx: &alert_tx,
-                        max_file_size,
-                        max_packages,
-                        scans_completed: &scans_completed,
-                        vulns_found: &vulns_found,
-                    };
-
-                    // 각 스캔 디렉토리 순회 (공유 scan_directory 함수 사용)
+                    // 각 스캔 디렉토리 순회
                     for scan_dir in &scan_dirs {
-                        // scan_directory는 동기 함수이므로 직접 호출
-                        match scan_directory(scan_dir, &ctx) {
-                            Ok(_) => {
+                        let dir = scan_dir.clone();
+                        let parsers: Vec<Box<dyn LockfileParser>> =
+                            vec![Box::new(CargoLockParser), Box::new(NpmLockParser)];
+                        let sbom_gen = generator;
+                        let matcher = matcher_opt.clone();
+                        let tx = alert_tx.clone();
+                        let completed = Arc::clone(&scans_completed);
+                        let found = Arc::clone(&vulns_found);
+
+                        // spawn_blocking으로 동기 I/O 격리
+                        let scan_result = tokio::task::spawn_blocking(move || {
+                            let ctx = ScanContext {
+                                parsers: &parsers,
+                                generator: &sbom_gen,
+                                matcher: &matcher,
+                                alert_tx: &tx,
+                                max_file_size,
+                                max_packages,
+                                scans_completed: &completed,
+                                vulns_found: &found,
+                            };
+                            scan_directory(&dir, &ctx)
+                        })
+                        .await;
+
+                        match scan_result {
+                            Ok(Ok(_)) => {
                                 info!(dir = %scan_dir, "periodic scan completed");
                             }
-                            Err(e) => {
+                            Ok(Err(e)) => {
                                 warn!(dir = %scan_dir, error = %e, "periodic scan failed");
+                            }
+                            Err(e) => {
+                                warn!(dir = %scan_dir, error = %e, "spawn_blocking failed");
                             }
                         }
                     }
@@ -339,18 +388,11 @@ impl SbomScannerBuilder {
             (tx, Some(rx))
         };
 
-        // 기본 파서 등록
-        let parsers: Vec<Box<dyn LockfileParser>> = vec![
-            Box::new(CargoLockParser),
-            Box::new(NpmLockParser),
-        ];
-
         let generator = SbomGenerator::new(self.config.output_format);
 
         let scanner = SbomScanner {
             config: self.config,
             state: ScannerState::Initialized,
-            parsers,
             generator,
             matcher: None, // VulnDb는 start()에서 로드
             alert_tx,
@@ -385,10 +427,7 @@ struct ScanContext<'a> {
 /// 단일 디렉토리에서 스캔을 수행합니다 (공유 로직).
 ///
 /// scan_once와 periodic 태스크 모두에서 사용됩니다.
-fn scan_directory(
-    scan_dir: &str,
-    ctx: &ScanContext,
-) -> Result<Vec<ScanResult>, SbomScannerError> {
+fn scan_directory(scan_dir: &str, ctx: &ScanContext) -> Result<Vec<ScanResult>, SbomScannerError> {
     let mut results = Vec::new();
     let dir_path = std::path::Path::new(scan_dir);
 
@@ -519,15 +558,20 @@ fn scan_directory(
     Ok(results)
 }
 
+/// lockfile 발견 최대 개수 (단일 디렉토리당)
+const MAX_LOCKFILES_PER_DIR: usize = 100;
+
 /// 디렉토리에서 lockfile을 탐색하고 내용을 읽습니다 (동기 I/O).
 ///
 /// `tokio::task::spawn_blocking` 내에서 호출되어야 합니다.
+/// 최대 MAX_LOCKFILES_PER_DIR개의 lockfile만 처리합니다.
 fn discover_lockfiles(
     dir: &std::path::Path,
     detector: &LockfileDetector,
     max_file_size: usize,
 ) -> Result<Vec<(String, String)>, SbomScannerError> {
     let mut results = Vec::new();
+    let mut lockfile_count = 0;
 
     // TOCTOU 방지: exists() 체크 없이 직접 read_dir 시도, 에러 핸들링으로 처리
     // 재귀 없이 1단계만 탐색 (깊은 탐색은 향후 확장)
@@ -542,6 +586,16 @@ fn discover_lockfiles(
                 path: dir.display().to_string(),
                 source: e,
             });
+        }
+    };
+
+    // 스캔 디렉토리의 정규화된 경로 (심볼릭 링크 해소)
+    let dir_canonical = match std::fs::canonicalize(dir) {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::warn!(dir = %dir.display(), error = %e, "failed to canonicalize scan directory");
+            // canonicalize 실패 시 원본 경로 사용 (경고만 출력)
+            dir.to_path_buf()
         }
     };
 
@@ -560,8 +614,48 @@ fn discover_lockfiles(
             continue;
         }
 
-        // 파일 크기 확인
-        let metadata = match std::fs::metadata(&path) {
+        // 심볼릭 링크 체크 (TOCTOU 완화를 위해 경로 기반으로 먼저 확인)
+        let symlink_metadata = match std::fs::symlink_metadata(&path) {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::warn!(path = %path.display(), error = %e, "failed to read symlink metadata");
+                continue;
+            }
+        };
+
+        // 심볼릭 링크는 스캔하지 않음 (탈출 방지)
+        if symlink_metadata.is_symlink() {
+            tracing::warn!(
+                path = %path.display(),
+                "skipping symbolic link to prevent directory traversal"
+            );
+            continue;
+        }
+
+        // 정규화된 경로가 스캔 디렉토리 내에 있는지 확인
+        if let Ok(canonical_path) = std::fs::canonicalize(&path)
+            && !canonical_path.starts_with(&dir_canonical)
+        {
+            tracing::warn!(
+                path = %path.display(),
+                canonical = %canonical_path.display(),
+                scan_dir = %dir_canonical.display(),
+                "file is outside scan directory, skipping"
+            );
+            continue;
+        }
+
+        // 파일을 한 번만 열고 metadata와 content를 같은 핸들에서 읽어 TOCTOU 방지
+        let mut file = match std::fs::File::open(&path) {
+            Ok(f) => f,
+            Err(e) => {
+                tracing::warn!(path = %path.display(), error = %e, "failed to open file");
+                continue;
+            }
+        };
+
+        // 파일 핸들에서 metadata 가져오기 (크기 체크용)
+        let metadata = match file.metadata() {
             Ok(m) => m,
             Err(e) => {
                 tracing::warn!(path = %path.display(), error = %e, "failed to read file metadata");
@@ -569,6 +663,7 @@ fn discover_lockfiles(
             }
         };
 
+        // 파일 크기 확인
         let file_size = usize::try_from(metadata.len()).unwrap_or(usize::MAX);
         if file_size > max_file_size {
             tracing::warn!(
@@ -580,15 +675,26 @@ fn discover_lockfiles(
             continue;
         }
 
-        let content = match std::fs::read_to_string(&path) {
-            Ok(c) => c,
-            Err(e) => {
-                tracing::warn!(path = %path.display(), error = %e, "failed to read lockfile");
-                continue;
-            }
-        };
+        // 같은 파일 핸들에서 내용 읽기 (TOCTOU 방지)
+        let mut content = String::new();
+        if let Err(e) = std::io::Read::read_to_string(&mut file, &mut content) {
+            tracing::warn!(path = %path.display(), error = %e, "failed to read lockfile");
+            continue;
+        }
 
+        lockfile_count += 1;
         results.push((path.display().to_string(), content));
+
+        // lockfile 개수 제한 확인
+        if lockfile_count >= MAX_LOCKFILES_PER_DIR {
+            tracing::warn!(
+                dir = %dir.display(),
+                count = lockfile_count,
+                max = MAX_LOCKFILES_PER_DIR,
+                "reached maximum lockfile limit per directory, stopping discovery"
+            );
+            break;
+        }
     }
 
     Ok(results)

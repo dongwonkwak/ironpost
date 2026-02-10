@@ -9,7 +9,7 @@
 | 2-ebpf | 5 | 5 | 0 | 6 | ✅ (설계+구현+리뷰+수정 완료) |
 | 3-log | 12 | 13 | 0 | 5 | ✅ (설계+구현+리뷰+수정 완료) |
 | 4-container | 17 | 17 | 0 | 0 | ✅ (설계+구현+테스트+리뷰 완료, 202 tests) |
-| 5-sbom | 24 | 26 | 0 | 2 | ✅ (Phase 5-B 구현+리뷰+수정 완료, C3+H4 fixed, 183 tests) |
+| 5-sbom | 24 | 27 | 0 | 2 | ✅ (Phase 5-B 구현+리뷰+수정+재리뷰 완료, 183 tests) |
 | 6-polish | - | - | - | - | ⏳ |
 
 ## 블로커
@@ -32,6 +32,13 @@
   - ✅ H4: scan_dirs 경로 검증 (".." 패턴 거부)
   - ✅ H5: VulnDb 엔트리 수 상한 (C1에 포함)
   - ⚠️ H2: graceful shutdown → Phase 6로 연기
+- [x] T5-D3: sbom-scanner 재리뷰 (2026-02-10) -- `.reviews/phase-5-sbom-scanner.md` (덮어씀)
+  - 이전 수정 7건 모두 검증 완료 (C1-C3, H1, H3-H5)
+  - 새로운 발견 21건: Critical 1건, High 3건, Medium 9건, Low 8건
+  - NEW-C1: VulnDb lookup 호출마다 String 할당 (핫 패스 성능)
+  - NEW-H1: 주기적 태스크 취소 메커니즘 부재
+  - NEW-H2: metadata-to-read TOCTOU 갭
+  - NEW-H3: unix_to_rfc3339 55줄 중복 (cyclonedx/spdx)
 
 ## Phase 3 설계 완료 항목
 - [x] `.knowledge/log-pipeline-design.md` -- 전체 설계 문서
@@ -169,6 +176,7 @@
 - [x] T5-A19: Core 크레이트 업데이트 (MODULE_SBOM_SCANNER, EVENT_TYPE_SCAN 상수 추가)
 
 ## 최근 완료
+- [P5] T5-D3: sbom-scanner 재리뷰 완료 (21건 발견, 이전 수정 7건 검증, 2026-02-10)
 - [P5] T5-D2: sbom-scanner 리뷰 수정 완료 (C3+H4 완료, 183 tests passing, 2026-02-10 23:15, 75분)
 - [P5] T5-D1: sbom-scanner 코드 리뷰 완료 (23건 발견, 2026-02-10)
 - [P5] T5-C1: SBOM scanner 테스트 강화 완료 (60 new tests, 183 total, 2026-02-10 15:35, 8분)
