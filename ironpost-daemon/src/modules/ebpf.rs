@@ -15,7 +15,7 @@ use tokio::sync::mpsc;
 use ironpost_core::config::IronpostConfig;
 use ironpost_core::event::PacketEvent;
 
-use ironpost_ebpf_engine::{EbpfEngine, EngineConfig};
+use ironpost_ebpf_engine::EngineConfig;
 
 use super::ModuleHandle;
 

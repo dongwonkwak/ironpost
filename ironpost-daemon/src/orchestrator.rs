@@ -119,7 +119,7 @@ impl Orchestrator {
         let packet_rx_for_pipeline = None;
 
         if let Some(handle) =
-            crate::modules::log_pipeline::init(&config, packet_rx_for_pipeline, alert_tx.clone())?
+            crate::modules::log_pipeline::init(&config, Some(packet_rx_for_pipeline), alert_tx.clone())?
         {
             modules.register(handle);
         }
