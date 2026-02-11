@@ -276,9 +276,9 @@ impl<D: DockerClient> Pipeline for ContainerGuard<D> {
             let _ = task.await;
         }
 
-        // The alert receiver was consumed by start(). Restart requires
-        // rebuilding the guard via ContainerGuardBuilder.
-        self.alert_rx = None;
+        // alert_rx가 이미 None이므로 start() 재호출 시 명시적 에러를 반환하게 됨
+        // restart를 위해서는 ContainerGuardBuilder로 새 인스턴스를 생성해야 함
+        // (alert_rx는 start()에서 이미 소비되었음)
 
         self.state = GuardState::Stopped;
         info!("container guard stopped");

@@ -28,7 +28,7 @@
 | T6-1 | ironpost-daemon 통합 구현 | architect + implementer | 4h | ✅ (2026-02-10 완료) | 없음 |
 | T6-2 | ironpost-cli 통합 구현 | implementer | 3h | ✅ (2026-02-10 완료) | T6-1 |
 | T6-3 | ironpost.toml 통합 설정 파일 | architect + implementer | 2h | ⏳ | T6-1 병행 |
-| T6-4 | 리뷰 미반영 수정 (Phase 2~5 C/H/M) | implementer | 6h | ⏳ | 없음 |
+| T6-4 | 리뷰 미반영 수정 (Phase 2~5 C/H/M) | implementer | 6h | 🔄 (2026-02-11 시작) | 없음 |
 | T6-5 | 루트 README.md 재작성 | writer | 2h | ⏳ | T6-1, T6-2 |
 | T6-6 | CHANGELOG.md 작성 | writer | 1h | ⏳ | T6-4 |
 

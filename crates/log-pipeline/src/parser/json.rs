@@ -260,26 +260,30 @@ impl JsonLogParser {
     ///
     /// 지원 형식:
     /// - RFC 3339 (ISO 8601): `2024-01-15T12:00:00Z`
-    /// - Unix timestamp (초): `1705320000`
-    /// - Unix timestamp (밀리초): `1705320000000`
+    /// - Unix timestamp (초): `1705320000` (10자리)
+    /// - Unix timestamp (밀리초): `1705320000000` (13자리)
+    /// - Unix timestamp (마이크로초): `1705320000000000` (16자리)
+    /// - Unix timestamp (나노초): `1705320000000000000` (19자리)
     fn parse_timestamp(timestamp: &str) -> Result<SystemTime, LogPipelineError> {
         // RFC 3339 시도
         if let Ok(dt) = DateTime::parse_from_rfc3339(timestamp) {
             return Ok(SystemTime::from(dt));
         }
 
-        // Unix timestamp (초 또는 밀리초) 시도
+        // Unix timestamp (초/밀리초/마이크로초/나노초) 시도
         if let Ok(ts_num) = timestamp.parse::<i64>() {
-            // 밀리초인지 초인지 판단 (10자리 = 초, 13자리 = 밀리초)
-            let ts_secs = if ts_num > 9_999_999_999 {
-                // 밀리초
-                ts_num / 1000
-            } else {
-                // 초
-                ts_num
+            let (ts_secs, ts_nanos): (i64, u32) = match timestamp.len() {
+                10 => (ts_num, 0),                           // 초
+                13 => (ts_num / 1000, ((ts_num % 1000) * 1_000_000) as u32), // 밀리초
+                16 => (ts_num / 1_000_000, ((ts_num % 1_000_000) * 1000) as u32), // 마이크로초
+                19 => (ts_num / 1_000_000_000, (ts_num % 1_000_000_000) as u32), // 나노초
+                _ => {
+                    // 알 수 없는 형식, 기본적으로 초로 처리
+                    (ts_num, 0)
+                }
             };
 
-            if let Some(dt) = DateTime::from_timestamp(ts_secs, 0) {
+            if let Some(dt) = DateTime::from_timestamp(ts_secs, ts_nanos) {
                 return Ok(SystemTime::from(dt));
             }
         }

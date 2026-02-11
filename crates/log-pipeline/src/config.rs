@@ -13,6 +13,7 @@
 //! ```
 
 use serde::{Deserialize, Serialize};
+use std::path::{Component, Path};
 
 use crate::error::LogPipelineError;
 
@@ -95,6 +96,77 @@ impl PipelineConfig {
         }
     }
 
+    /// 파일 경로가 안전한지 검증합니다 (path traversal 방지).
+    ///
+    /// # 검증 규칙
+    /// - ".." 컴포넌트를 포함하지 않아야 함
+    /// - 절대 경로여야 함
+    /// - /var/log/ 또는 /tmp/ 하위 경로만 허용 (기본 정책)
+    fn validate_watch_path(path_str: &str) -> Result<(), LogPipelineError> {
+        if path_str.is_empty() {
+            return Err(LogPipelineError::Config {
+                field: "watch_paths".to_owned(),
+                reason: "watch path must not be empty".to_owned(),
+            });
+        }
+
+        let path = Path::new(path_str);
+
+        // Path traversal 체크: ".." 컴포넌트 검출
+        if path
+            .components()
+            .any(|c| c == Component::ParentDir)
+        {
+            return Err(LogPipelineError::Config {
+                field: "watch_paths".to_owned(),
+                reason: format!(
+                    "watch path '{}' contains path traversal pattern '..'",
+                    path_str
+                ),
+            });
+        }
+
+        // 절대 경로 체크
+        if !path.is_absolute() {
+            return Err(LogPipelineError::Config {
+                field: "watch_paths".to_owned(),
+                reason: format!("watch path '{}' must be an absolute path", path_str),
+            });
+        }
+
+        // 허용 디렉토리 체크 (기본 정책: /var/log, /tmp)
+        const ALLOWED_DIRS: &[&str] = &["/var/log", "/tmp"];
+        let path_to_check = match path.canonicalize() {
+            Ok(p) => p,
+            Err(_) => {
+                // 파일이 아직 존재하지 않을 수 있으므로, 원본 경로 사용
+                path.to_path_buf()
+            }
+        };
+
+        // 허용 디렉토리 중 하나로 시작하는지 확인
+        let mut path_allowed = false;
+        for allowed_dir in ALLOWED_DIRS {
+            let allowed_path = Path::new(allowed_dir);
+            if path_to_check.starts_with(allowed_path) {
+                path_allowed = true;
+                break;
+            }
+        }
+
+        if !path_allowed {
+            return Err(LogPipelineError::Config {
+                field: "watch_paths".to_owned(),
+                reason: format!(
+                    "watch path '{}' is not within allowed directories ({:?})",
+                    path_str, ALLOWED_DIRS
+                ),
+            });
+        }
+
+        Ok(())
+    }
+
     /// 설정값의 유효성을 검증합니다.
     pub fn validate(&self) -> Result<(), LogPipelineError> {
         const MAX_BATCH_SIZE: usize = 100_000;
@@ -141,6 +213,11 @@ impl PipelineConfig {
                 field: "sources".to_owned(),
                 reason: "at least one source must be configured when enabled".to_owned(),
             });
+        }
+
+        // watch_paths 경로 순회 검증
+        for path in &self.watch_paths {
+            Self::validate_watch_path(path)?;
         }
 
         Ok(())

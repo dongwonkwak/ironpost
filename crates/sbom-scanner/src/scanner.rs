@@ -24,6 +24,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;
 
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use ironpost_core::error::IronpostError;
@@ -55,6 +56,11 @@ enum ScannerState {
 /// 의존성 파일 탐색, SBOM 생성, 취약점 스캔, 알림 전송의 전체 흐름을 관리합니다.
 /// core의 `Pipeline` trait을 구현하여 생명주기(start/stop/health_check)를 제공합니다.
 ///
+/// # Graceful Shutdown
+///
+/// [`CancellationToken`]을 사용하여 주기적 스캔 태스크를 안전하게 종료합니다.
+/// `stop()` 호출 시 토큰이 취소되어 태스크가 자연스럽게 종료됩니다.
+///
 /// # 재시작 제한
 ///
 /// `stop()` 후 재시작이 필요하면 `SbomScannerBuilder`로 새 인스턴스를 생성해야 합니다.
@@ -71,6 +77,8 @@ pub struct SbomScanner {
     alert_tx: mpsc::Sender<AlertEvent>,
     /// 백그라운드 태스크 핸들
     tasks: Vec<tokio::task::JoinHandle<()>>,
+    /// 취소 토큰 (주기적 스캔 태스크 종료용)
+    cancellation_token: CancellationToken,
     /// 완료된 스캔 수
     scans_completed: Arc<AtomicU64>,
     /// 발견된 취약점 수
@@ -227,6 +235,7 @@ impl Pipeline for SbomScanner {
             let alert_tx = self.alert_tx.clone();
             let scans_completed = Arc::clone(&self.scans_completed);
             let vulns_found = Arc::clone(&self.vulns_found);
+            let token = self.cancellation_token.clone();
 
             let task = tokio::spawn(async move {
                 let mut interval =
@@ -235,52 +244,58 @@ impl Pipeline for SbomScanner {
                 info!(interval_secs, "periodic scan task started");
 
                 loop {
-                    interval.tick().await;
-
-                    // Scanner가 드롭되어 alert receiver가 닫힌 경우 태스크 종료
-                    if alert_tx.is_closed() {
-                        info!("alert receiver closed, stopping periodic scan task");
-                        break;
-                    }
-
-                    info!("starting periodic scan");
-
-                    // 각 스캔 디렉토리 순회
-                    for scan_dir in &scan_dirs {
-                        let dir = scan_dir.clone();
-                        let parsers: Vec<Box<dyn LockfileParser>> =
-                            vec![Box::new(CargoLockParser), Box::new(NpmLockParser)];
-                        let sbom_gen = generator;
-                        let matcher = matcher_opt.clone();
-                        let tx = alert_tx.clone();
-                        let completed = Arc::clone(&scans_completed);
-                        let found = Arc::clone(&vulns_found);
-
-                        // spawn_blocking으로 동기 I/O 격리
-                        let scan_result = tokio::task::spawn_blocking(move || {
-                            let ctx = ScanContext {
-                                parsers: &parsers,
-                                generator: &sbom_gen,
-                                matcher: &matcher,
-                                alert_tx: &tx,
-                                max_file_size,
-                                max_packages,
-                                scans_completed: &completed,
-                                vulns_found: &found,
-                            };
-                            scan_directory(&dir, &ctx)
-                        })
-                        .await;
-
-                        match scan_result {
-                            Ok(Ok(_)) => {
-                                info!(dir = %scan_dir, "periodic scan completed");
+                    tokio::select! {
+                        _ = token.cancelled() => {
+                            info!("cancellation token triggered, stopping periodic scan task");
+                            break;
+                        }
+                        _ = interval.tick() => {
+                            // Scanner가 드롭되어 alert receiver가 닫힌 경우 태스크 종료
+                            if alert_tx.is_closed() {
+                                info!("alert receiver closed, stopping periodic scan task");
+                                break;
                             }
-                            Ok(Err(e)) => {
-                                warn!(dir = %scan_dir, error = %e, "periodic scan failed");
-                            }
-                            Err(e) => {
-                                warn!(dir = %scan_dir, error = %e, "spawn_blocking failed");
+
+                            info!("starting periodic scan");
+
+                            // 각 스캔 디렉토리 순회
+                            for scan_dir in &scan_dirs {
+                                let dir = scan_dir.clone();
+                                let parsers: Vec<Box<dyn LockfileParser>> =
+                                    vec![Box::new(CargoLockParser), Box::new(NpmLockParser)];
+                                let sbom_gen = generator;
+                                let matcher = matcher_opt.clone();
+                                let tx = alert_tx.clone();
+                                let completed = Arc::clone(&scans_completed);
+                                let found = Arc::clone(&vulns_found);
+
+                                // spawn_blocking으로 동기 I/O 격리
+                                let scan_result = tokio::task::spawn_blocking(move || {
+                                    let ctx = ScanContext {
+                                        parsers: &parsers,
+                                        generator: &sbom_gen,
+                                        matcher: &matcher,
+                                        alert_tx: &tx,
+                                        max_file_size,
+                                        max_packages,
+                                        scans_completed: &completed,
+                                        vulns_found: &found,
+                                    };
+                                    scan_directory(&dir, &ctx)
+                                })
+                                .await;
+
+                                match scan_result {
+                                    Ok(Ok(_)) => {
+                                        info!(dir = %scan_dir, "periodic scan completed");
+                                    }
+                                    Ok(Err(e)) => {
+                                        warn!(dir = %scan_dir, error = %e, "periodic scan failed");
+                                    }
+                                    Err(e) => {
+                                        warn!(dir = %scan_dir, error = %e, "spawn_blocking failed");
+                                    }
+                                }
                             }
                         }
                     }
@@ -303,8 +318,11 @@ impl Pipeline for SbomScanner {
 
         info!("stopping sbom scanner");
 
+        // Graceful shutdown: 취소 토큰을 먼저 트리거하여 태스크가 자연스럽게 종료되도록 함
+        self.cancellation_token.cancel();
+
+        // 태스크가 종료될 때까지 대기
         for task in self.tasks.drain(..) {
-            task.abort();
             let _ = task.await;
         }
 
@@ -397,6 +415,7 @@ impl SbomScannerBuilder {
             matcher: None, // VulnDb는 start()에서 로드
             alert_tx,
             tasks: Vec::new(),
+            cancellation_token: CancellationToken::new(),
             scans_completed: Arc::new(AtomicU64::new(0)),
             vulns_found: Arc::new(AtomicU64::new(0)),
             vuln_db_loaded: false,

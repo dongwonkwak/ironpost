@@ -251,6 +251,8 @@ pub struct AlertEvent {
 
 impl AlertEvent {
     /// 새로운 trace를 시작하는 알림 이벤트를 생성합니다.
+    ///
+    /// 기본 source module은 `MODULE_LOG_PIPELINE`입니다.
     pub fn new(alert: Alert, severity: Severity) -> Self {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
@@ -260,7 +262,28 @@ impl AlertEvent {
         }
     }
 
+    /// 지정된 source module로 새로운 trace를 시작하는 알림 이벤트를 생성합니다.
+    ///
+    /// # 사용 예시
+    ///
+    /// ```ignore
+    /// use ironpost_core::event::AlertEvent;
+    /// use ironpost_core::MODULE_EBPF_ENGINE;
+    ///
+    /// let alert_event = AlertEvent::with_source(alert, severity, MODULE_EBPF_ENGINE);
+    /// ```
+    pub fn with_source(alert: Alert, severity: Severity, source_module: &'static str) -> Self {
+        Self {
+            id: uuid::Uuid::new_v4().to_string(),
+            metadata: EventMetadata::with_new_trace(source_module),
+            alert,
+            severity,
+        }
+    }
+
     /// 기존 trace에 연결된 알림 이벤트를 생성합니다.
+    ///
+    /// 기본 source module은 `MODULE_LOG_PIPELINE`입니다.
     pub fn with_trace(alert: Alert, severity: Severity, trace_id: impl Into<String>) -> Self {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
