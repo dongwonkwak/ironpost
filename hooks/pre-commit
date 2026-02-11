@@ -1,0 +1,39 @@
+#!/bin/bash
+# Ironpost Pre-commit Hook
+# 빠른 검사만 수행하여 커밋 속도 유지
+# 무거운 검사는 pre-push hook에서 수행
+# git commit --no-verify 로 우회 가능 (긴급 상황 시에만 사용)
+
+set -e  # 하나라도 실패하면 즉시 종료
+
+echo "🔍 Running pre-commit checks..."
+echo ""
+
+# 1. 포맷팅 검사 (~0.1초)
+echo "📝 Checking code formatting..."
+if ! cargo fmt --all --check; then
+    echo ""
+    echo "❌ 포맷팅 오류 발견!"
+    echo "   다음 명령어로 수정하세요:"
+    echo "   cargo fmt --all"
+    echo ""
+    exit 1
+fi
+echo "✅ Formatting OK"
+echo ""
+
+# 2. Clippy 검사 (~2초)
+echo "🔧 Running clippy..."
+if ! cargo clippy --workspace --all-targets -- -D warnings; then
+    echo ""
+    echo "❌ Clippy 오류 발견!"
+    echo "   코드를 수정하거나 정당한 경우 #[allow(...)] 사용"
+    echo ""
+    exit 1
+fi
+echo "✅ Clippy OK"
+echo ""
+
+echo "🎉 Pre-commit checks passed!"
+echo "   💡 Tip: 테스트는 push 전에 실행됩니다 (pre-push hook)"
+echo ""

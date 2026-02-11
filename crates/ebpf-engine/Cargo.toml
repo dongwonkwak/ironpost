@@ -6,7 +6,7 @@ description = "Ironpost eBPF 기반 네트워크 패킷 탐지 엔진"
 
 [dependencies]
 ironpost-core = { path = "../core" }
-ironpost-ebpf-common = { path = "ebpf-common", features = ["user"] }
+ironpost-ebpf-common = { path = "ebpf-common" }
 tokio = { workspace = true }
 tracing = { workspace = true }
 bytes = { workspace = true }
@@ -16,6 +16,7 @@ uuid = { workspace = true }
 toml = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+ironpost-ebpf-common = { path = "ebpf-common", features = ["user"] }
 aya = "0.13"
 aya-log = "0.2"
 

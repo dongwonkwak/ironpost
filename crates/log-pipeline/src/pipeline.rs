@@ -231,7 +231,8 @@ impl Pipeline for LogPipeline {
             flush_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
             let mut last_flush = Instant::now();
-            let mut cleanup_counter: u64 = 0;
+            let mut last_cleanup = Instant::now();
+            const CLEANUP_INTERVAL: Duration = Duration::from_secs(60);
 
             loop {
                 tokio::select! {
@@ -345,10 +346,11 @@ impl Pipeline for LogPipeline {
                             last_flush = Instant::now();
                         }
 
-                        // 주기적으로 정리
-                        cleanup_counter += 1;
-                        if cleanup_counter.is_multiple_of(10) {
+                        // 시간 기반 cleanup (매 60초)
+                        if last_cleanup.elapsed() >= CLEANUP_INTERVAL {
                             alert_generator.lock().await.cleanup_expired();
+                            // rule_engine도 cleanup 추가 가능 (향후 확장)
+                            last_cleanup = Instant::now();
                         }
                     }
                 }

@@ -11,7 +11,18 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// eBPF 커널 프로그램 빌드
+    /// 전체 프로젝트 빌드 (eBPF 제외)
+    Build {
+        /// 릴리스 모드로 빌드
+        #[arg(long)]
+        release: bool,
+
+        /// eBPF 커널 프로그램 포함 (Linux 전용)
+        #[arg(long)]
+        all: bool,
+    },
+
+    /// eBPF 커널 프로그램만 빌드 (Linux 전용)
     BuildEbpf {
         /// 릴리스 모드로 빌드
         #[arg(long)]
@@ -23,10 +34,46 @@ fn main() {
     let cli = Cli::parse();
 
     match cli.command {
+        Commands::Build { release, all } => {
+            build_workspace(release);
+            if all {
+                if !cfg!(target_os = "linux") {
+                    eprintln!("ERROR: eBPF builds are only supported on Linux");
+                    eprintln!("Current platform: {}", std::env::consts::OS);
+                    std::process::exit(1);
+                }
+                println!("\nBuilding eBPF kernel program...");
+                build_ebpf(release);
+            }
+        }
         Commands::BuildEbpf { release } => {
+            if !cfg!(target_os = "linux") {
+                eprintln!("ERROR: eBPF builds are only supported on Linux");
+                eprintln!("Current platform: {}", std::env::consts::OS);
+                std::process::exit(1);
+            }
             build_ebpf(release);
         }
     }
+}
+
+fn build_workspace(release: bool) {
+    let mut cmd = Command::new("cargo");
+
+    cmd.args(["build", "--workspace"]);
+
+    if release {
+        cmd.arg("--release");
+    }
+
+    println!("Building workspace...");
+    let status = cmd.status().expect("failed to build workspace");
+    if !status.success() {
+        eprintln!("Workspace build failed");
+        std::process::exit(1);
+    }
+
+    println!("Workspace build succeeded");
 }
 
 fn build_ebpf(release: bool) {

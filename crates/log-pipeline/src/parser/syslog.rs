@@ -26,6 +26,10 @@ use ironpost_core::types::{LogEntry, Severity};
 
 use crate::error::LogPipelineError;
 
+/// RFC 5424에서 유효한 최대 PRI 값
+/// facility 최댓값 23 * 8 + severity 최댓값 7 = 191
+const MAX_SYSLOG_PRI: u8 = 191;
+
 /// Syslog RFC 5424 파서
 ///
 /// core의 [`LogParser`] trait을 구현하여 syslog 메시지를 `LogEntry`로 변환합니다.
@@ -133,6 +137,18 @@ impl SyslogParser {
             offset: 1,
             reason: format!("invalid PRI value: '{pri_str}'"),
         })?;
+
+        // PRI 값 범위 검증: 0-191이 유효 범위
+        if pri > MAX_SYSLOG_PRI {
+            return Err(LogPipelineError::Parse {
+                format: "syslog".to_owned(),
+                offset: 1,
+                reason: format!(
+                    "PRI value {} out of valid range (0-{})",
+                    pri, MAX_SYSLOG_PRI
+                ),
+            });
+        }
 
         let (facility, syslog_severity) = Self::decode_pri(pri);
         let severity = Self::syslog_severity_to_ironpost(syslog_severity);
@@ -727,8 +743,8 @@ mod tests {
     fn parse_priority_overflow() {
         let parser = SyslogParser::new();
         let result = parser.parse(b"<192>1 2024-01-15T12:00:00Z host app - - - msg");
-        // Priority 192 = facility 24, severity 0 (valid but boundary)
-        assert!(result.is_ok());
+        // Priority 192 = facility 24, severity 0 (INVALID - max valid PRI is 191)
+        assert!(result.is_err());
     }
 
     #[test]
@@ -935,7 +951,7 @@ mod tests {
             }
 
             #[test]
-            fn parse_valid_priority_range(pri in 0u8..192) {
+            fn parse_valid_priority_range(pri in 0u8..=191) {
                 let parser = SyslogParser::new();
                 let raw = format!("<{}>1 2024-01-15T12:00:00Z host app - - - msg", pri);
                 let result = parser.parse(raw.as_bytes());

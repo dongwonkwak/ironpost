@@ -61,17 +61,24 @@ use crate::error::ContainerGuardError;
 ///
 /// Docker container IDs are 64-character hex strings (or shorter prefix forms).
 /// This function ensures the ID contains only hex characters and is within valid length.
+///
+/// # Errors
+///
+/// Returns `ContainerGuardError::Config` for invalid container IDs (empty, too long, or non-hex).
+/// This is semantically correct because an invalid ID is an input validation failure,
+/// not a Docker API failure or a "not found" condition.
 fn validate_container_id(id: &str) -> Result<(), ContainerGuardError> {
     if id.is_empty() || id.len() > 64 {
-        return Err(ContainerGuardError::DockerApi(format!(
-            "invalid container ID: length {} (must be 1-64)",
-            id.len()
-        )));
+        return Err(ContainerGuardError::Config {
+            field: "container_id".to_owned(),
+            reason: format!("invalid length {} (must be 1-64)", id.len()),
+        });
     }
     if !id.chars().all(|c| c.is_ascii_hexdigit()) {
-        return Err(ContainerGuardError::DockerApi(
-            "invalid container ID: contains non-hex characters".to_owned(),
-        ));
+        return Err(ContainerGuardError::Config {
+            field: "container_id".to_owned(),
+            reason: "contains non-hex characters".to_owned(),
+        });
     }
     Ok(())
 }

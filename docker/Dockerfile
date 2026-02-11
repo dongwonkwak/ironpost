@@ -4,9 +4,9 @@ FROM rust:latest AS builder
 WORKDIR /app
 COPY . .
 
-# workspace 전체 빌드 (eBPF 커널 크레이트 제외)
-RUN cargo build --release \
-    --exclude ironpost-ebpf
+# workspace 전체 빌드 (eBPF 유저스페이스 라이브러리 포함)
+# 참고: eBPF 커널 프로그램(crates/ebpf-engine/ebpf)은 workspace exclude로 자동 제외됨
+RUN cargo build --release
 
 # Stage 2: Runner
 FROM debian:bookworm-slim AS runner

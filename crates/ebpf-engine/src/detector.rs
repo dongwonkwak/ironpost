@@ -638,10 +638,12 @@ impl PacketDetector {
     /// - PacketEventData 바이너리 필드 직접 접근
     /// - Alert 생성 시점에만 문자열화
     pub fn analyze(&self, event: &PacketEventData) -> Result<(), IronpostError> {
+        use ironpost_core::MODULE_EBPF;
+
         // SYN flood 탐지 (최적화 버전: PacketEventData 직접 처리)
         if let Some(alert) = self.syn_flood.detect_packet(event)? {
             let severity = alert.severity;
-            let alert_event = AlertEvent::new(alert, severity);
+            let alert_event = AlertEvent::with_source(alert, severity, MODULE_EBPF);
 
             // 채널이 있으면 전송
             if let Some(ref tx) = self.alert_tx {
@@ -655,7 +657,7 @@ impl PacketDetector {
         // 포트 스캔 탐지 (최적화 버전: PacketEventData 직접 처리)
         if let Some(alert) = self.port_scan.detect_packet(event)? {
             let severity = alert.severity;
-            let alert_event = AlertEvent::new(alert, severity);
+            let alert_event = AlertEvent::with_source(alert, severity, MODULE_EBPF);
 
             // 채널이 있으면 전송
             if let Some(ref tx) = self.alert_tx {

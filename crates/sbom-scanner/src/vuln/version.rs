@@ -246,8 +246,8 @@ mod tests {
         // "1.0.0" <= "1.0.0-aaaa..." is false in string comparison
         // This is expected behavior for malformed semver
         let result = is_affected(&long_version, &ranges);
-        // Just verify it doesn't panic - the result depends on string comparison semantics
-        assert!(result || !result); // Always true, but ensures no panic
+        // Just verify it doesn't panic - consume the value to avoid unused-value warnings
+        let _ = result;
     }
 
     #[test]

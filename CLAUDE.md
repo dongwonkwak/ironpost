@@ -8,6 +8,9 @@ eBPF 기반 네트워크 탐지, 로그 분석 파이프라인, 컨테이너 격
 - **Edition**: 2024 (모든 크레이트)
 - **Toolchain**: stable 기본, eBPF 커널 크레이트(`crates/ebpf-engine/ebpf/`)만 nightly
 - **Workspace**: 모노레포 구조, `workspace.dependencies`로 버전 일원화
+- **크로스 플랫폼**: 모든 크레이트는 macOS/Linux/Windows에서 빌드 가능
+  - eBPF 런타임 코드는 `#[cfg(target_os = "linux")]`로 조건부 컴파일
+  - Linux 전용 필드는 `#[cfg_attr(not(target_os = "linux"), allow(dead_code))]` 사용
 
 ## 에러 처리
 - **바이너리 크레이트** (`ironpost-cli`, `ironpost-daemon`): `anyhow` 사용
@@ -28,9 +31,18 @@ eBPF 기반 네트워크 탐지, 로그 분석 파이프라인, 컨테이너 격
 ## CLI
 - `clap` v4 (derive 매크로)
 
-## 필수 검사
-- `cargo fmt` — 포맷팅 통과 필수
-- `cargo clippy -- -D warnings` — 경고 없이 통과 필수
+## 필수 검사 (Pre-commit)
+모든 변경사항은 아래 명령어를 통과해야 합니다:
+```bash
+cargo fmt --all --check           # 포맷팅 검사
+cargo clippy --workspace -- -D warnings  # Lint 검사 (경고를 에러로 처리)
+cargo test --workspace            # 전체 테스트
+cargo doc --workspace --no-deps   # 문서 생성 검증
+```
+
+**중요**: 모든 크레이트(ebpf-engine 포함)는 모든 플랫폼에서 빌드 가능합니다.
+Linux 전용 런타임 코드는 `#[cfg(target_os = "linux")]`로 조건부 컴파일됩니다.
+`--exclude` 플래그는 사용하지 않습니다.
 
 ## 금지 사항
 - `unwrap()` — 테스트 코드 제외, 프로덕션 코드에서 사용 금지

@@ -1,0 +1,51 @@
+#!/bin/bash
+# Ironpost Pre-push Hook
+# Push 전 무거운 검사 수행 (테스트, 문서 등)
+# git push --no-verify 로 우회 가능 (긴급 상황 시에만 사용)
+
+set -e  # 하나라도 실패하면 즉시 종료
+
+echo "🔍 Running pre-push checks..."
+echo ""
+
+# 1. 테스트 실행
+echo "🧪 Running tests..."
+if ! cargo test --workspace; then
+    echo ""
+    echo "❌ 테스트 실패!"
+    echo "   모든 테스트를 통과해야 push할 수 있습니다."
+    echo ""
+    exit 1
+fi
+echo "✅ Tests OK"
+echo ""
+
+# 2. 문서 생성 검증
+echo "📚 Checking documentation..."
+if ! cargo doc --workspace --no-deps --document-private-items 2>&1 | grep -v "^warning: unused"; then
+    echo ""
+    echo "❌ 문서 생성 실패!"
+    echo "   문서 주석을 확인하세요."
+    echo ""
+    exit 1
+fi
+echo "✅ Documentation OK"
+echo ""
+
+# 3. 보안 취약점 검사 (선택적)
+# 활성화하려면 주석 해제하세요. cargo-audit 설치 필요: cargo install cargo-audit
+# echo "🔒 Checking security vulnerabilities..."
+# if ! cargo audit; then
+#     echo ""
+#     echo "⚠️  보안 취약점 발견!"
+#     echo "   의존성을 업데이트하거나 advisory를 확인하세요."
+#     echo "   긴급한 경우: git push --no-verify"
+#     echo ""
+#     exit 1
+# fi
+# echo "✅ Security audit OK"
+# echo ""
+
+echo "🎉 All pre-push checks passed!"
+echo "   Proceeding with push..."
+echo ""

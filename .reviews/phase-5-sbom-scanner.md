@@ -60,21 +60,37 @@ This re-review validates those fixes and performs a fresh, thorough analysis of 
 
 #### NEW-C1: VulnDb `lookup()` allocates a String on every call for HashMap key
 
-**File:** `crates/sbom-scanner/src/vuln/db.rs`, line 340
+**✅ 수정 완료 (2026-02-11)**
 
-**Problem:** The `lookup()` method creates a `(String, Ecosystem)` tuple on every call via `package.to_owned()`. In the scan loop (`vuln/mod.rs:137`), this is called once per package per scan. With a graph of 50,000 packages, that is 50,000 heap allocations per scan. Since the HashMap index uses owned `String` keys, each lookup requires allocating a new String to construct the lookup key, only to discard it immediately after the lookup.
+**File:** `crates/sbom-scanner/src/vuln/db.rs`, lines 107-110, 356-369
 
+**수정 내용:**
+- 인덱스 구조를 2단계 HashMap으로 변경: `HashMap<String, HashMap<Ecosystem, Vec<usize>>>`
+- `&str` 키로 직접 조회 가능 (Borrow trait 활용)
+- `lookup()` 메서드에서 String 할당 제거
+- 성능 주석 추가로 설계 의도 명확화
+
+**수정 코드:**
 ```rust
+index: HashMap<String, HashMap<Ecosystem, Vec<usize>>>,
+
 pub fn lookup(&self, package: &str, ecosystem: &Ecosystem) -> Vec<&VulnDbEntry> {
-    let key = (package.to_owned(), *ecosystem);  // allocation on every call
-    if let Some(indices) = self.index.get(&key) {
+    if let Some(eco_map) = self.index.get(package) {  // &str로 직접 조회
+        if let Some(indices) = eco_map.get(ecosystem) {
+            indices.iter().filter_map(|&idx| self.entries.get(idx)).collect()
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    }
+}
 ```
 
-More critically, when a package is NOT in the database (the common case -- most packages have no CVEs), the allocation is completely wasted. This creates unnecessary GC pressure on large scans.
-
-**Severity justification:** While not a security vulnerability itself, this is a performance-critical hot path. With `max_packages = 50,000` and periodic scans, this creates significant allocation churn. Classified as Critical because it directly impacts the algorithmic improvement from C2 (the HashMap indexing fix).
-
-**Suggested fix:** Use a `HashMap<String, HashMap<Ecosystem, Vec<usize>>>` structure that allows `&str` key lookup via the `get()` method (which accepts `&str` via `Borrow<str>` on `String`). Alternatively, use the `hashbrown` crate's `raw_entry_mut` API, or restructure the index as `HashMap<String, Vec<(Ecosystem, usize)>>` with a secondary filter. The simplest fix is to change the index to use `String` as the outer key and do a two-step lookup.
+**영향:**
+- 50,000 패키지 스캔 시 50,000번의 String 할당 제거
+- GC 압력 감소
+- 성능 크리티컬 경로 최적화
 
 ---
 
@@ -103,28 +119,36 @@ let task = tokio::spawn(async move {
 
 #### NEW-H2: `discover_lockfiles` metadata-to-content TOCTOU gap
 
-**File:** `crates/sbom-scanner/src/scanner.rs`, lines 609-657
+**✅ 수정 완료 (2026-02-11)**
 
-**Problem:** The function calls `std::fs::symlink_metadata(&path)` to check file type and size (lines 609-615), then later calls `std::fs::read_to_string(&path)` (line 651). Between these two operations, the file could be replaced with a different file (symlink or larger file). This is a classic TOCTOU race condition.
+**File:** `crates/sbom-scanner/src/scanner.rs`, lines 668-694
 
-While this is mitigated by the single-level scan and the fact that the scan directory itself requires write access by an attacker, in a multi-tenant environment an attacker who controls the scan directory content could:
-1. Place a small file that passes the size check
-2. Replace it with a large file (or symlink to `/dev/zero`) before `read_to_string`
-3. Cause OOM by reading an unbounded file
+**수정 내용:**
+- `File::open()` → `file.metadata()` → `read_from_file()` 패턴으로 변경
+- 동일한 파일 핸들에서 metadata와 content를 순차적으로 읽음
+- TOCTOU 갭 제거
 
+**수정 코드:**
 ```rust
-// Line 609: size check
-let metadata = match std::fs::symlink_metadata(&path) { ... };
+// 파일을 한 번만 열고 metadata와 content를 같은 핸들에서 읽어 TOCTOU 방지
+let mut file = match std::fs::File::open(&path) { ... };
+
+// 파일 핸들에서 metadata 가져오기 (크기 체크용)
+let metadata = match file.metadata() { ... };
+
+// 파일 크기 확인
 let file_size = usize::try_from(metadata.len()).unwrap_or(usize::MAX);
 if file_size > max_file_size { ... }
 
-// Gap: file could be replaced here
-
-// Line 651: actual read
-let content = match std::fs::read_to_string(&path) { ... };
+// 동일 핸들에서 content 읽기
+let mut content = String::new();
+if let Err(e) = file.read_to_string(&mut content) { ... }
 ```
 
-**Suggested fix:** Open the file once using `std::fs::File::open()`, check metadata via `file.metadata()`, then read from the same file handle. This eliminates the TOCTOU gap because the kernel maintains the file descriptor to the original inode.
+**영향:**
+- 파일 교체 공격 방어
+- 커널이 동일한 inode에 대한 file descriptor 유지
+- 멀티테넌트 환경에서 안전성 향상
 
 ---
 
@@ -256,21 +280,36 @@ name: format!("ironpost-scan-{}", graph.source_file),
 
 #### M9: Path traversal check uses simple string contains("..") -- bypassable
 
-**File:** `crates/sbom-scanner/src/config.rs`, lines 168, 192
+**✅ 수정 완료 (2026-02-11)**
 
-**Problem:** The path traversal validation uses `scan_dir.contains("..")` which checks for the literal substring `..` anywhere in the path. While this catches obvious cases like `../../etc/passwd`, it:
-1. Produces false positives for legitimate directory names containing `..` (e.g., `/opt/my..project/`)
-2. Does not normalize paths before checking (e.g., `/opt/project/./../../etc` after normalization)
+**File:** `crates/sbom-scanner/src/config.rs`, lines 170-174
 
-A more robust check would use `Path::components()` to look for `Component::ParentDir`.
+**수정 내용:**
+- `Path::components().any(|c| c == Component::ParentDir)` 사용
+- 정확한 경로 컴포넌트 검증
+- 정규화 없이도 모든 path traversal 패턴 탐지
 
+**수정 코드:**
 ```rust
-if scan_dir.contains("..") {
-    return Err(SbomScannerError::Config { ... });
+// Path traversal 체크: Path::components()로 정확하게 ParentDir 컴포넌트 검출
+if std::path::Path::new(scan_dir)
+    .components()
+    .any(|c| c == std::path::Component::ParentDir)
+{
+    return Err(SbomScannerError::Config {
+        field: "scan_dirs".to_owned(),
+        reason: format!(
+            "scan directory '{}' contains path traversal pattern '..'",
+            scan_dir
+        ),
+    });
 }
 ```
 
-**Suggested fix:** Use `std::path::Path::new(scan_dir).components().any(|c| c == std::path::Component::ParentDir)` for reliable detection. This correctly handles all path component variations.
+**영향:**
+- `/opt/my..project/` 같은 정상 경로의 false positive 제거
+- `/opt/./../../etc` 같은 복잡한 traversal 패턴 탐지
+- 더 정확한 보안 검증
 
 ---
 

@@ -203,13 +203,18 @@ impl<D: DockerClient> Pipeline for ContainerGuard<D> {
                         }
 
                         // Refresh and snapshot containers under the lock, then release
-                        let containers: Vec<_> = {
+                        let mut containers: Vec<_> = {
                             let mut mon = monitor.lock().await;
                             if let Err(e) = mon.refresh_if_needed().await {
                                 warn!(error = %e, "failed to refresh container list");
                             }
                             mon.all_containers().into_iter().cloned().collect()
                         };
+
+                        // Sort containers by ID for deterministic matching
+                        // This ensures that when multiple containers match a policy,
+                        // the same container is chosen consistently across runs
+                        containers.sort_by(|a, b| a.id.cmp(&b.id));
 
                         // Evaluate policies for all containers using a single snapshot/lock
                         let engine = policy_engine.lock().await;
@@ -276,9 +281,9 @@ impl<D: DockerClient> Pipeline for ContainerGuard<D> {
             let _ = task.await;
         }
 
-        // The alert receiver was consumed by start(). Restart requires
-        // rebuilding the guard via ContainerGuardBuilder.
-        self.alert_rx = None;
+        // alert_rx가 이미 None이므로 start() 재호출 시 명시적 에러를 반환하게 됨
+        // restart를 위해서는 ContainerGuardBuilder로 새 인스턴스를 생성해야 함
+        // (alert_rx는 start()에서 이미 소비되었음)
 
         self.state = GuardState::Stopped;
         info!("container guard stopped");

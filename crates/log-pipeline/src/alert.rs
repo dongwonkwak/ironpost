@@ -7,6 +7,8 @@ use std::collections::HashMap;
 use std::net::IpAddr;
 use std::time::{Duration, SystemTime};
 
+use tokio::time::Instant;
+
 use ironpost_core::event::AlertEvent;
 use ironpost_core::types::Alert;
 
@@ -16,15 +18,22 @@ use crate::rule::RuleMatch;
 ///
 /// 규칙 매칭 결과를 `AlertEvent`로 변환하며,
 /// 중복 제거와 속도 제한 기능을 제공합니다.
+///
+/// # 시간 관리
+///
+/// 내부 중복 제거/속도 제한 로직은 [`Instant`]를 사용하여
+/// 시스템 시계 조정의 영향을 받지 않도록 합니다.
+/// 생성된 [`Alert`] 객체의 `created_at`은 외부 API 호환을 위해
+/// [`SystemTime`]을 사용합니다.
 pub struct AlertGenerator {
     /// 중복 제거 윈도우 (초)
     dedup_window: Duration,
     /// 룰당 분당 최대 알림 수
     rate_limit_per_rule: u32,
-    /// 중복 제거 추적: rule_id -> 마지막 알림 시각
-    dedup_tracker: HashMap<String, SystemTime>,
-    /// 속도 제한 추적: rule_id -> (이 분에 생성된 알림 수, 분 시작 시각)
-    rate_tracker: HashMap<String, (u32, SystemTime)>,
+    /// 중복 제거 추적: rule_id -> 마지막 알림 시각 (Instant 사용)
+    dedup_tracker: HashMap<String, Instant>,
+    /// 속도 제한 추적: rule_id -> (이 분에 생성된 알림 수, 분 시작 시각) (Instant 사용)
+    rate_tracker: HashMap<String, (u32, Instant)>,
     /// 생성된 총 알림 수
     total_generated: u64,
     /// 중복 제거로 억제된 알림 수
@@ -125,9 +134,8 @@ impl AlertGenerator {
             None => AlertEvent::new(alert, rule_match.rule.severity),
         };
 
-        // 추적 정보 업데이트
-        self.dedup_tracker
-            .insert(rule_id.clone(), SystemTime::now());
+        // 추적 정보 업데이트 (Instant 사용)
+        self.dedup_tracker.insert(rule_id.clone(), Instant::now());
         self.update_rate_counter(rule_id);
         self.total_generated += 1;
 
@@ -136,9 +144,8 @@ impl AlertGenerator {
 
     /// 중복 알림인지 확인합니다.
     fn is_duplicate(&self, rule_id: &str) -> bool {
-        if let Some(last_time) = self.dedup_tracker.get(rule_id)
-            && let Ok(elapsed) = last_time.elapsed()
-        {
+        if let Some(last_time) = self.dedup_tracker.get(rule_id) {
+            let elapsed = last_time.elapsed();
             return elapsed < self.dedup_window;
         }
         false
@@ -146,26 +153,25 @@ impl AlertGenerator {
 
     /// 속도 제한에 걸리는지 확인합니다.
     fn is_rate_limited(&self, rule_id: &str) -> bool {
-        if let Some((count, minute_start)) = self.rate_tracker.get(rule_id)
-            && let Ok(elapsed) = minute_start.elapsed()
-            && elapsed < Duration::from_secs(60)
-        {
-            return *count >= self.rate_limit_per_rule;
+        if let Some((count, minute_start)) = self.rate_tracker.get(rule_id) {
+            let elapsed = minute_start.elapsed();
+            if elapsed < Duration::from_secs(60) {
+                return *count >= self.rate_limit_per_rule;
+            }
         }
         false
     }
 
     /// 속도 제한 카운터를 업데이트합니다.
     fn update_rate_counter(&mut self, rule_id: &str) {
-        let now = SystemTime::now();
+        let now = Instant::now();
         let entry = self
             .rate_tracker
             .entry(rule_id.to_owned())
             .or_insert((0, now));
 
-        if let Ok(elapsed) = entry.1.elapsed()
-            && elapsed >= Duration::from_secs(60)
-        {
+        let elapsed = entry.1.elapsed();
+        if elapsed >= Duration::from_secs(60) {
             // 새로운 분 시작
             *entry = (1, now);
             return;
@@ -178,19 +184,11 @@ impl AlertGenerator {
     ///
     /// 주기적으로 호출하여 메모리 성장을 방지합니다.
     pub fn cleanup_expired(&mut self) {
-        self.dedup_tracker.retain(|_, last_time| {
-            last_time
-                .elapsed()
-                .map(|e| e < self.dedup_window * 2)
-                .unwrap_or(false)
-        });
+        self.dedup_tracker
+            .retain(|_, last_time| last_time.elapsed() < self.dedup_window * 2);
 
-        self.rate_tracker.retain(|_, (_, minute_start)| {
-            minute_start
-                .elapsed()
-                .map(|e| e < Duration::from_secs(120))
-                .unwrap_or(false)
-        });
+        self.rate_tracker
+            .retain(|_, (_, minute_start)| minute_start.elapsed() < Duration::from_secs(120));
     }
 
     /// 생성된 총 알림 수를 반환합니다.

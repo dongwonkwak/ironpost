@@ -350,6 +350,7 @@ pub fn load_policies_from_dir(
         let path = entry.path();
 
         // Validate path to prevent symlink traversal attacks
+        // canonical_path를 루프 안에서 계산 (path는 매 반복마다 다르므로 여기서 canonicalize 필요)
         let canonical_path = match path.canonicalize() {
             Ok(p) => p,
             Err(e) => {

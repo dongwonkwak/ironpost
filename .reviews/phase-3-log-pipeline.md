@@ -196,30 +196,17 @@ Phase 3에서는 로그 파이프라인 크레이트 자체에만 집중하고, 
 ### 🟠 High (수정 강력 권장)
 
 #### H1. [src/rule/mod.rs:147-149, types.rs] Detector trait과 RuleEngine 불일치
-**문제:**
-```rust
-pub fn evaluate(&mut self, entry: &LogEntry) -> Result<Vec<RuleMatch>, ...>
-```
-`RuleEngine::evaluate()`는 `&mut self`를 받지만, core의 `Detector::detect()`는 `&self`를 받습니다. threshold 규칙 평가 시 내부 카운터 수정이 필요한데, `Detector` trait 구현에서는 이를 수행할 수 없습니다.
+**✅ 수정 완료 (2026-02-11)**
 
-**영향:** Detector trait 사용 시 threshold 규칙이 제대로 동작하지 않음
+**수정 내용:**
+- `RuleEngine::evaluate()`를 `&self`로 변경
+- `threshold_counters`를 `Arc<Mutex<HashMap<...>>>`로 래핑
+- `evaluate()` 메서드 내부에서 `lock()` 사용하여 카운터 업데이트
+- Detector trait 호환 완료
 
-**수정 방안:**
-```rust
-// 1. 내부 Mutex 사용 (Arc<Mutex<ThresholdState>>)
-struct RuleEngine {
-    rules: HashMap<String, DetectionRule>,
-    matcher: RuleMatcher,
-    threshold_state: Arc<Mutex<ThresholdState>>,
-}
+**수정 위치:** `src/rule/mod.rs:157-184`
 
-struct ThresholdState {
-    counters: HashMap<(String, String), ThresholdCounter>,
-    max_entries: usize,
-}
-
-// 2. 또는 Detector trait 수정 (&self -> &mut self)을 core에 제안
-```
+**영향:** Detector trait 사용 시 threshold 규칙이 제대로 동작하지 않음 → 해결됨
 
 ---
 
@@ -248,32 +235,16 @@ struct ThresholdState {
 ---
 
 #### H4. [src/parser/syslog.rs:131] PRI 값 범위 검증 부재
-**문제:**
-```rust
-let pri: u8 = pri_str.parse().map_err(...)?;
-```
-PRI 값은 0-191이 유효 범위지만(facility 0-23 * 8 + severity 0-7), 192-255도 u8로 파싱되어 통과합니다.
+**✅ 수정 완료 (2026-02-11)**
 
-**영향:** 잘못된 syslog 메시지 처리, 의도하지 않은 facility/severity 값
+**수정 내용:**
+- `MAX_SYSLOG_PRI = 191` 상수 추가 (L31)
+- PRI 파싱 후 범위 검증 추가 (L142-149)
+- 범위 초과 시 명확한 에러 메시지 반환
 
-**수정 방안:**
-```rust
-const MAX_SYSLOG_PRI: u8 = 191; // 23 * 8 + 7
+**수정 위치:** `src/parser/syslog.rs:29-31, 141-150`
 
-let pri: u8 = pri_str.parse().map_err(|_| LogPipelineError::Parse {
-    format: "syslog".to_owned(),
-    offset: 1,
-    reason: format!("invalid PRI value: '{pri_str}'"),
-})?;
-
-if pri > MAX_SYSLOG_PRI {
-    return Err(LogPipelineError::Parse {
-        format: "syslog".to_owned(),
-        offset: 1,
-        reason: format!("PRI value out of range: {} (max: {})", pri, MAX_SYSLOG_PRI),
-    });
-}
-```
+**영향:** 잘못된 syslog 메시지 처리, 의도하지 않은 facility/severity 값 → 해결됨
 
 ---
 
@@ -327,46 +298,18 @@ fn parse_timestamp(timestamp: &str) -> Result<SystemTime, LogPipelineError> {
 ---
 
 #### H6. [src/collector/file.rs] 경로 순회(path traversal) 검증 없음
-**문제:**
-`watch_paths` 설정에 `../../../etc/passwd` 같은 경로가 포함되어도 검증하지 않습니다.
+**✅ 수정 완료 (2026-02-11)**
 
-**영향:** 설정 파일 조작 시 임의 파일 읽기 가능
+**수정 내용:**
+- `validate_watch_path()` 헬퍼 함수 추가 (L99-168)
+- Path traversal 검증: `Path::components()` 사용하여 `ParentDir` 컴포넌트 검출
+- 절대 경로 체크
+- 허용 디렉토리 목록 검증 (`/var/log`, `/tmp`)
+- `validate()` 메서드에서 모든 `watch_paths` 검증 (L219-221)
 
-**수정 방안:**
-```rust
-use std::path::Path;
+**수정 위치:** `src/config.rs:99-168, 219-221`
 
-fn validate_watch_path(path: &Path) -> Result<(), LogPipelineError> {
-    // 정규화된 경로 확인
-    let canonical = path.canonicalize().map_err(|e| {
-        LogPipelineError::Config {
-            field: "watch_paths".to_owned(),
-            reason: format!("invalid path {:?}: {}", path, e),
-        }
-    })?;
-
-    // 허용된 디렉토리 목록
-    const ALLOWED_DIRS: &[&str] = &["/var/log", "/tmp/ironpost"];
-
-    let allowed = ALLOWED_DIRS.iter().any(|dir| {
-        canonical.starts_with(dir)
-    });
-
-    if !allowed {
-        return Err(LogPipelineError::Config {
-            field: "watch_paths".to_owned(),
-            reason: format!("path {:?} not in allowed directories", path),
-        });
-    }
-
-    Ok(())
-}
-
-// config.rs validate()에서 호출
-for path in &self.watch_paths {
-    validate_watch_path(Path::new(path))?;
-}
-```
+**영향:** 설정 파일 조작 시 임의 파일 읽기 가능 → 해결됨
 
 ---
 

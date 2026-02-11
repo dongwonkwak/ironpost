@@ -7,6 +7,7 @@ description = "Ironpost SBOM 생성 및 CVE 취약점 스캔"
 [dependencies]
 ironpost-core = { path = "../core" }
 tokio = { workspace = true }
+tokio-util = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 toml = { workspace = true }

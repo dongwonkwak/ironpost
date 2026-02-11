@@ -1,74 +1,93 @@
-use anyhow::Result;
-use std::sync::Arc;
+//! Ironpost daemon -- main entry point.
+//!
+//! The daemon orchestrates all ironpost security monitoring modules:
+//! - eBPF network packet engine (Linux only)
+//! - Log collection and detection pipeline
+//! - Container guard (automatic isolation)
+//! - SBOM vulnerability scanner
+//!
+//! # Usage
+//!
+//! ```text
+//! ironpost-daemon --config /etc/ironpost/ironpost.toml
+//! ironpost-daemon --validate    # validate config and exit
+//! ironpost-daemon --log-level debug --log-format pretty
+//! ```
 
-use ironpost_container_guard::{BollardDockerClient, ContainerGuardBuilder};
-use ironpost_core::pipeline::Pipeline;
-use ironpost_log_pipeline::LogPipelineBuilder;
+mod cli;
+mod health;
+mod logging;
+mod modules;
+mod orchestrator;
+
+use anyhow::Result;
+use clap::Parser;
+
+use crate::cli::DaemonCli;
+use crate::orchestrator::Orchestrator;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // 로깅 초기화
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            std::env::var("RUST_LOG").unwrap_or_else(|_| "info,ironpost=debug".to_owned()),
-        )
-        .json()
-        .init();
+    let cli = DaemonCli::parse();
 
-    tracing::info!("ironpost-daemon starting");
+    // Load configuration
+    let mut config = if cli.config.exists() {
+        ironpost_core::config::IronpostConfig::load(&cli.config)
+            .await
+            .map_err(|e| {
+                anyhow::anyhow!("failed to load config from {}: {}", cli.config.display(), e)
+            })?
+    } else {
+        // Note: Using eprintln! here since tracing is not initialized yet.
+        // This is acceptable during daemon initialization phase.
+        eprintln!(
+            "WARN: config file not found at {}, using defaults",
+            cli.config.display()
+        );
+        ironpost_core::config::IronpostConfig::default()
+    };
 
-    // 모듈 간 통신 채널 생성
-    let (alert_tx, alert_rx) = tokio::sync::mpsc::channel(256);
+    // Apply CLI overrides
+    if let Some(ref level) = cli.log_level {
+        config.general.log_level = level.clone();
+    }
+    if let Some(ref format) = cli.log_format {
+        config.general.log_format = format.clone();
+    }
+    if let Some(ref pid_file) = cli.pid_file {
+        config.general.pid_file = pid_file.clone();
+    }
 
-    // 로그 파이프라인 빌드
-    let (mut log_pipeline, _alert_rx_internal) = LogPipelineBuilder::new()
-        .alert_sender(alert_tx)
-        .build()
-        .map_err(|e| anyhow::anyhow!("failed to build log pipeline: {}", e))?;
+    // Validate-only mode
+    if cli.validate {
+        match config.validate() {
+            Ok(()) => {
+                // Note: Using tracing here since println! is forbidden.
+                // However tracing may not be initialized yet. In validate-only
+                // mode, we initialize a minimal subscriber first.
+                let _guard = tracing_subscriber::fmt().with_env_filter("info").try_init();
+                tracing::info!("configuration is valid");
+                return Ok(());
+            }
+            Err(e) => {
+                return Err(anyhow::anyhow!("configuration validation failed: {}", e));
+            }
+        }
+    }
 
-    tracing::info!("log pipeline initialized");
+    // Initialize logging
+    logging::init_tracing(&config.general)?;
 
-    // 컨테이너 가드 빌드
-    let docker_client = Arc::new(
-        BollardDockerClient::connect_local()
-            .map_err(|e| anyhow::anyhow!("failed to create docker client: {}", e))?,
+    tracing::info!(
+        version = env!("CARGO_PKG_VERSION"),
+        config_path = %cli.config.display(),
+        "ironpost-daemon starting"
     );
 
-    let (mut container_guard, _action_rx) = ContainerGuardBuilder::new()
-        .docker_client(docker_client)
-        .alert_receiver(alert_rx)
-        .build()
-        .map_err(|e| anyhow::anyhow!("failed to build container guard: {}", e))?;
+    // Build and run the orchestrator
+    let mut orchestrator = Orchestrator::build_from_config(config).await?;
+    orchestrator.run().await?;
 
-    tracing::info!("container guard initialized");
-
-    // 파이프라인 시작
-    log_pipeline
-        .start()
-        .await
-        .map_err(|e| anyhow::anyhow!("failed to start log pipeline: {}", e))?;
-    tracing::info!("log pipeline started");
-
-    container_guard
-        .start()
-        .await
-        .map_err(|e| anyhow::anyhow!("failed to start container guard: {}", e))?;
-    tracing::info!("container guard started");
-
-    // 종료 시그널 대기
-    tracing::info!("ironpost-daemon running — modules active");
-    tokio::signal::ctrl_c().await?;
-    tracing::info!("shutdown signal received");
-
-    // 우아한 종료: producer(log-pipeline)를 먼저 정지하여 송신을 멈춘 뒤
-    // consumer(container-guard)를 정지하는 순서로 처리
-    if let Err(e) = log_pipeline.stop().await {
-        tracing::error!(error = %e, "failed to stop log pipeline");
-    }
-    if let Err(e) = container_guard.stop().await {
-        tracing::error!(error = %e, "failed to stop container guard");
-    }
-
-    tracing::info!("ironpost-daemon shut down");
+    tracing::info!("ironpost-daemon shut down cleanly");
     Ok(())
 }

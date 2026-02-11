@@ -3,13 +3,35 @@ name = "ironpost-ebpf"
 version = "0.1.0"
 edition = "2024"
 
+[workspace]
+# 이 패키지는 독립 패키지로, 상위 workspace의 일부가 아님
+
 [dependencies]
-aya-ebpf = "0.1"
-aya-log-ebpf = "0.1"
+aya-ebpf = { version = "0.1", default-features = false }
+aya-log-ebpf = { version = "0.1", default-features = false }
 ironpost-ebpf-common = { path = "../ebpf-common" }
-network-types = "0.1.0"
+network-types = { version = "0.1.0", default-features = false }
 
 [[bin]]
 name = "ironpost-ebpf"
 path = "src/main.rs"
 test = false
+
+[profile.dev]
+opt-level = 3
+debug = false
+debug-assertions = false
+overflow-checks = false
+lto = false
+panic = 'abort'
+incremental = false
+codegen-units = 1
+
+[profile.release]
+lto = true
+opt-level = 3
+debug = false
+debug-assertions = false
+overflow-checks = false
+panic = 'abort'
+codegen-units = 1

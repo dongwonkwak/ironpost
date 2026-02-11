@@ -2,7 +2,7 @@
 name = "ironpost-daemon"
 version = "0.1.0"
 edition = "2024"
-description = "Ironpost 데몬 — 모듈 조립 및 이벤트 버스 관리"
+description = "Ironpost daemon -- module orchestration and event bus management"
 
 [dependencies]
 ironpost-core = { path = "../crates/core" }
@@ -13,7 +13,15 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 anyhow = { workspace = true }
+clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
 
-# eBPF 엔진은 Linux 전용
+# eBPF engine is Linux-only
 [target.'cfg(target_os = "linux")'.dependencies]
 ironpost-ebpf-engine = { path = "../crates/ebpf-engine" }
+
+[dev-dependencies]
+tempfile = "3.14"
+bytes = { workspace = true }

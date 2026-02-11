@@ -36,6 +36,7 @@ pub use types::{
 };
 
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
 use ironpost_core::error::IronpostError;
@@ -77,7 +78,8 @@ pub struct RuleEngine {
     /// 컴파일된 매처
     matcher: RuleMatcher,
     /// threshold 카운터: (rule_id, group_key) -> (count, window_start)
-    threshold_counters: HashMap<(String, String), ThresholdCounter>,
+    /// `Arc<Mutex<_>>`로 감싸서 `&self` 메서드에서도 수정 가능하게 변경
+    threshold_counters: Arc<Mutex<HashMap<(String, String), ThresholdCounter>>>,
     /// threshold 카운터 최대 항목 수 (메모리 성장 제한)
     max_threshold_entries: usize,
 }
@@ -99,7 +101,7 @@ impl RuleEngine {
         Self {
             rules: HashMap::new(),
             matcher: RuleMatcher::new(),
-            threshold_counters: HashMap::new(),
+            threshold_counters: Arc::new(Mutex::new(HashMap::new())),
             max_threshold_entries: 100_000,
         }
     }
@@ -135,7 +137,9 @@ impl RuleEngine {
     pub fn remove_rule(&mut self, rule_id: &str) -> Option<DetectionRule> {
         self.matcher.remove_rule(rule_id);
         // 관련 threshold 카운터도 제거
-        self.threshold_counters.retain(|(id, _), _| id != rule_id);
+        if let Ok(mut counters) = self.threshold_counters.lock() {
+            counters.retain(|(id, _), _| id != rule_id);
+        }
         self.rules.remove(rule_id)
     }
 
@@ -148,7 +152,9 @@ impl RuleEngine {
     ///
     /// 매칭된 규칙 목록을 반환합니다.
     /// threshold 규칙은 임계값에 도달한 경우에만 결과에 포함됩니다.
-    pub fn evaluate(&mut self, entry: &LogEntry) -> Result<Vec<RuleMatch>, LogPipelineError> {
+    ///
+    /// Note: `threshold_counters`가 `Arc<Mutex<_>>`로 변경되어 `&self`로 호출 가능
+    pub fn evaluate(&self, entry: &LogEntry) -> Result<Vec<RuleMatch>, LogPipelineError> {
         let mut matches = Vec::new();
 
         for rule in self.rules.values() {
@@ -169,14 +175,27 @@ impl RuleEngine {
                 };
                 let key = (rule.id.clone(), group_key);
 
-                let counter =
-                    self.threshold_counters
-                        .entry(key)
-                        .or_insert_with(|| ThresholdCounter {
-                            count: 0,
-                            window_start: SystemTime::now(),
-                            alerted: false,
-                        });
+                // Arc<Mutex>로 감싼 threshold_counters 접근
+                let mut counters = match self.threshold_counters.lock() {
+                    Ok(c) => c,
+                    Err(poisoned) => {
+                        // Lock poisoned - this indicates a panic in another thread while holding the lock.
+                        // Log error and recover by clearing counters to prevent alert loss.
+                        tracing::error!(
+                            rule_id = %rule.id,
+                            "threshold_counters mutex poisoned, recovering by clearing counters"
+                        );
+                        let mut recovered = poisoned.into_inner();
+                        recovered.clear();
+                        recovered
+                    }
+                };
+
+                let counter = counters.entry(key).or_insert_with(|| ThresholdCounter {
+                    count: 0,
+                    window_start: SystemTime::now(),
+                    alerted: false,
+                });
 
                 // 윈도우 만료 체크
                 let elapsed = counter.window_start.elapsed().unwrap_or_default().as_secs();
@@ -251,11 +270,13 @@ impl RuleEngine {
     }
 
     /// threshold 카운터의 메모리 성장을 제한합니다.
-    fn enforce_threshold_limits(&mut self) {
-        if self.threshold_counters.len() > self.max_threshold_entries {
+    fn enforce_threshold_limits(&self) {
+        if let Ok(mut counters) = self.threshold_counters.lock()
+            && counters.len() > self.max_threshold_entries
+        {
             // 만료된 엔트리 제거
             let now = SystemTime::now();
-            self.threshold_counters.retain(|_, counter| {
+            counters.retain(|_, counter| {
                 let elapsed = now
                     .duration_since(counter.window_start)
                     .unwrap_or_default()
@@ -263,13 +284,13 @@ impl RuleEngine {
                 elapsed < 3600 // 1시간 이내 엔트리만 유지
             });
 
-            if self.threshold_counters.len() > self.max_threshold_entries {
+            if counters.len() > self.max_threshold_entries {
                 tracing::warn!(
-                    count = self.threshold_counters.len(),
+                    count = counters.len(),
                     max = self.max_threshold_entries,
                     "threshold counter limit exceeded after cleanup, clearing all"
                 );
-                self.threshold_counters.clear();
+                counters.clear();
             }
         }
     }

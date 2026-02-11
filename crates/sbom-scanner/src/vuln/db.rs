@@ -505,9 +505,10 @@ mod tests {
         let malformed = r#"[ { "cve_id": "CVE-2024-0001" "#;
         let result = VulnDb::from_json(malformed);
         assert!(result.is_err());
-        match result {
-            Err(SbomScannerError::VulnDbParse(_)) => {}
-            _ => panic!("expected VulnDbParse error"),
+        if let Err(SbomScannerError::VulnDbParse(_)) = result {
+            // expected
+        } else {
+            panic!("expected VulnDbParse error");
         }
     }
 
@@ -607,9 +608,10 @@ mod tests {
         ));
         // On some systems, accessing a non-existent directory returns an empty DB (no files found)
         // rather than an error. Both behaviors are acceptable.
-        match result {
-            Ok(db) => assert_eq!(db.entry_count(), 0),
-            Err(_) => {} // Also acceptable
+        if let Ok(db) = result {
+            assert_eq!(db.entry_count(), 0);
+        } else {
+            // Also acceptable: error returned
         }
     }
 
@@ -654,9 +656,10 @@ mod tests {
 
         let result = VulnDb::load_from_dir(temp_dir.path());
         assert!(result.is_err());
-        match result {
-            Err(SbomScannerError::VulnDbParse(_)) => {}
-            _ => panic!("expected VulnDbParse error"),
+        if let Err(SbomScannerError::VulnDbParse(_)) = result {
+            // expected
+        } else {
+            panic!("expected VulnDbParse error");
         }
     }
 
