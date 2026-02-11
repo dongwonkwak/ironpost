@@ -19,6 +19,16 @@ pub struct OutputWriter {
 }
 
 impl OutputWriter {
+    /// Create a new output writer with the specified format.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use ironpost_cli::output::{OutputWriter};
+    /// use ironpost_cli::cli::OutputFormat;
+    ///
+    /// let writer = OutputWriter::new(OutputFormat::Text);
+    /// ```
     pub fn new(format: OutputFormat) -> Self {
         Self { format }
     }

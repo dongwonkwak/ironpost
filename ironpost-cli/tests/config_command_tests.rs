@@ -283,7 +283,7 @@ sources = []
 watch_paths = []
 
 [sbom]
-enabled = true
+enabled = false
 scan_dirs = []
 "#;
 
@@ -292,8 +292,11 @@ scan_dirs = []
     // When: Loading the config
     let result = ironpost_core::config::IronpostConfig::load(&config_path).await;
 
-    // Then: Should handle empty arrays
-    assert!(result.is_ok(), "empty arrays should be accepted");
+    // Then: Should handle empty arrays (for disabled modules)
+    assert!(
+        result.is_ok(),
+        "empty arrays should be accepted for disabled modules"
+    );
     let config = result.expect("config should load");
     assert!(config.log_pipeline.sources.is_empty());
     assert!(config.log_pipeline.watch_paths.is_empty());

@@ -131,7 +131,10 @@ fn test_pid_file_special_characters_in_path() {
     fs::write(&pid_path, "12345").expect("should write PID with special chars");
 
     // Then: File should exist
-    assert!(pid_path.exists(), "PID file with special chars should exist");
+    assert!(
+        pid_path.exists(),
+        "PID file with special chars should exist"
+    );
 }
 
 #[test]
@@ -161,7 +164,10 @@ fn test_pid_file_read_invalid_content() {
 
     // Then: Content should be invalid PID format
     assert_eq!(content, "not_a_number");
-    assert!(content.parse::<u32>().is_err(), "should not parse as number");
+    assert!(
+        content.parse::<u32>().is_err(),
+        "should not parse as number"
+    );
 }
 
 #[test]

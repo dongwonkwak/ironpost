@@ -113,10 +113,7 @@ impl PipelineConfig {
         let path = Path::new(path_str);
 
         // Path traversal 체크: ".." 컴포넌트 검출
-        if path
-            .components()
-            .any(|c| c == Component::ParentDir)
-        {
+        if path.components().any(|c| c == Component::ParentDir) {
             return Err(LogPipelineError::Config {
                 field: "watch_paths".to_owned(),
                 reason: format!(

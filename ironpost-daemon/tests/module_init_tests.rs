@@ -349,8 +349,7 @@ severity_threshold = "Medium"
     let (alert_tx, _alert_rx) = mpsc::channel(16);
 
     // When: Initializing both modules with the same alert_tx (cloned)
-    let log_result =
-        ironpost_daemon::modules::log_pipeline::init(&config, None, alert_tx.clone());
+    let log_result = ironpost_daemon::modules::log_pipeline::init(&config, None, alert_tx.clone());
     let sbom_result = ironpost_daemon::modules::sbom_scanner::init(&config, alert_tx.clone());
 
     // Then: Both should succeed
@@ -396,7 +395,10 @@ output_format = "cyclonedx""#,
         // Try log-pipeline if enabled
         if config.log_pipeline.enabled {
             let result = ironpost_daemon::modules::log_pipeline::init(&config, None, alert_tx);
-            assert!(result.is_ok(), "minimal config should work for log-pipeline");
+            assert!(
+                result.is_ok(),
+                "minimal config should work for log-pipeline"
+            );
         }
 
         // Try sbom-scanner if enabled

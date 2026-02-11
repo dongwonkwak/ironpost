@@ -93,10 +93,7 @@ log_level = "info"
     let result = IronpostConfig::parse(toml_str);
 
     // Then: Should use defaults for missing sections
-    assert!(
-        result.is_ok(),
-        "partial config should parse with defaults"
-    );
+    assert!(result.is_ok(), "partial config should parse with defaults");
     let config = result.expect("config should parse");
 
     assert_eq!(config.general.log_level, "info");
@@ -161,10 +158,7 @@ batch_size = "not_a_number"
     let result = IronpostConfig::parse(toml_str);
 
     // Then: Should fail
-    assert!(
-        result.is_err(),
-        "invalid field type should fail to parse"
-    );
+    assert!(result.is_err(), "invalid field type should fail to parse");
 }
 
 #[test]
@@ -302,7 +296,10 @@ log_level = "warn"
         }
     }
 
-    assert_eq!(result, "warn", "TOML value should remain when no env var is set");
+    assert_eq!(
+        result, "warn",
+        "TOML value should remain when no env var is set"
+    );
 }
 
 #[test]

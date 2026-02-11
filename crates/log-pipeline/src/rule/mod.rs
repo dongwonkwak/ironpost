@@ -78,7 +78,7 @@ pub struct RuleEngine {
     /// 컴파일된 매처
     matcher: RuleMatcher,
     /// threshold 카운터: (rule_id, group_key) -> (count, window_start)
-    /// Arc<Mutex>로 감싸서 &self 메서드에서도 수정 가능하게 변경
+    /// `Arc<Mutex<_>>`로 감싸서 `&self` 메서드에서도 수정 가능하게 변경
     threshold_counters: Arc<Mutex<HashMap<(String, String), ThresholdCounter>>>,
     /// threshold 카운터 최대 항목 수 (메모리 성장 제한)
     max_threshold_entries: usize,
@@ -153,7 +153,7 @@ impl RuleEngine {
     /// 매칭된 규칙 목록을 반환합니다.
     /// threshold 규칙은 임계값에 도달한 경우에만 결과에 포함됩니다.
     ///
-    /// Note: threshold_counters가 Arc<Mutex>로 변경되어 &self로 호출 가능
+    /// Note: `threshold_counters`가 `Arc<Mutex<_>>`로 변경되어 `&self`로 호출 가능
     pub fn evaluate(&self, entry: &LogEntry) -> Result<Vec<RuleMatch>, LogPipelineError> {
         let mut matches = Vec::new();
 
@@ -184,13 +184,11 @@ impl RuleEngine {
                     }
                 };
 
-                let counter = counters
-                    .entry(key)
-                    .or_insert_with(|| ThresholdCounter {
-                        count: 0,
-                        window_start: SystemTime::now(),
-                        alerted: false,
-                    });
+                let counter = counters.entry(key).or_insert_with(|| ThresholdCounter {
+                    count: 0,
+                    window_start: SystemTime::now(),
+                    alerted: false,
+                });
 
                 // 윈도우 만료 체크
                 let elapsed = counter.window_start.elapsed().unwrap_or_default().as_secs();

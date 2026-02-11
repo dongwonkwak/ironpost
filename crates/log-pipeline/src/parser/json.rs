@@ -273,10 +273,10 @@ impl JsonLogParser {
         // Unix timestamp (초/밀리초/마이크로초/나노초) 시도
         if let Ok(ts_num) = timestamp.parse::<i64>() {
             let (ts_secs, ts_nanos): (i64, u32) = match timestamp.len() {
-                10 => (ts_num, 0),                           // 초
-                13 => (ts_num / 1000, ((ts_num % 1000) * 1_000_000) as u32), // 밀리초
+                10 => (ts_num, 0),                                                // 초
+                13 => (ts_num / 1000, ((ts_num % 1000) * 1_000_000) as u32),      // 밀리초
                 16 => (ts_num / 1_000_000, ((ts_num % 1_000_000) * 1000) as u32), // 마이크로초
-                19 => (ts_num / 1_000_000_000, (ts_num % 1_000_000_000) as u32), // 나노초
+                19 => (ts_num / 1_000_000_000, (ts_num % 1_000_000_000) as u32),  // 나노초
                 _ => {
                     // 알 수 없는 형식, 기본적으로 초로 처리
                     (ts_num, 0)

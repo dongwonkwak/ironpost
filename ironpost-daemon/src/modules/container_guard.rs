@@ -64,9 +64,8 @@ pub fn init(
 
     let handle = ModuleHandle::new("container-guard", true, Box::new(guard));
 
-    let action_receiver = action_rx.ok_or_else(|| {
-        anyhow::anyhow!("container guard builder did not produce action_rx")
-    })?;
+    let action_receiver = action_rx
+        .ok_or_else(|| anyhow::anyhow!("container guard builder did not produce action_rx"))?;
 
     Ok(Some((handle, action_receiver)))
 }

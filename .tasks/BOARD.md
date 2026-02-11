@@ -1,5 +1,5 @@
 # Ironpost 태스크 보드
-> 최종 업데이트: 2026-02-10
+> 최종 업데이트: 2026-02-11
 
 ## 진행 요약
 | Phase | 전체 | 완료 | 진행중 | 대기 | 진행률 |
@@ -10,7 +10,7 @@
 | 3-log | 12 | 13 | 0 | 5 | ✅ (설계+구현+리뷰+수정 완료) |
 | 4-container | 17 | 17 | 0 | 0 | ✅ (설계+구현+테스트+리뷰 완료, 202 tests) |
 | 5-sbom | 28 | 28 | 0 | 0 | ✅ (Phase 5-E 문서화 완료, 183 tests, README 580+ lines) |
-| 6-polish | 12 | 5 | 0 | 7 | ✅ T6-12 Phase 6 리뷰 완료, 다음: T6-3 설정 파일 |
+| 6-polish | 12 | 9 | 0 | 3 | ✅ T6-14 ironpost-cli 문서화 완료, 다음: T6-3 설정 파일 |
 
 ## 블로커
 - 없음
@@ -29,9 +29,11 @@
 | T6-2 | ironpost-cli 통합 구현 | implementer | 3h | ✅ (2026-02-10 완료) | T6-1 |
 | T6-3 | ironpost.toml 통합 설정 파일 | architect + implementer | 2h | ⏳ | T6-1 병행 |
 | T6-4 | 리뷰 미반영 수정 (Phase 2~5 C/H/M) | implementer | 6h | ✅ (2026-02-11 완료, 1.5h, 10/10 fixed) | 없음 |
-| T6-5 | 루트 README.md 재작성 | writer | 2h | ⏳ | T6-1, T6-2 |
-| T6-6 | CHANGELOG.md 작성 | writer | 1h | ⏳ | T6-4 |
+| T6-5 | 루트 README.md 재작성 | writer | 2h | ✅ (2026-02-11 완료, 614 lines, L1 doc) | T6-1, T6-2 |
+| T6-6 | CHANGELOG.md 작성 | writer | 1h | ✅ (2026-02-11 완료, 286 lines, Keep a Changelog 1.1.0) | T6-4 |
 | T6-12 | Phase 6 리뷰 수정 (C2, H5) | implementer | 2h | ✅ (2026-02-11 완료, 1h, 7/7 fixed) | T6-1, T6-2 |
+| T6-13 | ironpost-daemon 문서화 | writer | 1h | ✅ (2026-02-11 완료, 3분, README 439 lines) | T6-1 |
+| T6-14 | ironpost-cli 문서화 | writer | 1.5h | ✅ (2026-02-11 완료, 1h, README 782 lines + doc comments) | T6-2 |
 
 ### T6-4 상세: 리뷰 미반영 수정 사항 (2026-02-11 완료)
 
@@ -156,6 +158,12 @@ cargo clippy -p ironpost-daemon -p ironpost-cli -- -D warnings  # clean
 |----|--------|------|------|------|--------|
 | T6-10 | 데모 GIF / 공격 시뮬레이션 | writer | 2h | ⏳ | T6-7 |
 | T6-11 | 벤치마크 문서화 | tester + writer | 3h | ⏳ | T6-4 |
+
+### 문서화 (Documentation) -- 2건
+| ID | 태스크 | 담당 | 예상 | 상태 | 의존성 |
+|----|--------|------|------|------|--------|
+| T6-13 | ironpost-daemon 문서화 | writer | 1h | ✅ (2026-02-11 완료, 3분, README 439 lines) | T6-1 |
+| T6-14 | ironpost-cli 문서화 | writer | 1.5h | ✅ (2026-02-11 완료, 1h, README 782 lines + doc comments) | T6-2 |
 
 ---
 

@@ -168,7 +168,10 @@ fn test_aggregate_status_multiple_unhealthy_modules() {
     let status = aggregate_status(&modules);
 
     // Then: Overall status should include all unhealthy reasons
-    assert!(status.is_unhealthy(), "multiple unhealthy modules should result in unhealthy status");
+    assert!(
+        status.is_unhealthy(),
+        "multiple unhealthy modules should result in unhealthy status"
+    );
     if let HealthStatus::Unhealthy(reason) = &status {
         assert!(
             reason.contains("ebpf-engine"),

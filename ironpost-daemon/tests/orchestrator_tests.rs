@@ -148,7 +148,10 @@ buffer_capacity = 0
     let result = IronpostConfig::parse(toml_str);
 
     // Then: Should parse successfully (validation happens later)
-    assert!(result.is_ok(), "parsing should succeed even if values are invalid");
+    assert!(
+        result.is_ok(),
+        "parsing should succeed even if values are invalid"
+    );
 }
 
 #[tokio::test]
@@ -165,11 +168,7 @@ async fn test_orchestrator_start_and_stop_with_disabled_modules() {
 
     // Then: Health check should show healthy (no modules to fail)
     let health = orchestrator.health().await;
-    assert_eq!(
-        health.modules.len(),
-        0,
-        "no modules should be running"
-    );
+    assert_eq!(health.modules.len(), 0, "no modules should be running");
 }
 
 #[tokio::test]
@@ -266,10 +265,7 @@ async fn test_orchestrator_load_from_nonexistent_file_fails() {
     let result = ironpost_daemon::orchestrator::Orchestrator::build(&path).await;
 
     // Then: Should fail with appropriate error
-    assert!(
-        result.is_err(),
-        "loading from nonexistent file should fail"
-    );
+    assert!(result.is_err(), "loading from nonexistent file should fail");
     if let Err(e) = result {
         let err_msg = e.to_string();
         assert!(
@@ -312,10 +308,7 @@ async fn test_orchestrator_empty_config_uses_defaults() {
     let result = ironpost_daemon::orchestrator::Orchestrator::build_from_config(config).await;
 
     // Then: Should succeed with all default values
-    assert!(
-        result.is_ok(),
-        "empty config should work with all defaults"
-    );
+    assert!(result.is_ok(), "empty config should work with all defaults");
     let orchestrator = result.expect("orchestrator should be built");
     let retrieved_config = orchestrator.config();
 

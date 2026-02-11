@@ -33,4 +33,8 @@ pub struct DaemonCli {
     /// Validate configuration file and exit without starting the daemon.
     #[arg(long)]
     pub validate: bool,
+
+    /// Override PID file path (takes precedence over config file).
+    #[arg(long)]
+    pub pid_file: Option<String>,
 }

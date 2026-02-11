@@ -81,6 +81,9 @@ impl ModuleRegistry {
     /// Returns an error on the first module that fails to start.
     /// Already-started modules are NOT rolled back; the caller should
     /// invoke `stop_all` if partial startup is unacceptable.
+    ///
+    /// Note: Module panics will propagate to the daemon orchestrator.
+    /// Modules are expected to handle all errors gracefully and avoid panicking.
     pub async fn start_all(&mut self) -> anyhow::Result<()> {
         for handle in &mut self.modules {
             if !handle.enabled {
@@ -104,6 +107,9 @@ impl ModuleRegistry {
     /// Logs errors but continues stopping remaining modules.
     /// Registration order is: eBPF -> LogPipeline -> SBOM -> ContainerGuard.
     /// Stopping in this order ensures producers stop first, allowing consumers to drain.
+    ///
+    /// Note: Module panics during stop will propagate to the daemon orchestrator.
+    /// Modules are expected to handle all errors gracefully and avoid panicking.
     pub async fn stop_all(&mut self) -> anyhow::Result<()> {
         let mut errors = Vec::new();
 
@@ -343,10 +349,7 @@ mod tests {
         // Given: Registry with modules of different health
         let mut registry = ModuleRegistry::new();
 
-        let pipeline1 = Box::new(MockPipeline::new(
-            "healthy",
-            HealthStatus::Healthy,
-        ));
+        let pipeline1 = Box::new(MockPipeline::new("healthy", HealthStatus::Healthy));
         let handle1 = ModuleHandle::new("healthy-module", true, pipeline1);
         registry.register(handle1);
 

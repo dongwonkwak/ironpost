@@ -52,6 +52,9 @@ async fn main() -> Result<()> {
     if let Some(ref format) = cli.log_format {
         config.general.log_format = format.clone();
     }
+    if let Some(ref pid_file) = cli.pid_file {
+        config.general.pid_file = pid_file.clone();
+    }
 
     // Validate-only mode
     if cli.validate {

@@ -252,6 +252,20 @@ impl IronpostConfig {
             }
         }
 
+        // Module-specific validation (only for enabled modules)
+        if self.ebpf.enabled {
+            self.ebpf.validate()?;
+        }
+        if self.log_pipeline.enabled {
+            self.log_pipeline.validate()?;
+        }
+        if self.container.enabled {
+            self.container.validate()?;
+        }
+        if self.sbom.enabled {
+            self.sbom.validate()?;
+        }
+
         Ok(())
     }
 }
@@ -311,6 +325,27 @@ impl Default for EbpfConfig {
     }
 }
 
+impl EbpfConfig {
+    /// Validate eBPF configuration values.
+    pub fn validate(&self) -> Result<(), IronpostError> {
+        if self.ring_buffer_size == 0 {
+            return Err(ConfigError::InvalidValue {
+                field: "ebpf.ring_buffer_size".to_owned(),
+                reason: "must be greater than 0".to_owned(),
+            }
+            .into());
+        }
+        if self.blocklist_max_entries == 0 {
+            return Err(ConfigError::InvalidValue {
+                field: "ebpf.blocklist_max_entries".to_owned(),
+                reason: "must be greater than 0".to_owned(),
+            }
+            .into());
+        }
+        Ok(())
+    }
+}
+
 /// 로그 파이프라인 설정
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -346,6 +381,35 @@ impl Default for LogPipelineConfig {
     }
 }
 
+impl LogPipelineConfig {
+    /// Validate log pipeline configuration values.
+    pub fn validate(&self) -> Result<(), IronpostError> {
+        if self.batch_size == 0 {
+            return Err(ConfigError::InvalidValue {
+                field: "log_pipeline.batch_size".to_owned(),
+                reason: "must be greater than 0".to_owned(),
+            }
+            .into());
+        }
+        if self.batch_size > 10_000 {
+            return Err(ConfigError::InvalidValue {
+                field: "log_pipeline.batch_size".to_owned(),
+                reason: "must not exceed 10,000 (performance limit)".to_owned(),
+            }
+            .into());
+        }
+        if self.flush_interval_secs == 0 {
+            return Err(ConfigError::InvalidValue {
+                field: "log_pipeline.flush_interval_secs".to_owned(),
+                reason: "must be greater than 0".to_owned(),
+            }
+            .into());
+        }
+        self.storage.validate()?;
+        Ok(())
+    }
+}
+
 /// 스토리지 설정
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -365,6 +429,27 @@ impl Default for StorageConfig {
             redis_url: "redis://localhost:6379".to_owned(),
             retention_days: 30,
         }
+    }
+}
+
+impl StorageConfig {
+    /// Validate storage configuration values.
+    pub fn validate(&self) -> Result<(), IronpostError> {
+        if self.retention_days == 0 {
+            return Err(ConfigError::InvalidValue {
+                field: "log_pipeline.storage.retention_days".to_owned(),
+                reason: "must be greater than 0".to_owned(),
+            }
+            .into());
+        }
+        if self.retention_days > 3650 {
+            return Err(ConfigError::InvalidValue {
+                field: "log_pipeline.storage.retention_days".to_owned(),
+                reason: "must not exceed 3,650 days (10 years)".to_owned(),
+            }
+            .into());
+        }
+        Ok(())
     }
 }
 
@@ -396,6 +481,34 @@ impl Default for ContainerConfig {
     }
 }
 
+impl ContainerConfig {
+    /// Validate container guard configuration values.
+    pub fn validate(&self) -> Result<(), IronpostError> {
+        if self.poll_interval_secs == 0 {
+            return Err(ConfigError::InvalidValue {
+                field: "container.poll_interval_secs".to_owned(),
+                reason: "must be greater than 0".to_owned(),
+            }
+            .into());
+        }
+        if self.poll_interval_secs > 3600 {
+            return Err(ConfigError::InvalidValue {
+                field: "container.poll_interval_secs".to_owned(),
+                reason: "must not exceed 3,600 seconds (1 hour)".to_owned(),
+            }
+            .into());
+        }
+        if self.docker_socket.is_empty() {
+            return Err(ConfigError::InvalidValue {
+                field: "container.docker_socket".to_owned(),
+                reason: "must not be empty".to_owned(),
+            }
+            .into());
+        }
+        Ok(())
+    }
+}
+
 /// SBOM 스캐너 설정
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -424,6 +537,34 @@ impl Default for SbomConfig {
             min_severity: "medium".to_owned(),
             output_format: "cyclonedx".to_owned(),
         }
+    }
+}
+
+impl SbomConfig {
+    /// Validate SBOM scanner configuration values.
+    pub fn validate(&self) -> Result<(), IronpostError> {
+        if self.vuln_db_update_hours == 0 {
+            return Err(ConfigError::InvalidValue {
+                field: "sbom.vuln_db_update_hours".to_owned(),
+                reason: "must be greater than 0".to_owned(),
+            }
+            .into());
+        }
+        if self.vuln_db_update_hours > 8760 {
+            return Err(ConfigError::InvalidValue {
+                field: "sbom.vuln_db_update_hours".to_owned(),
+                reason: "must not exceed 8,760 hours (1 year)".to_owned(),
+            }
+            .into());
+        }
+        if self.scan_dirs.is_empty() {
+            return Err(ConfigError::InvalidValue {
+                field: "sbom.scan_dirs".to_owned(),
+                reason: "must have at least one directory".to_owned(),
+            }
+            .into());
+        }
+        Ok(())
     }
 }
 

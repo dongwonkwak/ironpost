@@ -27,6 +27,19 @@ pub async fn execute(
     Ok(())
 }
 
+/// Build a status report from configuration and daemon state.
+///
+/// Queries daemon status via PID file and constructs module-level health information
+/// based on enabled modules in the configuration.
+///
+/// # Arguments
+///
+/// * `config` - Loaded Ironpost configuration
+/// * `verbose` - Include detailed per-module configuration in output
+///
+/// # Returns
+///
+/// Returns `StatusReport` containing daemon state and module health information.
 fn build_status_report(config: &IronpostConfig, verbose: bool) -> Result<StatusReport, CliError> {
     // Check if daemon is running by checking PID file
     let (daemon_running, uptime_secs) = check_daemon_status(&config.general.pid_file);
@@ -199,18 +212,29 @@ fn is_process_alive(_pid: u32) -> bool {
     false
 }
 
+/// Status report containing daemon state and module health.
+///
+/// This structure is serialized to JSON or rendered as text depending on output format.
 #[derive(Serialize)]
 pub struct StatusReport {
+    /// Whether the daemon process is currently running (based on PID file check)
     pub daemon_running: bool,
+    /// Daemon uptime in seconds, or None if unavailable
     pub uptime_secs: Option<u64>,
+    /// Health status of each enabled module
     pub modules: Vec<ModuleStatus>,
 }
 
+/// Health status of a single module.
 #[derive(Serialize)]
 pub struct ModuleStatus {
+    /// Module name (ebpf-engine, log-pipeline, container-guard, sbom-scanner)
     pub name: String,
+    /// Whether the module is enabled in configuration
     pub enabled: bool,
+    /// Health state: "running" | "stopped" | "degraded"
     pub health: String,
+    /// Optional verbose configuration details (only when --verbose flag is used)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub details: Option<String>,
 }

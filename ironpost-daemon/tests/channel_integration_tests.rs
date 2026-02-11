@@ -6,7 +6,7 @@
 //! - Container Guard → Logger (ActionEvent)
 
 use tokio::sync::mpsc;
-use tokio::time::{timeout, Duration};
+use tokio::time::{Duration, timeout};
 
 use bytes::Bytes;
 use ironpost_core::event::{ActionEvent, AlertEvent, EventMetadata, PacketEvent};
@@ -118,7 +118,9 @@ async fn test_channel_back_pressure() {
 
     // Third send will block until receiver drains
     let send_task = tokio::spawn(async move {
-        tx.send(alert3).await.expect("third send should succeed after drain");
+        tx.send(alert3)
+            .await
+            .expect("third send should succeed after drain");
     });
 
     // Drain one message
@@ -141,7 +143,10 @@ async fn test_channel_close_on_sender_drop() {
 
     // Then: Receiver should return None
     let result = rx.recv().await;
-    assert!(result.is_none(), "receive should return None after sender dropped");
+    assert!(
+        result.is_none(),
+        "receive should return None after sender dropped"
+    );
 }
 
 #[tokio::test]
@@ -251,7 +256,10 @@ async fn test_channel_empty_receive_timeout() {
     let result = timeout(Duration::from_millis(100), rx.recv()).await;
 
     // Then: Should timeout
-    assert!(result.is_err(), "receive should timeout when channel is empty");
+    assert!(
+        result.is_err(),
+        "receive should timeout when channel is empty"
+    );
 }
 
 #[tokio::test]
@@ -301,9 +309,7 @@ async fn test_channel_capacity_one_backpressure() {
     let (tx, mut rx) = mpsc::channel::<ActionEvent>(1);
 
     // When: Spawning receiver task
-    let recv_task = tokio::spawn(async move {
-        rx.recv().await.expect("should receive action")
-    });
+    let recv_task = tokio::spawn(async move { rx.recv().await.expect("should receive action") });
 
     // Give receiver time to start waiting
     tokio::time::sleep(Duration::from_millis(10)).await;

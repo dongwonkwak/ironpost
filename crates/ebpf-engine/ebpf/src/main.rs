@@ -11,9 +11,9 @@
 //! 6. 의심 패킷 이벤트(RingBuf)로 유저스페이스 전달
 //!
 //! # BPF 맵
-//! - `BLOCKLIST`: HashMap<u32, BlocklistValue> — IP 차단 목록
-//! - `STATS`: PerCpuArray<ProtoStats> — 프로토콜별 패킷/바이트/드롭 카운터
-//! - `EVENTS`: RingBuf — 의심 패킷 이벤트를 유저스페이스로 전달
+//! - `BLOCKLIST`: `HashMap<u32, BlocklistValue>` — IP 차단 목록
+//! - `STATS`: `PerCpuArray<ProtoStats>` — 프로토콜별 패킷/바이트/드롭 카운터
+//! - `EVENTS`: `RingBuf` — 의심 패킷 이벤트를 유저스페이스로 전달
 //!
 //! # 네트워크 헤더
 //! 헤더 구조체는 [`network_types`] 크레이트를 사용합니다.
@@ -116,7 +116,7 @@ fn try_ironpost_xdp(ctx: XdpContext) -> Result<u32, u32> {
     let ip_hdr_len = ihl * 4;
 
     // IHL 유효성 검증 (최소 5, 최대 15)
-    if ihl < 5 || ihl > 15 {
+    if !(5..=15).contains(&ihl) {
         return Ok(xdp_action::XDP_PASS);
     }
 

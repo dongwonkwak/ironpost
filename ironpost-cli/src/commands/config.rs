@@ -24,6 +24,18 @@ pub async fn execute(
     }
 }
 
+/// Execute the config validate subcommand.
+///
+/// Attempts to load and validate the configuration file, reporting any errors.
+///
+/// # Arguments
+///
+/// * `config_path` - Path to ironpost.toml configuration file
+/// * `writer` - Output writer for rendering results
+///
+/// # Errors
+///
+/// Returns `CliError::Config` if validation fails (missing fields, invalid values, parse errors).
 async fn execute_validate(config_path: &Path, writer: &OutputWriter) -> Result<(), CliError> {
     info!(path = %config_path.display(), "validating configuration");
 
@@ -51,6 +63,20 @@ async fn execute_validate(config_path: &Path, writer: &OutputWriter) -> Result<(
     Ok(())
 }
 
+/// Execute the config show subcommand.
+///
+/// Loads and displays the effective configuration (file + env overrides + defaults).
+/// Automatically redacts sensitive credentials from database and Redis URLs.
+///
+/// # Arguments
+///
+/// * `config_path` - Path to ironpost.toml configuration file
+/// * `section` - Optional section name to display (general, ebpf, log_pipeline, container, sbom)
+/// * `writer` - Output writer for rendering results
+///
+/// # Errors
+///
+/// Returns `CliError::Config` if loading fails or `CliError::Command` if section name is invalid.
 async fn execute_show(
     config_path: &Path,
     section: Option<String>,
@@ -123,7 +149,8 @@ async fn execute_show(
 /// Replaces credentials in URLs like `postgresql://user:password@host:5432/db`
 /// with `postgresql://***REDACTED***@host:5432/db`.
 fn redact_credentials(config: &mut IronpostConfig) {
-    config.log_pipeline.storage.postgres_url = redact_url(&config.log_pipeline.storage.postgres_url);
+    config.log_pipeline.storage.postgres_url =
+        redact_url(&config.log_pipeline.storage.postgres_url);
     config.log_pipeline.storage.redis_url = redact_url(&config.log_pipeline.storage.redis_url);
 }
 
@@ -160,11 +187,18 @@ fn redact_url(url: &str) -> String {
     url.to_owned()
 }
 
+/// Configuration display report.
+///
+/// Contains the source file path and serialized TOML configuration.
+/// The `config_toml` field is skipped during JSON serialization (only used for text rendering).
 #[derive(Serialize)]
 pub struct ConfigReport {
+    /// Configuration file path
     pub source: String,
+    /// Optional section name (None = full config)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub section: Option<String>,
+    /// Serialized TOML configuration (with redacted credentials)
     #[serde(skip)]
     pub config_toml: String,
 }
@@ -174,10 +208,11 @@ impl Render for ConfigReport {
         use colored::Colorize;
 
         if let Some(ref section) = self.section {
+            let section_label = format!("[{}]", section);
             writeln!(
                 w,
-                "Configuration [{}] (source: {})",
-                section.bold(),
+                "Configuration {} (source: {})",
+                section_label.bold(),
                 self.source
             )?;
         } else {
@@ -191,10 +226,16 @@ impl Render for ConfigReport {
     }
 }
 
+/// Configuration validation report.
+///
+/// Contains validation result and any error messages encountered.
 #[derive(Serialize)]
 pub struct ConfigValidationReport {
+    /// Configuration file path
     pub source: String,
+    /// Whether the configuration is valid
     pub valid: bool,
+    /// Validation error messages (empty if valid)
     pub errors: Vec<String>,
 }
 

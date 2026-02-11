@@ -187,9 +187,8 @@ impl AlertGenerator {
         self.dedup_tracker
             .retain(|_, last_time| last_time.elapsed() < self.dedup_window * 2);
 
-        self.rate_tracker.retain(|_, (_, minute_start)| {
-            minute_start.elapsed() < Duration::from_secs(120)
-        });
+        self.rate_tracker
+            .retain(|_, (_, minute_start)| minute_start.elapsed() < Duration::from_secs(120));
     }
 
     /// 생성된 총 알림 수를 반환합니다.

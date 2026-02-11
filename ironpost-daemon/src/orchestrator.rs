@@ -118,9 +118,11 @@ impl Orchestrator {
         #[cfg(not(target_os = "linux"))]
         let packet_rx_for_pipeline = None;
 
-        if let Some(handle) =
-            crate::modules::log_pipeline::init(&config, Some(packet_rx_for_pipeline), alert_tx.clone())?
-        {
+        if let Some(handle) = crate::modules::log_pipeline::init(
+            &config,
+            Some(packet_rx_for_pipeline),
+            alert_tx.clone(),
+        )? {
             modules.register(handle);
         }
 
@@ -168,7 +170,14 @@ impl Orchestrator {
 
         // Start all modules
         tracing::info!("starting all enabled modules");
-        self.modules.start_all().await?;
+        if let Err(e) = self.modules.start_all().await {
+            // Cleanup PID file on startup failure
+            if !self.config.general.pid_file.is_empty() {
+                let path = Path::new(&self.config.general.pid_file);
+                remove_pid_file(path);
+            }
+            return Err(e);
+        }
 
         // Spawn action logger task
         let mut action_logger_task = if let Some(action_rx) = self.action_rx.take() {
@@ -283,16 +292,11 @@ fn write_pid_file(path: &Path) -> Result<()> {
     let pid = std::process::id();
 
     // Atomically create file only if it doesn't exist (eliminates TOCTOU race)
-    let mut file = match OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
-    {
+    let mut file = match OpenOptions::new().write(true).create_new(true).open(path) {
         Ok(f) => f,
         Err(e) if e.kind() == ErrorKind::AlreadyExists => {
             // File already exists, read the existing PID for error message
-            let existing_pid = fs::read_to_string(path)
-                .unwrap_or_else(|_| "unknown".to_string());
+            let existing_pid = fs::read_to_string(path).unwrap_or_else(|_| "unknown".to_string());
             return Err(anyhow::anyhow!(
                 "PID file {} already exists with PID: {}. Is another instance running?",
                 path.display(),
@@ -334,15 +338,23 @@ fn spawn_action_logger(
     tokio::spawn(async move {
         loop {
             tokio::select! {
-                Some(action) = action_rx.recv() => {
-                    tracing::info!(
-                        action_id = %action.id,
-                        action_type = %action.action_type,
-                        target = %action.target,
-                        success = action.success,
-                        timestamp = ?action.metadata.timestamp,
-                        "isolation action completed"
-                    );
+                action_result = action_rx.recv() => {
+                    match action_result {
+                        Some(action) => {
+                            tracing::info!(
+                                action_id = %action.id,
+                                action_type = %action.action_type,
+                                target = %action.target,
+                                success = action.success,
+                                timestamp = ?action.metadata.timestamp,
+                                "isolation action completed"
+                            );
+                        }
+                        None => {
+                            tracing::debug!("action channel closed, exiting logger");
+                            break;
+                        }
+                    }
                 }
                 _ = shutdown_rx.recv() => {
                     tracing::debug!("action logger shutting down");
@@ -439,10 +451,7 @@ mod tests {
         // Given: A non-existent PID file
         let temp_dir = std::env::temp_dir();
         let pid_file = temp_dir.join(format!("ironpost_test_nonexist_{}.pid", std::process::id()));
-        assert!(
-            !pid_file.exists(),
-            "PID file should not exist before test"
-        );
+        assert!(!pid_file.exists(), "PID file should not exist before test");
 
         // When: Attempting to remove non-existent file
         // Then: Should not panic (logs warning internally)
@@ -516,8 +525,7 @@ mod tests {
         let _ = shutdown_tx.send(());
 
         // Then: Task should complete quickly
-        let result =
-            tokio::time::timeout(tokio::time::Duration::from_millis(100), task).await;
+        let result = tokio::time::timeout(tokio::time::Duration::from_millis(100), task).await;
         assert!(
             result.is_ok(),
             "action logger should shut down within timeout"

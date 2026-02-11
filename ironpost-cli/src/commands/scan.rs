@@ -74,6 +74,15 @@ pub async fn execute(
     Ok(())
 }
 
+/// Parse severity level from string (case-insensitive).
+///
+/// # Arguments
+///
+/// * `s` - Severity string (info, low, medium, high, critical)
+///
+/// # Errors
+///
+/// Returns `CliError::Command` if the input is not a valid severity level.
 fn parse_severity(s: &str) -> Result<Severity, CliError> {
     match s.to_lowercase().as_str() {
         "info" => Ok(Severity::Info),
@@ -88,6 +97,15 @@ fn parse_severity(s: &str) -> Result<Severity, CliError> {
     }
 }
 
+/// Parse SBOM format from string (case-insensitive).
+///
+/// # Arguments
+///
+/// * `s` - SBOM format string (cyclonedx, spdx)
+///
+/// # Errors
+///
+/// Returns `CliError::Command` if the input is not a valid SBOM format.
 fn parse_sbom_format(s: &str) -> Result<SbomFormat, CliError> {
     match s.to_lowercase().as_str() {
         "cyclonedx" => Ok(SbomFormat::CycloneDx),
@@ -99,6 +117,19 @@ fn parse_sbom_format(s: &str) -> Result<SbomFormat, CliError> {
     }
 }
 
+/// Build a scan report from scanner results.
+///
+/// Aggregates findings from multiple lockfiles and filters by minimum severity.
+///
+/// # Arguments
+///
+/// * `path` - Scanned directory path
+/// * `results` - Scan results from SBOM scanner (one per lockfile)
+/// * `min_severity` - Minimum severity threshold for filtering findings
+///
+/// # Returns
+///
+/// Returns `ScanReport` with aggregated vulnerability counts and filtered findings.
 fn build_scan_report(
     path: String,
     results: Vec<ironpost_sbom_scanner::vuln::ScanResult>,
@@ -153,6 +184,15 @@ fn build_scan_report(
     }
 }
 
+/// Convert severity enum to numeric level for comparison.
+///
+/// # Arguments
+///
+/// * `severity` - Severity enum value
+///
+/// # Returns
+///
+/// Returns numeric level (0=Info, 1=Low, 2=Medium, 3=High, 4=Critical).
 fn severity_level(severity: &Severity) -> u8 {
     match severity {
         Severity::Info => 0,
@@ -163,32 +203,54 @@ fn severity_level(severity: &Severity) -> u8 {
     }
 }
 
+/// Scan report containing aggregated vulnerability findings.
+///
+/// This structure is serialized to JSON or rendered as text depending on output format.
 #[derive(Serialize)]
 pub struct ScanReport {
+    /// Scanned directory path
     pub path: String,
+    /// Number of lockfiles found and processed
     pub lockfiles_scanned: usize,
+    /// Total dependency count across all lockfiles
     pub total_packages: usize,
+    /// Aggregated vulnerability counts by severity
     pub vulnerabilities: VulnSummary,
+    /// Individual CVE findings (filtered by min_severity)
     pub findings: Vec<FindingEntry>,
 }
 
+/// Vulnerability count summary by severity level.
 #[derive(Serialize, Default)]
 pub struct VulnSummary {
+    /// Number of critical severity vulnerabilities
     pub critical: usize,
+    /// Number of high severity vulnerabilities
     pub high: usize,
+    /// Number of medium severity vulnerabilities
     pub medium: usize,
+    /// Number of low severity vulnerabilities
     pub low: usize,
+    /// Number of informational severity vulnerabilities
     pub info: usize,
+    /// Total count (sum of all severity levels)
     pub total: usize,
 }
 
+/// Individual vulnerability finding entry.
 #[derive(Serialize)]
 pub struct FindingEntry {
+    /// CVE identifier (e.g., "CVE-2024-1234")
     pub cve_id: String,
+    /// Package name
     pub package: String,
+    /// Installed version
     pub version: String,
+    /// Vulnerability severity level
     pub severity: String,
+    /// Fixed version (None if no fix available)
     pub fixed_version: Option<String>,
+    /// CVE description text
     pub description: String,
 }
 

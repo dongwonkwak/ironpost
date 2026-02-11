@@ -25,6 +25,19 @@ pub async fn execute(
     }
 }
 
+/// Execute the rules list subcommand.
+///
+/// Loads detection rules from the rules directory and optionally filters by status.
+///
+/// # Arguments
+///
+/// * `config_path` - Path to ironpost.toml configuration file
+/// * `status_filter` - Optional status filter (enabled, disabled, test)
+/// * `writer` - Output writer for rendering results
+///
+/// # Errors
+///
+/// Returns `CliError::Rule` if rule loading fails (directory not found, invalid YAML, etc.)
 async fn execute_list(
     config_path: &Path,
     status_filter: Option<String>,
@@ -82,6 +95,18 @@ async fn execute_list(
     Ok(())
 }
 
+/// Execute the rules validate subcommand.
+///
+/// Validates all YAML rule files in the specified directory without loading them into the engine.
+///
+/// # Arguments
+///
+/// * `path` - Directory containing YAML rule files
+/// * `writer` - Output writer for rendering results
+///
+/// # Errors
+///
+/// Returns `CliError::Rule` if one or more rules are invalid (exits with code 1).
 async fn execute_validate(path: &Path, writer: &OutputWriter) -> Result<(), CliError> {
     info!(path = %path.display(), "validating detection rules");
 
@@ -121,18 +146,29 @@ async fn execute_validate(path: &Path, writer: &OutputWriter) -> Result<(), CliE
     Ok(())
 }
 
+/// Rule listing report.
+///
+/// Contains the total count and list of loaded rules (optionally filtered).
 #[derive(Serialize)]
 pub struct RuleListReport {
+    /// Total number of rules (after filtering)
     pub total: usize,
+    /// List of rule entries
     pub rules: Vec<RuleEntry>,
 }
 
+/// Individual detection rule entry.
 #[derive(Serialize)]
 pub struct RuleEntry {
+    /// Unique rule identifier
     pub id: String,
+    /// Human-readable rule title
     pub title: String,
+    /// Detection severity level
     pub severity: String,
+    /// Rule status (enabled, disabled, test)
     pub status: String,
+    /// Rule tags for categorization
     pub tags: Vec<String>,
 }
 
@@ -143,7 +179,7 @@ impl Render for RuleListReport {
         writeln!(
             w,
             "Detection Rules ({} total)",
-            self.total.to_string().bold()
+            format!("{} total", self.total).bold()
         )?;
         writeln!(w)?;
         writeln!(
@@ -175,18 +211,29 @@ impl Render for RuleListReport {
     }
 }
 
+/// Rule validation report.
+///
+/// Contains validation summary and detailed error information for invalid rules.
 #[derive(Serialize)]
 pub struct RuleValidationReport {
+    /// Rules directory path
     pub path: String,
+    /// Total number of rule files processed
     pub total_files: usize,
+    /// Count of valid rules
     pub valid: usize,
+    /// Count of invalid rules
     pub invalid: usize,
+    /// Validation errors (one per invalid rule)
     pub errors: Vec<RuleError>,
 }
 
+/// Rule validation error entry.
 #[derive(Serialize)]
 pub struct RuleError {
+    /// Rule filename
     pub file: String,
+    /// Error message
     pub error: String,
 }
 
@@ -197,13 +244,13 @@ impl Render for RuleValidationReport {
         writeln!(w, "Rule Validation: {}", self.path.bold())?;
         writeln!(
             w,
-            "  Files: {} total, {} valid, {} invalid",
+            "  Files: {}, {}, {}",
             self.total_files,
-            self.valid.to_string().green(),
+            format!("{} valid", self.valid).green(),
             if self.invalid > 0 {
-                self.invalid.to_string().red()
+                format!("{} invalid", self.invalid).red()
             } else {
-                self.invalid.to_string().normal()
+                format!("{} invalid", self.invalid).normal()
             }
         )?;
 
