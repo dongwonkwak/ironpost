@@ -2,7 +2,7 @@
 
 **Unified security monitoring platform built in Rust — eBPF network detection, log analysis, container isolation, and SBOM vulnerability scanning.**
 
-[![Build Status](https://img.shields.io/badge/build-passing-brightgreen)](https://github.com/ironpost/ironpost)
+[![CI](https://github.com/dongwonkwak/ironpost/actions/workflows/ci.yml/badge.svg)](https://github.com/dongwonkwak/ironpost/actions/workflows/ci.yml)
 [![Rust Version](https://img.shields.io/badge/rust-1.93%2B-orange)](https://www.rust-lang.org)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Tests](https://img.shields.io/badge/tests-1063%20passing-success)](.)
