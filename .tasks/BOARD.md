@@ -39,7 +39,7 @@
 |----|--------|------|------|------|--------|
 | T7.8 | Dockerfile 개선 (multi-stage, cargo-chef, distroless) | implementer | 1.5h | ✅ (2026-02-11 완료, 15분) | 없음 |
 | T7.9 | docker-compose.yml 개선 (healthcheck, network, resources) | implementer | 1h | ✅ (2026-02-11 완료, 35분) | T7.8 |
-| T7.10 | docker-compose.demo.yml (nginx, redis, log-generator, attack-sim) | implementer + writer | 1.5h | ⏳ | T7.9 |
+| T7.10 | docker-compose.demo.yml (nginx, redis, log-generator, attack-sim) | implementer + writer | 1.5h | 🔄 (2026-02-11 시작) | T7.9 |
 | T7.11 | docs/demo.md 데모 실행 가이드 (3분 체험) | writer | 1h | ⏳ | T7.10 |
 
 ### Part C: GitHub Actions CI Enhancement -- 2건
