@@ -247,16 +247,13 @@ async fn test_e2e_sbom_scan_multiple_vulns() {
                 .find(|s| s.starts_with("CVE-"))
                 .map(|s| s.trim_end_matches(':').to_owned())
                 .unwrap_or_else(|| {
-                    eprintln!(
-                        "Warning: Could not extract CVE from title: {}",
-                        a.alert.title
-                    );
+                    tracing::debug!("Could not extract CVE from title: {}", a.alert.title);
                     String::new()
                 })
         })
         .collect();
 
-    eprintln!("Extracted CVE IDs: {:?}", cve_ids);
+    tracing::debug!("Extracted CVE IDs: {:?}", cve_ids);
 
     assert!(
         cve_ids.contains(&"CVE-2024-0001".to_owned()),

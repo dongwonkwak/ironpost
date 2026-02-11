@@ -64,7 +64,7 @@ services:
     container_name: ironpost-daemon
     restart: unless-stopped
     ports:
-      - "${IRONPOST_SYSLOG_PORT:-514}:514/udp"
+      - "${IRONPOST_SYSLOG_PORT:-514}:1514/udp"
       - "${IRONPOST_API_PORT:-8080}:8080"
     environment:
       # General settings
@@ -80,7 +80,7 @@ services:
 
       # Log pipeline
       IRONPOST_LOG_PIPELINE_ENABLED: ${IRONPOST_LOG_PIPELINE_ENABLED:-true}
-      IRONPOST_LOG_PIPELINE_SYSLOG_BIND: 0.0.0.0:514
+      IRONPOST_LOG_PIPELINE_SYSLOG_BIND: 0.0.0.0:1514
       IRONPOST_LOG_PIPELINE_BATCH_SIZE: ${IRONPOST_LOG_PIPELINE_BATCH_SIZE:-1000}
       IRONPOST_LOG_PIPELINE_FLUSH_INTERVAL_SECS: ${IRONPOST_LOG_PIPELINE_FLUSH_INTERVAL_SECS:-5}
 

@@ -67,7 +67,6 @@ RUN useradd --create-home --shell /bin/bash ironpost
 # Copy binaries from builder stage
 COPY --from=builder /app/target/release/ironpost-daemon /usr/local/bin/
 COPY --from=builder /app/target/release/ironpost-cli /usr/local/bin/
-COPY --from=builder /app/ironpost.toml /etc/ironpost/ironpost.toml
 
 # Create necessary directories with proper ownership
 RUN mkdir -p /var/lib/ironpost /var/log/ironpost /var/run \
@@ -77,8 +76,9 @@ RUN mkdir -p /var/lib/ironpost /var/log/ironpost /var/run \
 # Switch to non-root user
 USER ironpost
 
-# Expose ports (UDP syslog and HTTP API)
-EXPOSE 514/udp 8080
+# Expose ports (UDP syslog on unprivileged port 1514, HTTP API on 8080)
+# External port 514 is mapped to internal 1514 via docker-compose port mapping
+EXPOSE 1514/udp 8080
 
 # Health check using CLI status command
 # Check if daemon process is running and responding

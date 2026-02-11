@@ -116,6 +116,7 @@ log_level = "info"
 
 /// Environment variable overrides config file values.
 #[tokio::test]
+#[serial_test::serial]
 async fn test_e2e_env_override_config() {
     let mut config = TestConfigBuilder::new()
         .log_level("info")
