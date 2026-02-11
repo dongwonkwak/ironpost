@@ -55,6 +55,7 @@ setup:
     rustup toolchain install nightly --component rust-src
     cargo install bpf-linker || echo "Warning: bpf-linker install failed (Linux only)"
     cargo install cargo-watch || echo "Warning: cargo-watch install failed"
+    just install-hooks
 
 # Watch mode for development
 watch:
@@ -67,3 +68,12 @@ run:
 # Run CLI
 cli *ARGS:
     cargo run -p ironpost-cli -- {{ARGS}}
+
+# Install git hooks
+install-hooks:
+    @echo "📦 Installing git hooks..."
+    @cp hooks/pre-commit .git/hooks/pre-commit
+    @chmod +x .git/hooks/pre-commit
+    @echo "✅ Git hooks installed successfully!"
+    @echo "   Location: .git/hooks/pre-commit"
+    @echo "   Bypass: git commit --no-verify"

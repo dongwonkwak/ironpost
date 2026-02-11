@@ -1,0 +1,76 @@
+#!/bin/bash
+# Ironpost Pre-commit Hook
+# 커밋 전 필수 검사를 수행합니다.
+# git commit --no-verify 로 우회 가능 (긴급 상황 시에만 사용)
+
+set -e  # 하나라도 실패하면 즉시 종료
+
+echo "🔍 Running pre-commit checks..."
+echo ""
+
+# 1. 포맷팅 검사
+echo "📝 Checking code formatting..."
+if ! cargo fmt --all --check; then
+    echo ""
+    echo "❌ 포맷팅 오류 발견!"
+    echo "   다음 명령어로 수정하세요:"
+    echo "   cargo fmt --all"
+    echo ""
+    exit 1
+fi
+echo "✅ Formatting OK"
+echo ""
+
+# 2. Clippy 검사 (경고를 에러로 처리)
+echo "🔧 Running clippy..."
+if ! cargo clippy --workspace --all-targets -- -D warnings; then
+    echo ""
+    echo "❌ Clippy 오류 발견!"
+    echo "   코드를 수정하거나 정당한 경우 #[allow(...)] 사용"
+    echo ""
+    exit 1
+fi
+echo "✅ Clippy OK"
+echo ""
+
+# 3. 테스트 실행
+echo "🧪 Running tests..."
+if ! cargo test --workspace; then
+    echo ""
+    echo "❌ 테스트 실패!"
+    echo "   모든 테스트를 통과해야 커밋할 수 있습니다."
+    echo ""
+    exit 1
+fi
+echo "✅ Tests OK"
+echo ""
+
+# 4. 문서 생성 검증
+echo "📚 Checking documentation..."
+if ! cargo doc --workspace --no-deps --document-private-items 2>&1 | grep -v "^warning: unused"; then
+    echo ""
+    echo "❌ 문서 생성 실패!"
+    echo "   문서 주석을 확인하세요."
+    echo ""
+    exit 1
+fi
+echo "✅ Documentation OK"
+echo ""
+
+# 5. 보안 취약점 검사 (선택적, 느릴 수 있음)
+# 활성화하려면 주석 해제하세요. cargo-audit 설치 필요: cargo install cargo-audit
+# echo "🔒 Checking security vulnerabilities..."
+# if ! cargo audit; then
+#     echo ""
+#     echo "⚠️  보안 취약점 발견!"
+#     echo "   의존성을 업데이트하거나 advisory를 확인하세요."
+#     echo "   긴급한 경우: git commit --no-verify"
+#     echo ""
+#     exit 1
+# fi
+# echo "✅ Security audit OK"
+# echo ""
+
+echo "🎉 All pre-commit checks passed!"
+echo "   Proceeding with commit..."
+echo ""
