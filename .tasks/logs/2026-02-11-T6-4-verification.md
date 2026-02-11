@@ -115,8 +115,12 @@ cargo test --workspace --lib
 
 ### Clippy Results
 ```
-cargo clippy --workspace --exclude ironpost-ebpf -- -D warnings
+# Linux: 모든 크레이트 검사
+cargo clippy --workspace -- -D warnings
    Finished with no warnings
+
+# non-Linux: eBPF 엔진 제외
+cargo clippy --workspace --exclude ironpost-ebpf-engine -- -D warnings
 ```
 
 ## Files Modified

@@ -54,9 +54,13 @@ use crate::stats::TrafficStats;
 /// macOS/Windows에서는 start() 시 에러를 반환합니다.
 pub struct EbpfEngine {
     config: EngineConfig,
+    /// Linux에서만 사용되는 필드 (spawn_event_reader에서 사용)
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     event_tx: mpsc::Sender<PacketEvent>,
     running: bool,
     stats: Arc<tokio::sync::Mutex<TrafficStats>>,
+    /// Linux에서만 사용되는 필드 (spawn_event_reader에서 사용)
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     detector: Arc<PacketDetector>,
     /// 로드된 eBPF 프로그램 핸들 (Linux 전용)
     #[cfg(target_os = "linux")]

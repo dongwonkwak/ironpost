@@ -425,7 +425,8 @@ Ironpost documentation follows a 4-layer hierarchy:
 
 **Generated docs:**
 ```bash
-cargo doc --no-deps --open
+# Generate documentation for all workspace members
+cargo doc --workspace --no-deps --open
 ```
 
 All public APIs have `///` doc comments with examples.
@@ -437,14 +438,20 @@ All public APIs have `///` doc comments with examples.
 ### Run All Tests
 
 ```bash
-# Run workspace tests (excluding eBPF)
-cargo test --workspace --exclude ironpost-ebpf
+# Run workspace tests
+cargo test --workspace
 
 # Run with output
-cargo test --workspace --exclude ironpost-ebpf -- --nocapture
+cargo test --workspace -- --nocapture
 
 # Run integration tests only
-cargo test --workspace --exclude ironpost-ebpf --test '*'
+cargo test --workspace --test '*'
+
+# Cross-platform testing notes:
+# - All modules compile on all platforms (macOS, Linux, Windows)
+# - eBPF runtime code is conditionally compiled (#[cfg(target_os = "linux")])
+# - Non-Linux platforms: eBPF engine tests validate error handling only
+# - Linux: Full eBPF integration tests run (some marked #[ignore] require privileges)
 ```
 
 ### Test Coverage by Module
@@ -506,19 +513,40 @@ cargo test --workspace --exclude ironpost-ebpf --test '*'
 
 ## Build Instructions
 
-### Unified Build (Recommended)
+### Quick Build (Recommended)
 
 ```bash
-# Build workspace only (excluding eBPF)
+# Development build (fast iteration, excludes eBPF)
 cargo run -p xtask -- build
-cargo run -p xtask -- build --release
 
-# Build everything including eBPF (Linux only)
-cargo run -p xtask -- build --all
+# Production build (includes eBPF on Linux, optimized)
 cargo run -p xtask -- build --all --release
 ```
 
-### Standard Build (Manual)
+**When to use `--all`:**
+- ✅ **CI/CD pipelines** — Always use `--all` to build complete artifacts
+- ✅ **Production releases** — Full build including eBPF module
+- ✅ **Integration testing** — When testing eBPF interactions
+- ❌ **Daily development** — Skip eBPF for faster build cycles (use without `--all`)
+
+**Platform support:**
+- **Linux**: Full support (workspace + eBPF with `--all`)
+- **macOS/Windows**: Workspace only (eBPF automatically excluded)
+
+### Unified Build Commands
+
+```bash
+# Development (fast, excludes eBPF)
+cargo run -p xtask -- build
+
+# Production (optimized, includes eBPF on Linux)
+cargo run -p xtask -- build --all --release
+
+# eBPF only (Linux, for eBPF-specific changes)
+cargo run -p xtask -- build-ebpf --release
+```
+
+### Standard Cargo Build (Manual)
 
 ```bash
 # Debug build (fast compilation, slow runtime)
@@ -527,29 +555,25 @@ cargo build
 # Release build (optimized, suitable for production)
 cargo build --release
 
-# Check without building (fast)
+# Check without building (fast syntax check)
 cargo check
 ```
 
-### eBPF Build (Linux Only)
+### eBPF Prerequisites (Linux Only)
 
 ```bash
-# Install prerequisites
+# Install toolchain (required once)
 cargo install bpf-linker
 rustup toolchain install nightly --component rust-src
 
-# Build eBPF kernel program only
-cargo run -p xtask -- build-ebpf
-cargo run -p xtask -- build-ebpf --release
-
-# Verify eBPF bytecode
+# Verify eBPF bytecode (after build)
 llvm-objdump -S target/bpfel-unknown-none/release/ironpost-ebpf
 ```
 
-**Requirements:**
-- Linux kernel 5.7+ with CONFIG_BPF=y, CONFIG_BPF_SYSCALL=y
+**eBPF Requirements:**
+- Linux kernel 5.7+ with `CONFIG_BPF=y`, `CONFIG_BPF_SYSCALL=y`
 - LLVM 18+ (for bpf-linker)
-- CAP_BPF capability or root user
+- CAP_BPF capability or root user (for loading eBPF programs)
 
 ### Cross-Platform Notes
 
@@ -592,9 +616,17 @@ SOFTWARE.
 See `CLAUDE.md` for development rules:
 - Rust 2024 Edition, `thiserror` for libraries, `anyhow` for binaries
 - No `unwrap()`, `as` casting, or `unsafe` without justification
-- `cargo fmt` and `cargo clippy -- -D warnings` must pass
+- Must pass: `cargo fmt --all --check` and `cargo clippy --workspace -- -D warnings`
 - All public APIs require `///` doc comments with examples
 - Commit convention: `feat/fix/docs/test/refactor` prefix
+
+**Pre-commit checks:**
+```bash
+cargo fmt --all --check
+cargo clippy --workspace -- -D warnings
+cargo test --workspace
+cargo doc --workspace --no-deps
+```
 
 ---
 

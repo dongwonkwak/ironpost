@@ -41,8 +41,8 @@ Ironpost 프로젝트의 루트 README.md를 L1 문서(recruiters/interviewers �
 - ✅ `crates/core/README.md`, `crates/log-pipeline/README.md` 읽기
 - ✅ `ironpost.toml.example` 읽기 (설정 섹션)
 - ✅ `Cargo.toml` workspace 구조 확인
-- ✅ 테스트 카운트 검증: `cargo test --workspace --exclude ironpost-ebpf` → 1063 tests
-- ✅ 릴리스 빌드 검증: `cargo build --release --workspace --exclude ironpost-ebpf` → success
+- ✅ 테스트 카운트 검증: `cargo test --workspace` → 1063 tests
+- ✅ 릴리스 빌드 검증: `cargo build --release --workspace` → success
 
 ### 2. README.md 작성 (1h)
 구조:
@@ -135,7 +135,7 @@ flowchart TB
 
 ### 빌드 검증
 ```bash
-$ cargo build --release --workspace --exclude ironpost-ebpf
+$ cargo build --release --workspace
    Compiling ironpost-daemon v0.1.0
    Compiling ironpost-cli v0.1.0
     Finished `release` profile [optimized] target(s) in 34.96s
@@ -143,8 +143,12 @@ $ cargo build --release --workspace --exclude ironpost-ebpf
 
 ### 테스트 검증
 ```bash
-$ cargo test --workspace --exclude ironpost-ebpf --no-fail-fast 2>&1 | grep "test result:" | awk '{total += $4} END {print "Total: " total " tests"}'
+# Linux: 모든 테스트 실행
+$ cargo test --workspace --no-fail-fast 2>&1 | grep "test result:" | awk '{total += $4} END {print "Total: " total " tests"}'
 Total: 1063 tests
+
+# non-Linux: eBPF 엔진 제외
+$ cargo test --workspace --exclude ironpost-ebpf-engine
 ```
 
 ### README 메트릭

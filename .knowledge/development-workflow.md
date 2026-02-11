@@ -118,7 +118,7 @@ jobs:
   test-macos:
     runs-on: macos-latest
     steps:
-      - run: cargo test --workspace --exclude ironpost-ebpf-engine
+      - run: cargo test --workspace  # eBPF 포함 (조건부 컴파일로 Linux 전용 코드 자동 제외)
 
   test-linux:
     runs-on: ubuntu-latest
