@@ -244,7 +244,7 @@ mod tests {
         let findings = matcher.scan(&sample_graph()).unwrap();
 
         // Should find CVE-2024-0001 for vulnerable-pkg and CVE-2024-0002 for another-pkg
-        assert!(findings.len() >= 1);
+        assert!(!findings.is_empty());
         let cve_ids: Vec<&str> = findings
             .iter()
             .map(|f| f.vulnerability.cve_id.as_str())
