@@ -11,12 +11,12 @@
 //! 3. SBOM Scanner (produces AlertEvents)
 //! 4. Container Guard (consumes AlertEvents, produces ActionEvents)
 //!
-//! # Shutdown Order (reverse of startup)
+//! # Shutdown Order (same as startup - producers first)
 //!
-//! 1. eBPF Engine (stop producing)
-//! 2. SBOM Scanner (stop producing)
-//! 3. Log Pipeline (drain buffer, stop producing alerts)
-//! 4. Container Guard (drain remaining alerts)
+//! 1. eBPF Engine (stop producing PacketEvents)
+//! 2. Log Pipeline (drain buffer, stop producing AlertEvents)
+//! 3. SBOM Scanner (stop producing AlertEvents)
+//! 4. Container Guard (drain remaining AlertEvents)
 
 use std::path::Path;
 use std::time::Instant;
@@ -180,7 +180,7 @@ impl Orchestrator {
 
         // Main event loop
         tracing::info!("entering main event loop");
-        let signal = wait_for_shutdown_signal().await;
+        let signal = wait_for_shutdown_signal().await?;
         tracing::info!(signal = signal, "shutdown signal received");
 
         // Initiate shutdown
@@ -206,8 +206,8 @@ impl Orchestrator {
 
     /// Perform graceful shutdown of all modules.
     ///
-    /// Stops modules in reverse order (consumers first conceptually,
-    /// but actually producers stop first so consumers can drain).
+    /// Stops modules in registration order (producers first, consumers last).
+    /// This allows consumers to drain remaining events from their channels.
     async fn shutdown(&mut self) -> Result<()> {
         tracing::info!("stopping all modules");
         self.modules.stop_all().await
@@ -246,16 +246,22 @@ impl Orchestrator {
 /// Wait for a shutdown signal (SIGTERM or SIGINT).
 ///
 /// Returns the name of the signal that triggered the shutdown.
-async fn wait_for_shutdown_signal() -> &'static str {
+///
+/// # Errors
+///
+/// Returns an error if signal handlers cannot be installed.
+async fn wait_for_shutdown_signal() -> Result<&'static str> {
     use tokio::signal::unix::{SignalKind, signal};
 
-    let mut sigterm = signal(SignalKind::terminate()).expect("failed to install SIGTERM handler");
-    let mut sigint = signal(SignalKind::interrupt()).expect("failed to install SIGINT handler");
+    let mut sigterm = signal(SignalKind::terminate())
+        .map_err(|e| anyhow::anyhow!("failed to install SIGTERM handler: {}", e))?;
+    let mut sigint = signal(SignalKind::interrupt())
+        .map_err(|e| anyhow::anyhow!("failed to install SIGINT handler: {}", e))?;
 
-    tokio::select! {
+    Ok(tokio::select! {
         _ = sigterm.recv() => "SIGTERM",
         _ = sigint.recv() => "SIGINT",
-    }
+    })
 }
 
 /// Write the current process PID to a file.
@@ -266,18 +272,8 @@ async fn wait_for_shutdown_signal() -> &'static str {
 ///
 /// Returns an error if the PID file cannot be written.
 fn write_pid_file(path: &Path) -> Result<()> {
-    use std::fs;
-    use std::io::Write;
-
-    // Check if PID file already exists
-    if path.exists() {
-        let existing_pid = fs::read_to_string(path)?;
-        return Err(anyhow::anyhow!(
-            "PID file {} already exists with PID: {}. Is another instance running?",
-            path.display(),
-            existing_pid.trim()
-        ));
-    }
+    use std::fs::{self, OpenOptions};
+    use std::io::{ErrorKind, Write};
 
     // Create parent directory if it doesn't exist
     if let Some(parent) = path.parent() {
@@ -285,7 +281,27 @@ fn write_pid_file(path: &Path) -> Result<()> {
     }
 
     let pid = std::process::id();
-    let mut file = fs::File::create(path)?;
+
+    // Atomically create file only if it doesn't exist (eliminates TOCTOU race)
+    let mut file = match OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+    {
+        Ok(f) => f,
+        Err(e) if e.kind() == ErrorKind::AlreadyExists => {
+            // File already exists, read the existing PID for error message
+            let existing_pid = fs::read_to_string(path)
+                .unwrap_or_else(|_| "unknown".to_string());
+            return Err(anyhow::anyhow!(
+                "PID file {} already exists with PID: {}. Is another instance running?",
+                path.display(),
+                existing_pid.trim()
+            ));
+        }
+        Err(e) => return Err(e.into()),
+    };
+
     writeln!(file, "{}", pid)?;
 
     tracing::info!(pid = pid, path = %path.display(), "PID file written");

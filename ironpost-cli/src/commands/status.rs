@@ -163,9 +163,24 @@ fn check_daemon_status(pid_file: &str) -> (bool, Option<u64>) {
 fn is_process_alive(pid: u32) -> bool {
     use std::io::ErrorKind;
 
+    // Convert pid to pid_t with bounds checking
+    let pid_t = match libc::pid_t::try_from(pid) {
+        Ok(p) => p,
+        Err(_) => {
+            // PID exceeds platform pid_t range (e.g., pid > i32::MAX on most platforms)
+            warn!(pid, "PID exceeds platform pid_t range");
+            return false;
+        }
+    };
+
     // Send signal 0 to check if process exists
-    // SAFETY: kill(2) with signal 0 is safe and does not affect the target process
-    let result = unsafe { libc::kill(pid as libc::pid_t, 0) };
+    // SAFETY: kill(2) is safe when:
+    //   1. The pid_t value is valid (checked above via try_from)
+    //   2. Signal 0 performs only an existence check without affecting the process
+    //   3. The function is extern C and does not violate memory safety
+    //   4. Note: PID recycling means this may refer to a different process than originally
+    //      intended, but this is not a safety violation, only a correctness consideration
+    let result = unsafe { libc::kill(pid_t, 0) };
 
     if result == 0 {
         true

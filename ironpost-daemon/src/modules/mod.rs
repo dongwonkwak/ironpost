@@ -99,14 +99,15 @@ impl ModuleRegistry {
         Ok(())
     }
 
-    /// Stop all enabled modules in reverse registration order.
+    /// Stop all enabled modules in registration order (producers first).
     ///
     /// Logs errors but continues stopping remaining modules.
-    /// This ensures producers stop before consumers.
+    /// Registration order is: eBPF -> LogPipeline -> SBOM -> ContainerGuard.
+    /// Stopping in this order ensures producers stop first, allowing consumers to drain.
     pub async fn stop_all(&mut self) -> anyhow::Result<()> {
         let mut errors = Vec::new();
 
-        for handle in self.modules.iter_mut().rev() {
+        for handle in self.modules.iter_mut() {
             if !handle.enabled {
                 continue;
             }
@@ -169,28 +170,18 @@ mod tests {
 
     /// Mock pipeline for testing.
     struct MockPipeline {
-        name: String,
         started: std::sync::Arc<std::sync::atomic::AtomicBool>,
         stopped: std::sync::Arc<std::sync::atomic::AtomicBool>,
         health: HealthStatus,
     }
 
     impl MockPipeline {
-        fn new(name: &str, health: HealthStatus) -> Self {
+        fn new(_name: &str, health: HealthStatus) -> Self {
             Self {
-                name: name.to_string(),
                 started: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 stopped: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 health,
             }
-        }
-
-        fn is_started(&self) -> bool {
-            self.started.load(std::sync::atomic::Ordering::SeqCst)
-        }
-
-        fn is_stopped(&self) -> bool {
-            self.stopped.load(std::sync::atomic::Ordering::SeqCst)
         }
     }
 

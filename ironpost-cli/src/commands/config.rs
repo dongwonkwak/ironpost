@@ -58,7 +58,10 @@ async fn execute_show(
 ) -> Result<(), CliError> {
     info!(path = %config_path.display(), "loading configuration");
 
-    let config = IronpostConfig::load(config_path).await?;
+    let mut config = IronpostConfig::load(config_path).await?;
+
+    // Redact sensitive credentials from storage URLs
+    redact_credentials(&mut config);
 
     let report = if let Some(section_name) = section {
         // Filter to specific section
@@ -113,6 +116,48 @@ async fn execute_show(
     writer.render(&report)?;
 
     Ok(())
+}
+
+/// Redact sensitive credentials from database and Redis URLs.
+///
+/// Replaces credentials in URLs like `postgresql://user:password@host:5432/db`
+/// with `postgresql://***REDACTED***@host:5432/db`.
+fn redact_credentials(config: &mut IronpostConfig) {
+    config.log_pipeline.storage.postgres_url = redact_url(&config.log_pipeline.storage.postgres_url);
+    config.log_pipeline.storage.redis_url = redact_url(&config.log_pipeline.storage.redis_url);
+}
+
+/// Redact credentials from a connection URL.
+///
+/// Preserves the scheme and host while replacing user:password with ***REDACTED***.
+fn redact_url(url: &str) -> String {
+    if url.is_empty() {
+        return url.to_owned();
+    }
+
+    // Parse URL to find credentials
+    if let Some(scheme_end) = url.find("://") {
+        let scheme = &url[..scheme_end + 3]; // Include "://"
+        let rest = &url[scheme_end + 3..];
+
+        // Check if there are credentials (indicated by @ before the first /)
+        if let Some(at_pos) = rest.find('@') {
+            if let Some(slash_pos) = rest.find('/') {
+                // Credentials exist if @ comes before /
+                if at_pos < slash_pos {
+                    let after_at = &rest[at_pos..];
+                    return format!("{}***REDACTED***{}", scheme, after_at);
+                }
+            } else {
+                // No path, just host:port - check if @ is part of credentials
+                let after_at = &rest[at_pos..];
+                return format!("{}***REDACTED***{}", scheme, after_at);
+            }
+        }
+    }
+
+    // No credentials found, return as-is
+    url.to_owned()
 }
 
 #[derive(Serialize)]
