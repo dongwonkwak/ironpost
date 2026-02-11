@@ -28,7 +28,7 @@
 | T6-1 | ironpost-daemon 통합 구현 | architect + implementer | 4h | ✅ (2026-02-10 완료) | 없음 |
 | T6-2 | ironpost-cli 통합 구현 | implementer | 3h | ✅ (2026-02-10 완료) | T6-1 |
 | T6-3 | ironpost.toml 통합 설정 파일 | architect + implementer | 2h | ⏳ | T6-1 병행 |
-| T6-4 | 리뷰 미반영 수정 (Phase 2~5 C/H/M) | implementer | 6h | 🔄 (2026-02-11 시작) | 없음 |
+| T6-4 | 리뷰 미반영 수정 (Phase 2~5 C/H/M) | implementer | 6h | ✅ (2026-02-11 완료, 2.5h, 7ed699b) | 없음 |
 | T6-5 | 루트 README.md 재작성 | writer | 2h | ⏳ | T6-1, T6-2 |
 | T6-6 | CHANGELOG.md 작성 | writer | 1h | ⏳ | T6-4 |
 
@@ -46,27 +46,27 @@
 | 출처 | ID | 설명 | 상태 |
 |------|----|------|------|
 | P3 | H4 | Syslog PRI 값 범위 검증 (0-191) | ⏳ |
-| P3 | H5 | 타임스탬프 휴리스틱 불완전 (micro/nanosecond) | ⏳ |
+| P3 | H5 | 타임스탬프 휴리스틱 불완전 (micro/nanosecond) | ✅ json.rs:265-285 수정 (10/13/16/19자리 지원) |
 | P3 | H6 | 파일 경로 순회(path traversal) 검증 | ⏳ |
-| P3 | H7 | SystemTime -> Instant (시계 역행 방어) | ⏳ |
+| P3 | H7 | SystemTime -> Instant (시계 역행 방어) | ✅ alert.rs 수정 (내부 Instant 사용) |
 | P4 | H3 | 와일드카드 필터 임의 컨테이너 격리 | ⏳ |
-| P4 | NEW-H1 | 잘못된 에러 variant (ContainerNotFound -> InvalidInput) | ⏳ |
-| P4 | NEW-H2 | Processing task 별도 DockerMonitor 인스턴스 | ⏳ |
+| P4 | NEW-H1 | 잘못된 에러 variant (ContainerNotFound -> InvalidInput) | ✅ docker.rs:64-77 수정 (Config variant 사용) |
+| P4 | NEW-H2 | Processing task 별도 DockerMonitor 인스턴스 | ✅ 이미 해결됨 (Arc 공유) |
 | P4 | NEW-H3 | `all: true` 실행 중인 컨테이너만 필터 | ⏳ |
-| P4 | H6 | labels 필드 미평가 | ⏳ |
-| P5 | H2 | Graceful shutdown (CancellationToken) | ⏳ |
-| P5 | NEW-H1 | 주기적 태스크 취소 메커니즘 | ⏳ |
+| P4 | H6 | labels 필드 미평가 | ✅ 이미 해결됨 (policy.rs:150-159 검증) |
+| P5 | H2 | Graceful shutdown (CancellationToken) | ✅ scanner.rs 수정 (CancellationToken 추가) |
+| P5 | NEW-H1 | 주기적 태스크 취소 메커니즘 | ✅ H2와 통합 해결 |
 | P5 | NEW-H2 | discover_lockfiles TOCTOU (File::open 패턴) | ⏳ |
-| P5 | NEW-H3 | unix_to_rfc3339 55줄 중복 -> 공유 모듈 | ⏳ |
-| P2 | H3 | RingBuf busy-wait -> adaptive backoff | ⏳ |
+| P5 | NEW-H3 | unix_to_rfc3339 55줄 중복 -> 공유 모듈 | ✅ 이미 해결됨 (util.rs 공유) |
+| P2 | H3 | RingBuf busy-wait -> adaptive backoff | ✅ 이미 해결됨 (engine.rs:433-495) |
 
 #### Medium -- 4건 (선별)
 | 출처 | ID | 설명 | 상태 |
 |------|----|------|------|
-| P3 | M2 | cleanup 주기 시간 기반 변경 | ⏳ |
-| P4 | M5 | 불필요한 enforcer.rs 삭제 | ⏳ |
+| P3 | M2 | cleanup 주기 시간 기반 변경 | ✅ pipeline.rs 수정 (60초 간격) |
+| P4 | M5 | 불필요한 enforcer.rs 삭제 | ✅ enforcer.rs 삭제 완료 |
 | P5 | M9 | Path traversal 검증 (Component::ParentDir) | ⏳ |
-| P2 | M7 | AlertEvent source_module 항상 "log-pipeline" | ⏳ |
+| P2 | M7 | AlertEvent source_module 항상 "log-pipeline" | ✅ event.rs + detector.rs 수정 (with_source 추가) |
 
 ### 고도화 (Enhancement) -- 3건
 | ID | 태스크 | 담당 | 예상 | 상태 | 의존성 |
