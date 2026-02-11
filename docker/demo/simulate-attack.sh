@@ -30,15 +30,21 @@ echo "Waiting for Ironpost to be fully ready..."
 sleep "${STARTUP_DELAY}"
 
 # Function to send syslog message
-# Args: $1=priority, $2=hostname, $3=process, $4=message
+# Args: $1=priority, $2=hostname, $3=process, $4=message, $5=source_ip (optional)
 send_log() {
     PRIORITY="$1"
     HOSTNAME="$2"
     PROCESS="$3"
     MESSAGE="$4"
+    SOURCE_IP="${5:-}"
     TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-    SYSLOG_MSG="<${PRIORITY}>1 ${TIMESTAMP} ${HOSTNAME} ${PROCESS} - - - ${MESSAGE}"
+    # RFC5424 format with structured data for source_ip if provided
+    if [ -n "${SOURCE_IP}" ]; then
+        SYSLOG_MSG="<${PRIORITY}>1 ${TIMESTAMP} ${HOSTNAME} ${PROCESS} - - [meta source_ip=\"${SOURCE_IP}\"] ${MESSAGE}"
+    else
+        SYSLOG_MSG="<${PRIORITY}>1 ${TIMESTAMP} ${HOSTNAME} ${PROCESS} - - - ${MESSAGE}"
+    fi
     echo "${SYSLOG_MSG}" | nc -u -w1 "${IRONPOST_HOST}" "${SYSLOG_PORT}"
 }
 
@@ -56,7 +62,7 @@ echo "Expected: Trigger 'ssh_brute_force_demo' rule (threshold: 3 in 60s)"
 echo ""
 
 for i in 1 2 3 4 5; do
-    send_log 38 "target-server" "sshd" "Failed password for root from 203.0.113.42 port 12345 ssh2: RSA"
+    send_log 38 "target-server" "sshd" "Failed password for root from 203.0.113.42 port 12345 ssh2: RSA" "203.0.113.42"
     echo "  [${i}/5] Sent failed SSH login from 203.0.113.42"
     sleep 1
 done
@@ -165,9 +171,9 @@ echo "Expected: Trigger 'port_scan_demo' rule (threshold: 5 in 30s)"
 echo ""
 
 for port in 22 23 80 443 3306 5432 6379 8080; do
-    send_log 38 "gateway01" "kernel" "SYN packet to port ${port} from 198.51.100.99 blocked"
+    send_log 38 "gateway01" "kernel" "SYN packet to port ${port} from 198.51.100.99 blocked" "198.51.100.99"
     echo "  [${port}] SYN probe from 198.51.100.99"
-    sleep 0.5
+    sleep 1
 done
 
 echo ""

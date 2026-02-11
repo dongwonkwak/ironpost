@@ -19,6 +19,8 @@ services:
       - ./demo/ironpost-demo.toml:/etc/ironpost/ironpost.toml:ro
       # Mount demo detection rules
       - ./demo/rules:/etc/ironpost/rules:ro
+      # Mount demo container isolation policies
+      - ./demo/policies:/etc/ironpost/policies:ro
       # Enable docker socket for container monitoring demo
       - /var/run/docker.sock:/var/run/docker.sock:ro
     environment:
@@ -46,10 +48,15 @@ services:
       interval: 10s
       timeout: 5s
       retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+          cpus: '0.25'
 
   # Log Generator - Sends normal syslog messages to ironpost
   log-generator:
-    image: alpine:latest
+    image: busybox:latest
     container_name: ironpost-log-generator
     restart: unless-stopped
     networks:
@@ -57,6 +64,11 @@ services:
     depends_on:
       ironpost:
         condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+          cpus: '0.25'
     command: >
       sh -c '
       echo "Starting log generator...";
@@ -70,7 +82,7 @@ services:
 
   # Attack Simulator - Generates suspicious patterns to trigger alerts
   attack-simulator:
-    image: alpine:latest
+    image: busybox:latest
     container_name: ironpost-attack-simulator
     restart: "no"
     networks:
@@ -78,6 +90,11 @@ services:
     depends_on:
       ironpost:
         condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+          cpus: '0.25'
     command: >
       sh -c '
       echo "Waiting 10 seconds for ironpost to be fully ready...";

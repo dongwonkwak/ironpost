@@ -27,7 +27,7 @@ echo ""
 # Counter for sequence numbers
 COUNTER=0
 
-# Function to send syslog message
+# Function to send RFC 5424 syslog message
 # Args: $1=priority, $2=hostname, $3=process, $4=message
 send_log() {
     PRIORITY="$1"
@@ -38,6 +38,22 @@ send_log() {
 
     # RFC 5424 format: <PRI>VERSION TIMESTAMP HOSTNAME APP-NAME PROCID MSGID SD MSG
     SYSLOG_MSG="<${PRIORITY}>1 ${TIMESTAMP} ${HOSTNAME} ${PROCESS} - - - ${MESSAGE}"
+
+    echo "${SYSLOG_MSG}" | nc -u -w1 "${IRONPOST_HOST}" "${SYSLOG_PORT}"
+}
+
+# Function to send RFC 3164 syslog message
+# Args: $1=priority, $2=hostname, $3=process, $4=message
+send_log_rfc3164() {
+    PRIORITY="$1"
+    HOSTNAME="$2"
+    PROCESS="$3"
+    MESSAGE="$4"
+    # RFC 3164 timestamp format: Mmm DD HH:MM:SS
+    TIMESTAMP=$(date -u +"%b %d %H:%M:%S")
+
+    # RFC 3164 format: <PRI>TIMESTAMP HOSTNAME TAG[PID]: MSG
+    SYSLOG_MSG="<${PRIORITY}>${TIMESTAMP} ${HOSTNAME} ${PROCESS}[$$]: ${MESSAGE}"
 
     echo "${SYSLOG_MSG}" | nc -u -w1 "${IRONPOST_HOST}" "${SYSLOG_PORT}"
 }
@@ -70,7 +86,12 @@ while true; do
     # DNS query
     send_log 30 "gateway01" "dnsmasq" "query[A] api.example.com from 192.168.1.100"
 
-    echo "[$(date -u +"%Y-%m-%d %H:%M:%S")] Batch #${COUNTER} sent (8 normal logs)"
+    # RFC 3164 messages (legacy format, still widely used)
+    send_log_rfc3164 14 "legacy-server" "sshd" "Accepted keyboard-interactive/pam for alice from 192.168.1.101 port 49152 ssh2"
+    send_log_rfc3164 30 "legacy-server" "httpd" "192.168.1.101 - - [$(date -u +"%d/%b/%Y:%H:%M:%S +0000")] \"GET /api/status HTTP/1.1\" 200 512"
+    send_log_rfc3164 38 "legacy-server" "kernel" "iptables: IN=eth0 OUT= SRC=192.168.1.101 DST=10.0.0.1 PROTO=ICMP TYPE=8"
+
+    echo "[$(date -u +"%Y-%m-%d %H:%M:%S")] Batch #${COUNTER} sent (11 normal logs: 8 RFC5424 + 3 RFC3164)"
 
     sleep "${SLEEP_INTERVAL}"
 done
