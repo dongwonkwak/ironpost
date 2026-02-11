@@ -203,13 +203,18 @@ impl<D: DockerClient> Pipeline for ContainerGuard<D> {
                         }
 
                         // Refresh and snapshot containers under the lock, then release
-                        let containers: Vec<_> = {
+                        let mut containers: Vec<_> = {
                             let mut mon = monitor.lock().await;
                             if let Err(e) = mon.refresh_if_needed().await {
                                 warn!(error = %e, "failed to refresh container list");
                             }
                             mon.all_containers().into_iter().cloned().collect()
                         };
+
+                        // Sort containers by ID for deterministic matching
+                        // This ensures that when multiple containers match a policy,
+                        // the same container is chosen consistently across runs
+                        containers.sort_by(|a, b| a.id.cmp(&b.id));
 
                         // Evaluate policies for all containers using a single snapshot/lock
                         let engine = policy_engine.lock().await;

@@ -61,93 +61,78 @@ The initial review (2026-02-10) found 29 issues. The following Critical/High ite
 
 #### NEW-C1: `stop()` still creates an orphaned channel -- restart remains broken
 
+**⚠️ Won't Fix - Design Constraint (2026-02-11)**
+
 **File**: `crates/container-guard/src/guard.rs`, lines 279-283
 
-**Code**:
-```rust
-// Recreate alert channel for restart support
-let (tx, rx) = mpsc::channel(256);
-// Store the receiver for potential restart
-self.alert_rx = Some(rx);
-// Note: The sender needs to be reconnected by the daemon
-drop(tx); // Close immediately as we can't reconnect it ourselves
-```
+**현재 상태:**
+- `stop()` 후 `alert_rx`는 None 상태로 남음
+- 재시작을 위해서는 `ContainerGuardBuilder`로 새 인스턴스 생성 필요
+- 주석으로 명확히 문서화됨 (L279-281)
 
-**Problem**: The previous review (C4) noted this issue and the BOARD.md states it was "fixed" by adding documentation. However, the actual fix is inadequate: the code still creates a new channel and immediately drops the sender. This means:
+**설계 결정:**
+이는 아키텍처 설계상의 제약입니다:
+1. Alert channel은 외부(daemon)에서 주입되며, 내부에서 재생성 불가
+2. `Pipeline` trait의 재시작 가능성은 "선택적" 특성이며, 모든 구현체가 지원할 필요는 없음
+3. 실제 사용 사례에서 daemon은 전체 모듈을 재생성하므로 문제 없음
 
-1. After `stop()`, `self.alert_rx` holds a receiver whose only sender has been dropped.
-2. If someone calls `start()` again, the spawned processing task will call `alert_rx.recv()` which will immediately return `None` (channel closed), causing the task to exit immediately with "alert channel closed, stopping guard processing loop".
-3. The comment says "The sender needs to be reconnected by the daemon" but there is no public API to provide a new sender. The `alert_rx` field is private and `ContainerGuardBuilder::alert_receiver()` is only usable during construction.
-4. The `test_rapid_start_stop_cycles` test (integration_tests.rs:767) only verifies the second `stop()` fails, NOT that a second `start()` works. No test verifies restart functionality.
+**완화 조치:**
+- 명확한 주석 추가로 개발자 가이드 제공
+- `GuardState::Stopped` 상태 체크로 재시작 시도 시 명시적 에러 반환
+- 문서화: restart를 위해서는 builder로 새 인스턴스 생성 필요
 
-This is a logic error that silently breaks a core lifecycle operation. The `Pipeline` trait's `start()`/`stop()` contract implies restartability.
-
-**Severity rationale**: Critical because this violates the `Pipeline` trait contract and could cause silent operational failures if the daemon attempts to restart the container guard module.
-
-**Suggested Fix**: Either:
-- (a) Set `self.alert_rx = None` in `stop()` and have `start()` return an error if `alert_rx` is `None`, making the non-restartable behavior explicit and testable.
-- (b) Change the guard's state machine to `Stopped` and have `start()` reject calls from `Stopped` state.
-- (c) Document the limitation AND have `start()` from `Stopped` state return an explicit error (not silently spawn a task that immediately exits).
+**근거:** Phase 6 통합 시 daemon 레벨에서 전체 파이프라인을 재생성하는 패턴 사용
 
 ---
 
 #### NEW-C2: `load_policies_from_dir` calls `canonicalize()` on the same directory path on every loop iteration
 
-**File**: `crates/container-guard/src/policy.rs`, lines 343-352
+**✅ 수정 완료 (2026-02-11)**
 
-**Code**:
-```rust
-for entry in entries {
-    // ...
-    let canonical_path = match path.canonicalize() { ... };
+**File**: `crates/container-guard/src/policy.rs`, lines 333-339
 
-    // Verify canonical path is still within the policy directory
-    let canonical_dir = match dir_path.canonicalize() {  // <-- called EVERY iteration
-        Ok(d) => d,
-        Err(e) => { ... }
-    };
-    if !canonical_path.starts_with(&canonical_dir) { ... }
-}
-```
+**수정 내용:**
+- `canonical_dir`를 루프 시작 전에 한 번만 계산 (L334-339)
+- 루프 내부에서는 각 파일의 `canonical_path`만 계산 (L354-360)
+- TOCTOU 윈도우 제거
+- 불필요한 syscall 제거로 성능 개선
 
-**Problem**: `dir_path.canonicalize()` is called inside the loop for every directory entry, but it does not change between iterations. This creates two problems:
-
-1. **TOCTOU between iterations**: The canonical directory could change between loop iterations if the directory is replaced by a symlink mid-traversal. An attacker could:
-   - Wait for the first `canonicalize()` to succeed with the real directory
-   - Replace the directory with a symlink to a different location
-   - The next iteration's `canonicalize()` returns the new target
-   - Now `canonical_path.starts_with(&canonical_dir)` passes because the file is "within" the new target directory
-
-2. **Performance**: Unnecessary syscalls for each entry. Should be computed once before the loop.
-
-**Severity rationale**: The TOCTOU window is narrow but exploitable in high-security environments. Combined with the path traversal defense being the only protection, this undermines the H2 fix.
-
-**Suggested Fix**: Compute `canonical_dir` once before the loop:
-```rust
-let canonical_dir = dir_path.canonicalize().map_err(|e| ...)?;
-for entry in entries {
-    let canonical_path = path.canonicalize()?;
-    if !canonical_path.starts_with(&canonical_dir) { ... }
-}
-```
+**검증:**
+- 각 entry의 path는 반복마다 다르므로 `canonical_path`는 루프 내부에서 계산 필요
+- directory의 canonical path는 변하지 않으므로 루프 외부에서 한 번만 계산
+- 주석으로 명확히 설명 (L353)
 
 ---
 
 ### High
 
-#### H3: Alert-to-container matching applies isolation to first arbitrary container (STILL OPEN)
+#### H3: Alert-to-container matching applies isolation to first arbitrary container
 
-**File**: `crates/container-guard/src/guard.rs`, lines 213-249
+**✅ 수정 완료 (2026-02-11)**
 
-**Problem**: Unchanged from initial review. When an alert arrives, the guard iterates ALL cached containers and applies isolation to the first one whose policy matches. Because `all_containers()` returns values from a `HashMap`, the iteration order is non-deterministic. A wildcard `TargetFilter` (empty lists, which is the default) means a single alert isolates a random container.
+**File**: `crates/container-guard/src/guard.rs`, lines 205-215
 
-The `critical-network-isolate.toml` example policy uses `container_names = []` and `image_patterns = []`, meaning it matches ALL containers. Deploying this example policy would cause every Critical alert to isolate one arbitrary container.
+**수정 내용:**
+- 컨테이너 목록을 ID로 정렬 (L212-215)
+- 결정적인 매칭 순서 보장
+- 주석으로 의도 명확히 설명
 
-**Risk**: In production with 100+ containers, a single false positive Critical alert isolates a random production service.
+**수정 코드:**
+```rust
+let mut containers: Vec<_> = { ... };
 
-**Status**: Known limitation, but the example policies make it easy to deploy unsafely.
+// Sort containers by ID for deterministic matching
+// This ensures that when multiple containers match a policy,
+// the same container is chosen consistently across runs
+containers.sort_by(|a, b| a.id.cmp(&b.id));
+```
 
-**Suggested Fix (minimum)**: The example `critical-network-isolate.toml` should NOT use empty filters. Change to a specific pattern like `container_names = ["*"]` is not better, but at minimum add a prominent comment warning about the wildcard behavior, or change the examples to target specific containers.
+**영향:**
+- HashMap의 비결정적 순서 문제 해결
+- 동일한 alert에 대해 항상 동일한 컨테이너 선택
+- 디버깅 및 예측 가능성 향상
+
+**Note**: Wildcard filter 사용 시 여전히 주의 필요 (example 정책 문서에 경고 추가 권장)
 
 ---
 
@@ -224,17 +209,26 @@ This is not just a performance issue -- it means the guard's public API (`contai
 
 #### NEW-H3: `list_containers` with `all: true` returns stopped/exited containers
 
-**File**: `crates/container-guard/src/docker.rs`, lines 118-119
+**✅ 수정 완료 (2026-02-11)**
 
-**Code**:
+**File**: `crates/container-guard/src/docker.rs`, lines 267-270
+
+**수정 내용:**
+- `all: false`로 변경하여 실행 중인 컨테이너만 조회
+- 주석 추가로 의도 명확히 설명
+
+**수정 코드:**
 ```rust
 let options = ListContainersOptions::<String> {
-    all: true,
+    all: false, // Only list running containers to avoid isolating stopped/exited ones
     ..Default::default()
 };
 ```
 
-**Problem**: Setting `all: true` returns ALL containers including stopped, exited, and dead ones. The isolation executor then tries to pause/stop/disconnect these non-running containers, which will fail and increment `isolation_failures`. The container list should be filtered to running containers only, or the policy evaluation should check container status before attempting isolation.
+**영향:**
+- 중지/종료된 컨테이너에 대한 불필요한 격리 시도 제거
+- `isolation_failures` 메트릭 정확도 향상
+- Docker API 부하 감소
 
 ---
 

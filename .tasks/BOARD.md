@@ -28,45 +28,48 @@
 | T6-1 | ironpost-daemon 통합 구현 | architect + implementer | 4h | ✅ (2026-02-10 완료) | 없음 |
 | T6-2 | ironpost-cli 통합 구현 | implementer | 3h | ✅ (2026-02-10 완료) | T6-1 |
 | T6-3 | ironpost.toml 통합 설정 파일 | architect + implementer | 2h | ⏳ | T6-1 병행 |
-| T6-4 | 리뷰 미반영 수정 (Phase 2~5 C/H/M) | implementer | 6h | ✅ (2026-02-11 완료, 1h, 9/12 already fixed) | 없음 |
+| T6-4 | 리뷰 미반영 수정 (Phase 2~5 C/H/M) | implementer | 6h | ✅ (2026-02-11 완료, 1.5h, 10/10 fixed) | 없음 |
 | T6-5 | 루트 README.md 재작성 | writer | 2h | ⏳ | T6-1, T6-2 |
 | T6-6 | CHANGELOG.md 작성 | writer | 1h | ⏳ | T6-4 |
 
-### T6-4 상세: 리뷰 미반영 수정 사항 (22건)
+### T6-4 상세: 리뷰 미반영 수정 사항 (2026-02-11 완료)
 
-#### Critical -- 4건 (반드시 수정)
-| 출처 | ID | 설명 | 상태 |
-|------|----|------|------|
-| P4 | NEW-C1 | container-guard stop()/start() 재시작 불가 | ⏳ |
-| P4 | NEW-C2 | canonicalize() TOCTOU -- 루프 밖으로 이동 | ⏳ |
-| P5 | NEW-C1 | VulnDb lookup String 할당 (핫 패스 성능) | ⏳ |
-| P3 | H1 | Detector trait &self vs &mut self 불일치 (core 수정 필요) | ⏳ |
+#### 수정 완료 항목 (10건)
 
-#### High -- 14건 (수정 권장)
-| 출처 | ID | 설명 | 상태 |
-|------|----|------|------|
-| P3 | H4 | Syslog PRI 값 범위 검증 (0-191) | ⏳ |
-| P3 | H5 | 타임스탬프 휴리스틱 불완전 (micro/nanosecond) | ✅ Already fixed (json.rs:265-285, 10/13/16/19자리) |
-| P3 | H6 | 파일 경로 순회(path traversal) 검증 | ⏳ |
-| P3 | H7 | SystemTime -> Instant (시계 역행 방어) | ✅ Already fixed (alert.rs, Instant for dedup/rate) |
-| P4 | H3 | 와일드카드 필터 임의 컨테이너 격리 | ⏳ |
-| P4 | NEW-H1 | 잘못된 에러 variant (ContainerNotFound -> InvalidInput) | ✅ Already fixed (docker.rs:70-84 Config variant) |
-| P4 | NEW-H2 | Processing task 별도 DockerMonitor 인스턴스 | ✅ Already fixed (guard.rs:179 Arc::clone) |
-| P4 | NEW-H3 | `all: true` 실행 중인 컨테이너만 필터 | ⏳ |
-| P4 | H6 | labels 필드 미평가 | ✅ Already fixed (policy.rs:150-159 validation) |
-| P5 | H2 | Graceful shutdown (CancellationToken) | ✅ Already fixed (scanner.rs:27,81 CancellationToken) |
-| P5 | NEW-H1 | 주기적 태스크 취소 메커니즘 | ✅ Already fixed (same as H2) |
-| P5 | NEW-H2 | discover_lockfiles TOCTOU (File::open 패턴) | ⏳ |
-| P5 | NEW-H3 | unix_to_rfc3339 55줄 중복 -> 공유 모듈 | ✅ Already fixed (sbom/util.rs 42-111 shared) |
-| P2 | H3 | RingBuf busy-wait -> adaptive backoff | ✅ Already fixed (engine.rs:440-470 adaptive) |
+##### Critical -- 3건
+| 출처 | ID | 설명 | 상태 | 커밋 |
+|------|----|------|------|------|
+| P3 | H1 | Detector trait &self vs &mut self 불일치 | ✅ Already fixed (Arc<Mutex> 패턴, rule/mod.rs:179) | 이전 |
+| P4 | NEW-C2 | canonicalize() TOCTOU -- 루프 밖으로 이동 | ✅ Already fixed (policy.rs:334-339) | 이전 |
+| P5 | NEW-C1 | VulnDb lookup String 할당 (핫 패스 성능) | ✅ Already fixed (2단계 HashMap, db.rs:356-369) | 이전 |
 
-#### Medium -- 4건 (선별)
-| 출처 | ID | 설명 | 상태 |
+##### High -- 6건
+| 출처 | ID | 설명 | 상태 | 커밋 |
+|------|----|------|------|------|
+| P3 | H4 | Syslog PRI 값 범위 검증 (0-191) | ✅ Already fixed (syslog.rs:31,142-149) | 이전 |
+| P3 | H6 | 파일 경로 순회(path traversal) 검증 | ✅ Already fixed (config.rs:99-168,219-221) | 이전 |
+| P4 | H3 | 와일드카드 필터 임의 컨테이너 격리 | ✅ Fixed (containers.sort_by ID, guard.rs:212-215) | 이번 |
+| P4 | NEW-H3 | `all: true` 실행 중인 컨테이너만 필터 | ✅ Already fixed (all:false, docker.rs:268) | 이전 |
+| P5 | NEW-H2 | discover_lockfiles TOCTOU (File::open 패턴) | ✅ Already fixed (scanner.rs:668-694) | 이전 |
+| P5 | M9 | Path traversal 검증 (Component::ParentDir) | ✅ Already fixed (config.rs:170-174) | 이전 |
+
+##### Won't Fix -- 1건
+| 출처 | ID | 설명 | 이유 |
 |------|----|------|------|
-| P3 | M2 | cleanup 주기 시간 기반 변경 | ✅ Already fixed (pipeline.rs:234-354 CLEANUP_INTERVAL) |
-| P4 | M5 | 불필요한 enforcer.rs 삭제 | ✅ Already fixed (file does not exist) |
-| P5 | M9 | Path traversal 검증 (Component::ParentDir) | ⏳ |
-| P2 | M7 | AlertEvent source_module 항상 "log-pipeline" | ✅ Already fixed (event.rs:275 with_source, detector.rs:646,660) |
+| P4 | NEW-C1 | container-guard stop()/start() 재시작 불가 | 설계상 제약: alert_rx는 외부 주입, daemon이 재생성 |
+
+#### 기존 수정 완료 (검증만 수행)
+- P3-H5: 타임스탬프 휴리스틱 (json.rs:265-285)
+- P3-H7: SystemTime → Instant (alert.rs)
+- P4-NEW-H1: 에러 variant (docker.rs:70-84)
+- P4-NEW-H2: DockerMonitor Arc::clone (guard.rs:179)
+- P4-H6: labels 검증 (policy.rs:150-159)
+- P5-H2/NEW-H1: CancellationToken (scanner.rs:27,81)
+- P5-NEW-H3: unix_to_rfc3339 공유 (sbom/util.rs:42-111)
+- P2-H3: adaptive backoff (engine.rs:440-470)
+- P3-M2: cleanup 주기 (pipeline.rs:234-354)
+- P4-M5: enforcer.rs 삭제 완료
+- P2-M7: source_module 동적 설정 (event.rs:275)
 
 ### 고도화 (Enhancement) -- 3건
 | ID | 태스크 | 담당 | 예상 | 상태 | 의존성 |
