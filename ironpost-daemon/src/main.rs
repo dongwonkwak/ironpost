@@ -38,9 +38,11 @@ async fn main() -> Result<()> {
                 anyhow::anyhow!("failed to load config from {}: {}", cli.config.display(), e)
             })?
     } else {
-        tracing::warn!(
-            path = %cli.config.display(),
-            "config file not found, using defaults"
+        // Note: Using eprintln! here since tracing is not initialized yet.
+        // This is acceptable during daemon initialization phase.
+        eprintln!(
+            "WARN: config file not found at {}, using defaults",
+            cli.config.display()
         );
         ironpost_core::config::IronpostConfig::default()
     };

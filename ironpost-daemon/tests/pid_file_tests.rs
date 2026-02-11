@@ -68,20 +68,37 @@ fn test_pid_file_directory_does_not_exist() {
 
 #[test]
 fn test_pid_file_permission_denied_simulation() {
-    // Given: A path that simulates permission issues (e.g., root-only path on Unix)
-    // Note: This test may not fail on all systems if running with elevated privileges
-
+    // Given: A tempdir with restricted permissions to simulate permission issues
     #[cfg(unix)]
     {
-        let pid_path = PathBuf::from("/root/ironpost.pid");
+        use std::os::unix::fs::PermissionsExt;
 
-        // When: Attempting to write PID file without permissions
+        let temp_dir = TempDir::new().expect("should create temp dir");
+        let readonly_dir = temp_dir.path().join("readonly");
+        fs::create_dir(&readonly_dir).expect("should create readonly dir");
+
+        // Make directory read-only (chmod 0555)
+        let mut perms = fs::metadata(&readonly_dir)
+            .expect("should read metadata")
+            .permissions();
+        perms.set_mode(0o555);
+        fs::set_permissions(&readonly_dir, perms).expect("should set read-only permissions");
+
+        let pid_path = readonly_dir.join("ironpost.pid");
+
+        // When: Attempting to write PID file in read-only directory
         let result = fs::write(&pid_path, "12345");
 
-        // Then: Should fail (unless running as root)
-        if std::env::var("USER").unwrap_or_default() != "root" {
-            assert!(result.is_err(), "should fail with permission denied");
-        }
+        // Then: Should fail with permission denied
+        assert!(
+            result.is_err(),
+            "should fail when writing to read-only directory"
+        );
+    }
+
+    #[cfg(not(unix))]
+    {
+        // On non-Unix platforms, this test is skipped
     }
 }
 

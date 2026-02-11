@@ -114,15 +114,13 @@ impl Orchestrator {
         // Initialize log pipeline
         // On non-Linux, packet_rx will be None since eBPF is not available
         #[cfg(target_os = "linux")]
-        let packet_rx_for_pipeline = _packet_rx_for_ebpf;
+        let packet_rx_for_pipeline = Some(_packet_rx_for_ebpf);
         #[cfg(not(target_os = "linux"))]
         let packet_rx_for_pipeline = None;
 
-        if let Some(handle) = crate::modules::log_pipeline::init(
-            &config,
-            Some(packet_rx_for_pipeline),
-            alert_tx.clone(),
-        )? {
+        if let Some(handle) =
+            crate::modules::log_pipeline::init(&config, packet_rx_for_pipeline, alert_tx.clone())?
+        {
             modules.register(handle);
         }
 

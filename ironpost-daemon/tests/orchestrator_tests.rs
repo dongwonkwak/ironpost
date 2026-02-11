@@ -135,8 +135,8 @@ async fn test_orchestrator_build_with_log_pipeline_enabled() {
 }
 
 #[tokio::test]
-async fn test_orchestrator_build_with_invalid_config_fails() {
-    // Given: An invalid config (negative buffer capacity not possible in TOML, but test validation)
+async fn test_config_parsing_succeeds_with_invalid_values() {
+    // Given: A config with semantically invalid values (but valid TOML)
     let toml_str = r#"
 [general]
 log_level = "invalid_level"
@@ -147,7 +147,7 @@ buffer_capacity = 0
 "#;
     let result = IronpostConfig::parse(toml_str);
 
-    // Then: Should parse successfully (validation happens later)
+    // Then: Should parse successfully (semantic validation happens later at validate())
     assert!(
         result.is_ok(),
         "parsing should succeed even if values are invalid"

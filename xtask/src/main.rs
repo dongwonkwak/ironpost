@@ -37,11 +37,21 @@ fn main() {
         Commands::Build { release, all } => {
             build_workspace(release);
             if all {
+                if !cfg!(target_os = "linux") {
+                    eprintln!("ERROR: eBPF builds are only supported on Linux");
+                    eprintln!("Current platform: {}", std::env::consts::OS);
+                    std::process::exit(1);
+                }
                 println!("\nBuilding eBPF kernel program...");
                 build_ebpf(release);
             }
         }
         Commands::BuildEbpf { release } => {
+            if !cfg!(target_os = "linux") {
+                eprintln!("ERROR: eBPF builds are only supported on Linux");
+                eprintln!("Current platform: {}", std::env::consts::OS);
+                std::process::exit(1);
+            }
             build_ebpf(release);
         }
     }

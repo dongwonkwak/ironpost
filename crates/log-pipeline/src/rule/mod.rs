@@ -178,9 +178,16 @@ impl RuleEngine {
                 // Arc<Mutex>로 감싼 threshold_counters 접근
                 let mut counters = match self.threshold_counters.lock() {
                     Ok(c) => c,
-                    Err(_) => {
-                        // Lock poisoned, skip this threshold evaluation
-                        continue;
+                    Err(poisoned) => {
+                        // Lock poisoned - this indicates a panic in another thread while holding the lock.
+                        // Log error and recover by clearing counters to prevent alert loss.
+                        tracing::error!(
+                            rule_id = %rule.id,
+                            "threshold_counters mutex poisoned, recovering by clearing counters"
+                        );
+                        let mut recovered = poisoned.into_inner();
+                        recovered.clear();
+                        recovered
                     }
                 };
 
