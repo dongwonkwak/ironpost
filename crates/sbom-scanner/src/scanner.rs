@@ -28,7 +28,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use ironpost_core::error::IronpostError;
-use ironpost_core::event::AlertEvent;
+use ironpost_core::event::{AlertEvent, MODULE_SBOM_SCANNER};
 use ironpost_core::pipeline::{HealthStatus, Pipeline};
 use ironpost_core::types::Alert;
 
@@ -549,7 +549,8 @@ fn scan_directory(scan_dir: &str, ctx: &ScanContext) -> Result<Vec<ScanResult>, 
                 created_at: SystemTime::now(),
             };
 
-            let alert_event = AlertEvent::new(alert, finding.vulnerability.severity);
+            let alert_event =
+                AlertEvent::with_source(alert, finding.vulnerability.severity, MODULE_SBOM_SCANNER);
 
             if let Err(e) = ctx.alert_tx.try_send(alert_event) {
                 warn!(

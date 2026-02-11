@@ -11,7 +11,7 @@
 | 4-container | 17 | 17 | 0 | 0 | ✅ (설계+구현+테스트+리뷰 완료, 202 tests) |
 | 5-sbom | 28 | 28 | 0 | 0 | ✅ (Phase 5-E 문서화 완료, 183 tests, README 580+ lines) |
 | 6-polish | 12 | 9 | 0 | 3 | ✅ T6-14 ironpost-cli 문서화 완료, 다음: T6-3 설정 파일 |
-| 7-e2e | 14 | 4 | 0 | 10 | T7.1 E2E 테스트 인프라 셋업 완료 |
+| 7-e2e | 14 | 8 | 0 | 6 | T7.2-7.6 E2E 시나리오 테스트 완료 (31 tests) |
 
 ## 블로커
 - 없음
@@ -27,18 +27,18 @@
 | ID | 태스크 | 담당 | 예상 | 상태 | 의존성 |
 |----|--------|------|------|------|--------|
 | T7.1 | E2E 테스트 인프라 셋업 | architect + tester | 1.5h | ✅ (2026-02-11 완료, 15분) | 없음 |
-| T7.2 | S1: 이벤트 파이프라인 E2E (LogEvent -> Rule -> Alert -> Isolate) | tester | 2h | ⏳ | T7.1 |
-| T7.3 | S2: SBOM 스캔 -> AlertEvent E2E | tester | 1.5h | ⏳ | T7.1 |
-| T7.4 | S3: 설정 로딩 -> Orchestrator 초기화 -> health_check | tester | 1h | ⏳ | T7.1 |
-| T7.5 | S4: Graceful shutdown 순서 검증 (producer first, timeout) | tester | 1.5h | ⏳ | T7.1 |
-| T7.6 | S5: 잘못된 설정 -> 에러 메시지 + 비정상 종료 | tester | 1h | ⏳ | T7.1 |
-| T7.7 | S6: 모듈 장애 격리 (한 모듈 실패 -> 나머지 계속) | tester | 1.5h | ⏳ | T7.1 |
+| T7.2 | S1: 이벤트 파이프라인 E2E (LogEvent -> Rule -> Alert -> Isolate) | tester | 2h | ✅ (2026-02-11 완료, 3분, 5 tests) | T7.1 |
+| T7.3 | S2: SBOM 스캔 -> AlertEvent E2E | tester | 1.5h | ✅ (2026-02-11 완료, 45분, 5 tests) | T7.1 |
+| T7.4 | S3: 설정 로딩 -> Orchestrator 초기화 -> health_check | tester | 1h | ✅ (2026-02-11 완료, 40분, 8 tests) | T7.1 |
+| T7.5 | S4: Graceful shutdown 순서 검증 (producer first, timeout) | tester | 1.5h | ✅ (2026-02-11 완료, 40분, 8 tests) | T7.1 |
+| T7.6 | S5: 잘못된 설정 -> 에러 메시지 + 비정상 종료 | tester | 1h | ✅ (2026-02-11 완료, 40분, 10 tests) | T7.1 |
+| T7.7 | S6: 모듈 장애 격리 (한 모듈 실패 -> 나머지 계속) | tester | 1.5h | 🔄 (2026-02-11 22:30) | T7.1 |
 
 ### Part B: Docker Compose One-Click Demo -- 4건
 | ID | 태스크 | 담당 | 예상 | 상태 | 의존성 |
 |----|--------|------|------|------|--------|
 | T7.8 | Dockerfile 개선 (multi-stage, cargo-chef, distroless) | implementer | 1.5h | ✅ (2026-02-11 완료, 15분) | 없음 |
-| T7.9 | docker-compose.yml 개선 (healthcheck, network, resources) | implementer | 1h | ⏳ | T7.8 |
+| T7.9 | docker-compose.yml 개선 (healthcheck, network, resources) | implementer | 1h | ✅ (2026-02-11 완료, 35분) | T7.8 |
 | T7.10 | docker-compose.demo.yml (nginx, redis, log-generator, attack-sim) | implementer + writer | 1.5h | ⏳ | T7.9 |
 | T7.11 | docs/demo.md 데모 실행 가이드 (3분 체험) | writer | 1h | ⏳ | T7.10 |
 

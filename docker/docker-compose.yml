@@ -1,60 +1,221 @@
+# Ironpost Production-Ready Docker Compose Configuration
+# This compose file sets up the complete Ironpost security monitoring stack
+# with proper health checks, resource limits, and network isolation.
+
 services:
+  # PostgreSQL database for log storage and analytics
+  postgresql:
+    image: postgres:16-alpine
+    container_name: ironpost-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ironpost}
+      POSTGRES_USER: ${POSTGRES_USER:-ironpost}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    networks:
+      - ironpost-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ironpost} -d ${POSTGRES_DB:-ironpost}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+  # Redis for caching and message queuing
+  redis:
+    image: redis:7-alpine
+    container_name: ironpost-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis-data:/data
+    networks:
+      - ironpost-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+
+  # Ironpost main service
   ironpost:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    ports:
-      - "514:514/udp"
-      - "8080:8080"
-    volumes:
-      - ironpost-data:/var/lib/ironpost
-      - ../ironpost.toml:/etc/ironpost/ironpost.toml:ro
-    depends_on:
-      - redis
-      - postgresql
+    container_name: ironpost-daemon
     restart: unless-stopped
-
-  redis:
-    image: redis:7-alpine
     ports:
-      - "6379:6379"
-    volumes:
-      - redis-data:/data
-    restart: unless-stopped
-
-  postgresql:
-    image: postgres:16-alpine
-    ports:
-      - "5432:5432"
+      - "${IRONPOST_SYSLOG_PORT:-514}:514/udp"
+      - "${IRONPOST_API_PORT:-8080}:8080"
     environment:
-      POSTGRES_DB: ironpost
-      POSTGRES_USER: ironpost
-      POSTGRES_PASSWORD: password  # TODO: 프로덕션에서는 시크릿 관리
-    volumes:
-      - pg-data:/var/lib/postgresql/data
-    restart: unless-stopped
+      # General settings
+      IRONPOST_GENERAL_LOG_LEVEL: ${IRONPOST_LOG_LEVEL:-info}
+      IRONPOST_GENERAL_LOG_FORMAT: ${IRONPOST_LOG_FORMAT:-json}
+      IRONPOST_GENERAL_DATA_DIR: /var/lib/ironpost
+      IRONPOST_GENERAL_PID_FILE: /var/run/ironpost.pid
 
+      # eBPF engine (Linux only)
+      IRONPOST_EBPF_ENABLED: ${IRONPOST_EBPF_ENABLED:-false}
+      IRONPOST_EBPF_INTERFACE: ${IRONPOST_EBPF_INTERFACE:-eth0}
+      IRONPOST_EBPF_XDP_MODE: ${IRONPOST_EBPF_XDP_MODE:-skb}
+
+      # Log pipeline
+      IRONPOST_LOG_PIPELINE_ENABLED: ${IRONPOST_LOG_PIPELINE_ENABLED:-true}
+      IRONPOST_LOG_PIPELINE_SYSLOG_BIND: 0.0.0.0:514
+      IRONPOST_LOG_PIPELINE_BATCH_SIZE: ${IRONPOST_LOG_PIPELINE_BATCH_SIZE:-1000}
+      IRONPOST_LOG_PIPELINE_FLUSH_INTERVAL_SECS: ${IRONPOST_LOG_PIPELINE_FLUSH_INTERVAL_SECS:-5}
+
+      # Database connection strings
+      IRONPOST_LOG_PIPELINE_STORAGE_POSTGRES_URL: postgresql://${POSTGRES_USER:-ironpost}:${POSTGRES_PASSWORD:-changeme}@postgresql:5432/${POSTGRES_DB:-ironpost}
+      IRONPOST_LOG_PIPELINE_STORAGE_REDIS_URL: redis://redis:6379
+      IRONPOST_LOG_PIPELINE_STORAGE_RETENTION_DAYS: ${IRONPOST_LOG_RETENTION_DAYS:-90}
+
+      # Container guard
+      IRONPOST_CONTAINER_ENABLED: ${IRONPOST_CONTAINER_ENABLED:-false}
+      IRONPOST_CONTAINER_DOCKER_SOCKET: unix:///var/run/docker.sock
+      IRONPOST_CONTAINER_POLL_INTERVAL_SECS: ${IRONPOST_CONTAINER_POLL_INTERVAL_SECS:-10}
+      IRONPOST_CONTAINER_AUTO_ISOLATE: ${IRONPOST_CONTAINER_AUTO_ISOLATE:-false}
+
+      # SBOM scanner
+      IRONPOST_SBOM_ENABLED: ${IRONPOST_SBOM_ENABLED:-false}
+      IRONPOST_SBOM_MIN_SEVERITY: ${IRONPOST_SBOM_MIN_SEVERITY:-medium}
+      IRONPOST_SBOM_OUTPUT_FORMAT: ${IRONPOST_SBOM_OUTPUT_FORMAT:-cyclonedx}
+    volumes:
+      # Data persistence
+      - ironpost-data:/var/lib/ironpost
+      - ironpost-logs:/var/log/ironpost
+
+      # Configuration (read-only)
+      - ../ironpost.toml:/etc/ironpost/ironpost.toml:ro
+
+      # Docker socket (for container monitoring, optional)
+      # - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - ironpost-net
+    depends_on:
+      postgresql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "ironpost-cli", "status", "--format", "json"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+  # Prometheus metrics collection (optional, use profile 'monitoring')
   prometheus:
     image: prom/prometheus:latest
+    container_name: ironpost-prometheus
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
     ports:
-      - "9090:9090"
+      - "${PROMETHEUS_PORT:-9090}:9090"
     volumes:
       - prometheus-data:/prometheus
-    restart: unless-stopped
+      # - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    networks:
+      - ironpost-net
+    profiles:
+      - monitoring
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
 
+  # Grafana dashboards (optional, use profile 'monitoring')
   grafana:
     image: grafana/grafana:latest
+    container_name: ironpost-grafana
+    restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "${GRAFANA_PORT:-3000}:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-changeme}
+      GF_INSTALL_PLUGINS: ''
     volumes:
       - grafana-data:/var/lib/grafana
+    networks:
+      - ironpost-net
     depends_on:
       - prometheus
-    restart: unless-stopped
+    profiles:
+      - monitoring
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
 
+# Named volumes for data persistence
 volumes:
   ironpost-data:
-  redis-data:
+    name: ironpost-data
+  ironpost-logs:
+    name: ironpost-logs
   pg-data:
+    name: ironpost-postgres-data
+  redis-data:
+    name: ironpost-redis-data
   prometheus-data:
+    name: ironpost-prometheus-data
   grafana-data:
+    name: ironpost-grafana-data
+
+# Isolated network for Ironpost services
+networks:
+  ironpost-net:
+    name: ironpost-network
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
