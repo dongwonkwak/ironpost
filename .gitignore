@@ -49,3 +49,5 @@ flamegraph.svg
 
 REVIEW.md
 REVIEW_FIXES_SUMMARY.md
+
+.gh-pr-export/
