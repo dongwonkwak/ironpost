@@ -52,6 +52,21 @@ jobs:
         env:
           RUSTDOCFLAGS: "-D warnings"
 
+  build:
+    name: Build All
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
+      - uses: Swatinem/rust-cache@v2
+      - name: Install bpf-linker
+        run: cargo install bpf-linker
+      - name: Build all (workspace + eBPF)
+        run: cargo run -p xtask -- build --all --release
+
   ebpf-build:
     name: eBPF Build
     runs-on: ubuntu-latest

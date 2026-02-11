@@ -266,11 +266,15 @@ If signal handlers (`SIGTERM`, `SIGINT`) cannot be installed, the daemon returns
 The eBPF engine requires building kernel-side BPF programs before the daemon can load them:
 
 ```bash
-# Build eBPF programs (development)
-cargo run --package xtask -- build-ebpf
+# Build daemon + all modules including eBPF (recommended)
+cargo run -p xtask -- build --all
+cargo run -p xtask -- build --all --release
 
-# Build eBPF programs (release)
-cargo run --package xtask -- build-ebpf --release
+# Build eBPF programs only (development)
+cargo run -p xtask -- build-ebpf
+
+# Build eBPF programs only (release)
+cargo run -p xtask -- build-ebpf --release
 ```
 
 This compiles the BPF bytecode in `crates/ebpf-engine/ebpf/` and generates artifacts in `target/bpfel-unknown-none/`. The daemon will load these programs at runtime when the eBPF engine module is enabled.

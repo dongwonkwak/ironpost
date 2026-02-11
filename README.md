@@ -119,18 +119,19 @@ All inter-module communication uses `tokio::mpsc` channels (no direct function c
 git clone https://github.com/ironpost/ironpost.git
 cd ironpost
 
-# Build all modules (excluding eBPF on macOS/Windows)
-cargo build --release
+# Build workspace (excluding eBPF)
+cargo run -p xtask -- build --release
 
-# Build eBPF kernel program (Linux only, requires bpf-linker)
+# Build everything including eBPF (Linux only, requires bpf-linker)
 cargo install bpf-linker
-cargo xtask build-ebpf --release
+rustup toolchain install nightly --component rust-src
+cargo run -p xtask -- build --all --release
 
 # Build CLI and daemon only (minimal)
 cargo build --release -p ironpost-cli -p ironpost-daemon
 ```
 
-**Note:** eBPF modules are Linux-only. On macOS/Windows, they are excluded from default builds via `default-members` in `Cargo.toml`.
+**Note:** eBPF modules are Linux-only. On macOS/Windows, use `cargo run -p xtask -- build` which automatically excludes eBPF.
 
 ### Configure
 
@@ -505,7 +506,19 @@ cargo test --workspace --exclude ironpost-ebpf --test '*'
 
 ## Build Instructions
 
-### Standard Build
+### Unified Build (Recommended)
+
+```bash
+# Build workspace only (excluding eBPF)
+cargo run -p xtask -- build
+cargo run -p xtask -- build --release
+
+# Build everything including eBPF (Linux only)
+cargo run -p xtask -- build --all
+cargo run -p xtask -- build --all --release
+```
+
+### Standard Build (Manual)
 
 ```bash
 # Debug build (fast compilation, slow runtime)
@@ -525,8 +538,9 @@ cargo check
 cargo install bpf-linker
 rustup toolchain install nightly --component rust-src
 
-# Build eBPF kernel program
-cargo xtask build-ebpf --release
+# Build eBPF kernel program only
+cargo run -p xtask -- build-ebpf
+cargo run -p xtask -- build-ebpf --release
 
 # Verify eBPF bytecode
 llvm-objdump -S target/bpfel-unknown-none/release/ironpost-ebpf
