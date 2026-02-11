@@ -10,7 +10,7 @@
 | 3-log | 12 | 13 | 0 | 5 | ✅ (설계+구현+리뷰+수정 완료) |
 | 4-container | 17 | 17 | 0 | 0 | ✅ (설계+구현+테스트+리뷰 완료, 202 tests) |
 | 5-sbom | 28 | 28 | 0 | 0 | ✅ (Phase 5-E 문서화 완료, 183 tests, README 580+ lines) |
-| 6-polish | 11 | 4 | 0 | 7 | ✅ T6-2 CLI 구현 완료, 다음: T6-3 설정 파일 |
+| 6-polish | 12 | 5 | 0 | 7 | ✅ T6-12 Phase 6 리뷰 완료, 다음: T6-3 설정 파일 |
 
 ## 블로커
 - 없음
@@ -22,7 +22,7 @@
 
 ## Phase 6: Integration & Polish
 
-### 필수 (Required) -- 6건
+### 필수 (Required) -- 7건
 | ID | 태스크 | 담당 | 예상 | 상태 | 의존성 |
 |----|--------|------|------|------|--------|
 | T6-1 | ironpost-daemon 통합 구현 | architect + implementer | 4h | ✅ (2026-02-10 완료) | 없음 |
@@ -31,6 +31,7 @@
 | T6-4 | 리뷰 미반영 수정 (Phase 2~5 C/H/M) | implementer | 6h | ✅ (2026-02-11 완료, 1.5h, 10/10 fixed) | 없음 |
 | T6-5 | 루트 README.md 재작성 | writer | 2h | ⏳ | T6-1, T6-2 |
 | T6-6 | CHANGELOG.md 작성 | writer | 1h | ⏳ | T6-4 |
+| T6-12 | Phase 6 리뷰 수정 (C2, H5) | implementer | 2h | ✅ (2026-02-11 완료, 1h, 7/7 fixed) | T6-1, T6-2 |
 
 ### T6-4 상세: 리뷰 미반영 수정 사항 (2026-02-11 완료)
 
@@ -70,6 +71,78 @@
 - P3-M2: cleanup 주기 (pipeline.rs:234-354)
 - P4-M5: enforcer.rs 삭제 완료
 - P2-M7: source_module 동적 설정 (event.rs:275)
+
+### T6-12 상세: Phase 6 Integration 리뷰 수정 사항 (2026-02-11 완료)
+
+#### 수정 완료 항목 (7건)
+
+##### Critical -- 2건
+| ID | 설명 | 파일 | 상태 |
+|----|------|------|------|
+| P6-C1 | TOCTOU in PID File Creation | orchestrator.rs:268-293 | ✅ Fixed (OpenOptions create_new) |
+| P6-C2 | Signal Handler expect() | orchestrator.rs:246-259 | ✅ Fixed (return Result) |
+
+##### High -- 5건
+| ID | 설명 | 파일 | 상태 |
+|----|------|------|------|
+| P6-H1 | as Cast Without Overflow Check | status.rs:161-179 | ✅ Fixed (try_from) |
+| P6-H2 | Incomplete unsafe SAFETY Comment | status.rs:161-179 | ✅ Fixed (expanded) |
+| P6-H3 | expect() in Container Guard | container_guard.rs:67-71 | ✅ Fixed (ok_or_else) |
+| P6-H4 | Shutdown Order Backwards | mod.rs:102-135, orchestrator.rs:14-19 | ✅ Fixed (removed .rev()) |
+| P6-H5 | Credential Exposure in config show | config.rs:54-116 | ✅ Fixed (redact URLs) |
+
+#### 수정 내용
+
+**C1: TOCTOU 제거**
+- `path.exists()` 체크 제거
+- `OpenOptions::new().write(true).create_new(true).open(path)` 사용
+- `ErrorKind::AlreadyExists`에서 기존 PID 읽어 에러 메시지 구성
+
+**C2: expect() 제거**
+- `wait_for_shutdown_signal() -> Result<&'static str>` 시그니처 변경
+- `.expect()` → `.map_err()` + `?` 연산자로 에러 전파
+- 호출자가 Result 반환하므로 graceful handling 가능
+
+**H1: as 캐스팅 제거**
+- `pid as libc::pid_t` → `libc::pid_t::try_from(pid)`
+- 변환 실패 시 (pid > i32::MAX) 경고 로그 + false 반환
+- 음수 PID 발생 (process group signal) 방지
+
+**H2: SAFETY 주석 보강**
+- try_from 바운드 체크 유효성
+- signal 0 존재 확인만 수행
+- PID 재사용 가능성 (정확성 이슈)
+- extern C 메모리 안전성
+
+**H3: expect() 제거**
+- `action_rx.expect()` → `action_rx.ok_or_else(|| anyhow!())?`
+- builder가 action_rx 반환 안 할 경우 명확한 에러
+
+**H4: 셧다운 순서 수정**
+- `stop_all()` 역순 반복 제거 (`.rev()` 삭제)
+- 등록 순서대로 정지: eBPF → LogPipeline → SBOM → ContainerGuard
+- 생산자 먼저 정지하여 소비자가 채널 드레인 가능
+- orchestrator.rs, modules/mod.rs 주석 정확성 개선
+
+**H5: 자격증명 노출 방지**
+- `redact_credentials()` 함수 추가
+- postgres_url, redis_url에서 user:password 마스킹
+- 출력 예: `postgresql://***REDACTED***@host:5432/db`
+- 전체/섹션별 config show 모두 적용
+
+#### 테스트
+```bash
+cargo test -p ironpost-daemon orchestrator  # 7 passed
+cargo test -p ironpost-cli commands::status  # 15 passed
+cargo test -p ironpost-cli commands::config  # 12 passed
+cargo clippy -p ironpost-daemon -p ironpost-cli -- -D warnings  # clean
+```
+
+#### 산출물
+- 커밋: 8dc6a33 (fix(review): resolve Phase 6 Critical and High severity issues)
+- 변경 파일: 6개 (orchestrator.rs, mod.rs, container_guard.rs, status.rs, config.rs, phase-6-integration.md)
+- 추가: 525 lines, 삭제: 47 lines
+- 소요 시간: 약 1시간
 
 ### 고도화 (Enhancement) -- 3건
 | ID | 태스크 | 담당 | 예상 | 상태 | 의존성 |
