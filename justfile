@@ -73,7 +73,10 @@ cli *ARGS:
 install-hooks:
     @echo "📦 Installing git hooks..."
     @cp hooks/pre-commit .git/hooks/pre-commit
+    @cp hooks/pre-push .git/hooks/pre-push
     @chmod +x .git/hooks/pre-commit
+    @chmod +x .git/hooks/pre-push
     @echo "✅ Git hooks installed successfully!"
-    @echo "   Location: .git/hooks/pre-commit"
-    @echo "   Bypass: git commit --no-verify"
+    @echo "   Pre-commit: fmt, clippy (빠른 검사)"
+    @echo "   Pre-push: test, doc (무거운 검사)"
+    @echo "   Bypass: --no-verify 플래그 사용"
