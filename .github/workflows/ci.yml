@@ -66,9 +66,15 @@ jobs:
   security:
     name: Security Audit
     runs-on: ubuntu-latest
-    # Note: continue-on-error means vulnerabilities won't fail CI.
-    # This is intentional for "warn-only" mode during development,
-    # but advisories will be visible in job output and annotations.
+    # WARNING: continue-on-error: true means known CVEs will NOT block merges.
+    # This is intentional to prevent flaky builds from breaking development flow.
+    # Security findings are still visible in:
+    #   1. Job output (click "Security Audit" in Actions)
+    #   2. GitHub annotations on the PR
+    #   3. Dependabot alerts (see Security tab)
+    # For production releases, review all security findings manually before deployment.
+    # To make this job required: set continue-on-error: false and maintain an allowlist
+    # of accepted advisories in .cargo/audit.toml
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4

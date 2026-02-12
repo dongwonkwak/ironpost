@@ -41,10 +41,26 @@ use super::ModuleHandle;
 /// * `Err(_)` - Initialization failed (e.g., Docker connection failure)
 pub fn init(
     config: &IronpostConfig,
-    alert_rx: mpsc::Receiver<AlertEvent>,
+    mut alert_rx: mpsc::Receiver<AlertEvent>,
 ) -> Result<Option<(ModuleHandle, mpsc::Receiver<ActionEvent>)>> {
     if !config.container.enabled {
-        tracing::info!("container guard disabled in configuration");
+        tracing::warn!(
+            "container guard disabled, alert channel will be drained (alerts logged but not acted upon)"
+        );
+
+        // Spawn a background task to drain the alert channel to prevent producers from blocking
+        tokio::spawn(async move {
+            while let Some(alert) = alert_rx.recv().await {
+                tracing::warn!(
+                    alert_id = %alert.id,
+                    severity = %alert.severity,
+                    source = %alert.metadata.source_module,
+                    "alert discarded (container-guard disabled)"
+                );
+            }
+            tracing::debug!("alert drain task terminated (channel closed)");
+        });
+
         return Ok(None);
     }
 

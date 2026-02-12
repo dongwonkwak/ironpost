@@ -82,9 +82,13 @@ impl ModuleRegistry {
     /// Already-started modules are NOT rolled back; the caller should
     /// invoke `stop_all` if partial startup is unacceptable.
     ///
+    /// Each module start operation has a 30-second timeout to prevent indefinite hangs.
+    ///
     /// Note: Module panics will propagate to the daemon orchestrator.
     /// Modules are expected to handle all errors gracefully and avoid panicking.
     pub async fn start_all(&mut self) -> anyhow::Result<()> {
+        const START_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
         for handle in &mut self.modules {
             if !handle.enabled {
                 tracing::debug!(module = %handle.name, "skipping disabled module");
@@ -92,12 +96,28 @@ impl ModuleRegistry {
             }
 
             tracing::info!(module = %handle.name, "starting module");
-            handle
-                .pipeline
-                .start()
-                .await
-                .map_err(|e| anyhow::anyhow!("failed to start module '{}': {}", handle.name, e))?;
-            tracing::info!(module = %handle.name, "module started successfully");
+
+            let start_result = tokio::time::timeout(START_TIMEOUT, handle.pipeline.start()).await;
+
+            match start_result {
+                Ok(Ok(())) => {
+                    tracing::info!(module = %handle.name, "module started successfully");
+                }
+                Ok(Err(e)) => {
+                    return Err(anyhow::anyhow!(
+                        "failed to start module '{}': {}",
+                        handle.name,
+                        e
+                    ));
+                }
+                Err(_) => {
+                    return Err(anyhow::anyhow!(
+                        "timeout starting module '{}' (exceeded {:?})",
+                        handle.name,
+                        START_TIMEOUT
+                    ));
+                }
+            }
         }
         Ok(())
     }
@@ -108,9 +128,12 @@ impl ModuleRegistry {
     /// Registration order is: eBPF -> LogPipeline -> SBOM -> ContainerGuard.
     /// Stopping in this order ensures producers stop first, allowing consumers to drain.
     ///
+    /// Each module stop operation has a 30-second timeout to prevent indefinite hangs.
+    ///
     /// Note: Module panics during stop will propagate to the daemon orchestrator.
     /// Modules are expected to handle all errors gracefully and avoid panicking.
     pub async fn stop_all(&mut self) -> anyhow::Result<()> {
+        const STOP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
         let mut errors = Vec::new();
 
         for handle in self.modules.iter_mut() {
@@ -119,15 +142,29 @@ impl ModuleRegistry {
             }
 
             tracing::info!(module = %handle.name, "stopping module");
-            if let Err(e) = handle.pipeline.stop().await {
-                tracing::error!(
-                    module = %handle.name,
-                    error = %e,
-                    "failed to stop module"
-                );
-                errors.push(format!("{}: {}", handle.name, e));
-            } else {
-                tracing::info!(module = %handle.name, "module stopped successfully");
+
+            let stop_result = tokio::time::timeout(STOP_TIMEOUT, handle.pipeline.stop()).await;
+
+            match stop_result {
+                Ok(Ok(())) => {
+                    tracing::info!(module = %handle.name, "module stopped successfully");
+                }
+                Ok(Err(e)) => {
+                    tracing::error!(
+                        module = %handle.name,
+                        error = %e,
+                        "failed to stop module"
+                    );
+                    errors.push(format!("{}: {}", handle.name, e));
+                }
+                Err(_) => {
+                    tracing::warn!(
+                        module = %handle.name,
+                        timeout = ?STOP_TIMEOUT,
+                        "timeout stopping module, continuing shutdown"
+                    );
+                    errors.push(format!("{}: timeout after {:?}", handle.name, STOP_TIMEOUT));
+                }
             }
         }
 

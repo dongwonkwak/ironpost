@@ -130,6 +130,8 @@ impl Orchestrator {
         }
 
         // Initialize container guard
+        // Note: init() consumes alert_rx regardless of enabled status.
+        // If disabled, it spawns a drain task to prevent producers from blocking.
         if let Some((handle, rx)) = crate::modules::container_guard::init(&config, alert_rx)? {
             modules.register(handle);
             action_rx = Some(rx);
@@ -169,6 +171,16 @@ impl Orchestrator {
         // Start all modules
         tracing::info!("starting all enabled modules");
         if let Err(e) = self.modules.start_all().await {
+            // Rollback: stop any modules that were successfully started
+            tracing::warn!("startup failed, rolling back already-started modules");
+            if let Err(stop_err) = self.modules.stop_all().await {
+                tracing::error!(
+                    startup_error = %e,
+                    rollback_error = %stop_err,
+                    "rollback also failed during startup failure cleanup"
+                );
+            }
+
             // Cleanup PID file on startup failure
             if !self.config.general.pid_file.is_empty() {
                 let path = Path::new(&self.config.general.pid_file);
@@ -275,6 +287,12 @@ async fn wait_for_shutdown_signal() -> Result<&'static str> {
 ///
 /// Used to prevent duplicate daemon instances.
 ///
+/// # Security
+///
+/// - Uses `create_new(true)` to atomically create file (prevents TOCTOU races)
+/// - Verifies the created file is a regular file (prevents symlink attacks)
+/// - Creates parent directory with restrictive permissions (0o700)
+///
 /// # Errors
 ///
 /// Returns an error if the PID file cannot be written.
@@ -282,9 +300,19 @@ fn write_pid_file(path: &Path) -> Result<()> {
     use std::fs::{self, OpenOptions};
     use std::io::{ErrorKind, Write};
 
-    // Create parent directory if it doesn't exist
+    // Create parent directory with restrictive permissions (0o700)
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            let mut builder = fs::DirBuilder::new();
+            builder.mode(0o700).recursive(true);
+            builder.create(parent)?;
+        }
+        #[cfg(not(unix))]
+        {
+            fs::create_dir_all(parent)?;
+        }
     }
 
     let pid = std::process::id();
@@ -303,6 +331,25 @@ fn write_pid_file(path: &Path) -> Result<()> {
         }
         Err(e) => return Err(e.into()),
     };
+
+    // Verify the created file is a regular file (not a symlink or other special file)
+    let metadata = file.metadata()?;
+    if !metadata.is_file() {
+        // Remove the non-regular file and return error
+        let _ = fs::remove_file(path);
+        return Err(anyhow::anyhow!(
+            "PID file {} is not a regular file (possible symlink attack)",
+            path.display()
+        ));
+    }
+
+    // Set restrictive permissions on the PID file (0o600)
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let permissions = std::fs::Permissions::from_mode(0o600);
+        file.set_permissions(permissions)?;
+    }
 
     writeln!(file, "{}", pid)?;
 

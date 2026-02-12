@@ -1,5 +1,5 @@
 # Ironpost 태스크 보드
-> 최종 업데이트: 2026-02-12
+> 최종 업데이트: 2026-02-13
 
 ## 진행 요약
 | Phase | 전체 | 완료 | 진행중 | 대기 | 진행률 |
@@ -12,12 +12,57 @@
 | 5-sbom | 28 | 28 | 0 | 0 | ✅ (Phase 5-E 문서화 완료, 183 tests, README 580+ lines) |
 | 6-polish | 12 | 9 | 0 | 3 | ✅ T6-14 ironpost-cli 문서화 완료, 다음: T6-3 설정 파일 |
 | 7-e2e | 16 | 16 | 0 | 0 | ✅ (E2E 테스트 + Docker Demo + CI + Codex 리뷰 수정 완료) |
+| 8-release | 9 | 1 | 0 | 8 | ⏳ T8.1 완료, 다음: T8.2 리뷰 수정 |
 
 ## 블로커
 - 없음
 
 ## 현재 진행중
-- 없음
+- Phase 8: Final Release (v0.1.0) — 플랜 작성 완료
+
+---
+
+## Phase 8: Final Release (v0.1.0)
+
+### Part A: 설정 파일 + 리뷰 수정 -- 2건
+| ID | 태스크 | 담당 | 예상 | 상태 | 의존성 |
+|----|--------|------|------|------|--------|
+| T8.1 | `docs/configuration.md` 통합 설정 가이드 (T6-3 승격) | architect + implementer | 2h | ✅ (2026-02-13 완료) | 없음 |
+| T8.2 | Phase 6/7 Medium/Low 리뷰 이슈 일괄 수정 (10건) | implementer | 2.5h | ✅ (2026-02-13 완료, 2h, 12/26 fixed, 7 noted) | 없음 |
+
+### Part B: 플러그인 아키텍처 리팩토링 -- 2건
+| ID | 태스크 | 담당 | 예상 | 상태 | 의존성 |
+|----|--------|------|------|------|--------|
+| T8.3 | Plugin trait 설계 + PluginRegistry 구현 | architect | 1.5h | ⏳ | T8.1, T8.2 |
+| T8.4 | 기존 4개 모듈 Plugin trait 마이그레이션 | implementer | 2h | ⏳ | T8.3 |
+
+### Part C: GitHub Pages + 문서 품질 -- 2건
+| ID | 태스크 | 담당 | 예상 | 상태 | 의존성 |
+|----|--------|------|------|------|--------|
+| T8.5 | GitHub Pages 배포 워크플로우 (.github/workflows/docs.yml) | implementer | 1h | ⏳ | 없음 |
+| T8.6 | doc comment 품질 점검 + 누락 보완 (#![warn(missing_docs)]) | writer | 1h | ⏳ | 없음 |
+
+### Part D: v0.1.0 릴리스 -- 3건
+| ID | 태스크 | 담당 | 예상 | 상태 | 의존성 |
+|----|--------|------|------|------|--------|
+| T8.7 | CHANGELOG.md 업데이트 (Phase 7~8 내용 추가) | writer | 0.5h | ⏳ | T8.4, T8.5, T8.6 |
+| T8.8 | 최종 리뷰 (전체 프로젝트) | reviewer | 1h | ⏳ | T8.7 |
+| T8.9 | v0.1.0 태그 + main 머지 | (수동) | 0.5h | ⏳ | T8.8 |
+
+### 태스크 의존성
+```
+T8.1, T8.2, T8.5, T8.6 (병렬) → T8.3 → T8.4 → T8.7 → T8.8 → T8.9
+```
+
+### 완료 기준
+- [ ] cargo test --workspace 전체 통과 (1100+ tests)
+- [ ] cargo clippy --workspace -- -D warnings 통과
+- [ ] cargo doc --workspace --no-deps 경고 없이 빌드
+- [x] docs/configuration.md 작성 완료
+- [ ] Plugin trait 기반 모듈 등록 동작
+- [ ] GitHub Pages 배포 워크플로우 작성
+- [ ] v0.1.0 태그 생성
+- [ ] CHANGELOG.md Phase 7~8 내용 포함
 
 ---
 
@@ -68,7 +113,7 @@
 |----|--------|------|------|------|--------|
 | T6-1 | ironpost-daemon 통합 구현 | architect + implementer | 4h | ✅ (2026-02-10 완료) | 없음 |
 | T6-2 | ironpost-cli 통합 구현 | implementer | 3h | ✅ (2026-02-10 완료) | T6-1 |
-| T6-3 | ironpost.toml 통합 설정 파일 | architect + implementer | 2h | ⏳ | T6-1 병행 |
+| T6-3 | ironpost.toml 통합 설정 파일 | architect + implementer | 2h | ✅ (T8.1로 승격 완료) | T6-1 병행 |
 | T6-4 | 리뷰 미반영 수정 (Phase 2~5 C/H/M) | implementer | 6h | ✅ (2026-02-11 완료, 1.5h, 10/10 fixed) | 없음 |
 | T6-5 | 루트 README.md 재작성 | writer | 2h | ✅ (2026-02-11 완료, 614 lines, L1 doc) | T6-1, T6-2 |
 | T6-6 | CHANGELOG.md 작성 | writer | 1h | ✅ (2026-02-11 완료, 286 lines, Keep a Changelog 1.1.0) | T6-4 |
