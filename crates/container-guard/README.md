@@ -81,7 +81,7 @@ tokio = { version = "1", features = ["full"] }
 
 ### Basic Usage
 
-```rust
+```rust,no_run
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use ironpost_container_guard::{
@@ -396,14 +396,12 @@ For `NetworkDisconnect` with multiple networks:
 
 After each isolation action (success or failure), an `ActionEvent` is emitted:
 
-```rust
-use ironpost_core::event::ActionEvent;
-
-// ActionEvent fields:
-// - action_type: "container_pause", "container_stop", "container_network_disconnect"
-// - target: container ID
-// - success: true/false
-// - metadata.trace_id: links back to the originating AlertEvent
+```text
+ActionEvent fields:
+- action_type: "container_pause", "container_stop", "container_network_disconnect"
+- target: container ID
+- success: true/false
+- metadata.trace_id: links back to the originating AlertEvent
 ```
 
 ## Testing
