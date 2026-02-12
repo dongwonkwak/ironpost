@@ -6,8 +6,8 @@ severity_threshold = "Medium"
 priority = 20
 
 [target_filter]
-container_names = ["postgres-*", "mysql-*"]
-image_patterns = ["postgres:*", "mysql:*", "mariadb:*"]
+container_names = ["ironpost-postgres*", "ironpost-redis*"]
+image_patterns = ["postgres:*", "redis:*"]
 labels = []
 
 [action.NetworkDisconnect]
