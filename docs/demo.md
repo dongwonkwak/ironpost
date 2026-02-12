@@ -117,7 +117,7 @@ docker compose logs -f ironpost
 ```json
 {"timestamp":"2026-02-12T00:45:30Z","level":"INFO","module":"ironpost-daemon","message":"All modules started successfully"}
 {"timestamp":"2026-02-12T00:45:32Z","level":"INFO","module":"log-pipeline","message":"Received log from webserver01: Accepted publickey for admin"}
-{"timestamp":"2026-02-12T00:45:40Z","level":"WARN","module":"log-pipeline","message":"Alert triggered: SSH Brute Force Attack (severity: high)"}
+{"timestamp":"2026-02-12T00:45:40Z","level":"WARN","module":"log-pipeline","message":"Alert triggered: SSH Brute Force Attack (severity: High)"}
 {"timestamp":"2026-02-12T00:45:41Z","level":"INFO","module":"container-guard","message":"Container nginx isolated: action=pause reason=high_severity_alert"}
 ```
 
@@ -149,7 +149,7 @@ docker compose logs -f ironpost
 ```json
 {"timestamp":"2026-02-12T00:46:00Z","level":"DEBUG","module":"log-pipeline","fields":{"source":"syslog","parser":"rfc5424","host":"webserver01"},"message":"Parsed log entry successfully"}
 {"timestamp":"2026-02-12T00:46:05Z","level":"INFO","module":"log-pipeline","message":"Batch processed: 8 logs, 0 alerts"}
-{"timestamp":"2026-02-12T00:46:10Z","level":"DEBUG","module":"log-pipeline","fields":{"rule_id":"ssh_brute_force","matched":true},"message":"Rule matched for incoming log"}
+{"timestamp":"2026-02-12T00:46:10Z","level":"DEBUG","module":"log-pipeline","fields":{"rule_id":"ssh_brute_force_demo","matched":true},"message":"Rule matched for incoming log"}
 ```
 
 **What to observe:**
@@ -173,37 +173,37 @@ docker compose logs ironpost | grep -i "alert"
 **Expected Output:**
 
 ```json
-{"timestamp":"2026-02-12T00:46:15Z","level":"WARN","module":"log-pipeline","fields":{"rule_id":"ssh_brute_force","severity":"high","src_ip":"203.0.113.42"},"message":"Alert triggered: SSH Brute Force Attack"}
-{"timestamp":"2026-02-12T00:46:20Z","level":"WARN","module":"log-pipeline","fields":{"rule_id":"sql_injection","severity":"critical"},"message":"Alert triggered: SQL Injection Attempt"}
-{"timestamp":"2026-02-12T00:46:25Z","level":"WARN","module":"log-pipeline","fields":{"rule_id":"port_scan_detected","severity":"medium"},"message":"Alert triggered: Port Scan Activity"}
+{"timestamp":"2026-02-12T00:46:15Z","level":"WARN","module":"log-pipeline","fields":{"rule_id":"ssh_brute_force_demo","severity":"High","sd_meta_source_ip":"203.0.113.42"},"message":"Alert triggered: SSH Brute Force Attempt"}
+{"timestamp":"2026-02-12T00:46:20Z","level":"WARN","module":"log-pipeline","fields":{"rule_id":"sql_injection_demo","severity":"Critical"},"message":"Alert triggered: SQL Injection Attempt"}
+{"timestamp":"2026-02-12T00:46:25Z","level":"WARN","module":"log-pipeline","fields":{"rule_id":"port_scan_demo","severity":"Medium"},"message":"Alert triggered: Port Scanning Activity"}
 ```
 
 **Demo Rules Triggered:**
-1. **ssh_brute_force**: 3 failed SSH attempts in 60 seconds → HIGH severity
-2. **sql_injection**: SQL keywords in HTTP request → CRITICAL severity
-3. **privilege_escalation**: Unauthorized sudo attempt → HIGH severity
-4. **suspicious_download**: wget/curl to malicious domains → MEDIUM severity
-5. **port_scan_detected**: Multiple SYN packets to different ports → MEDIUM severity
+1. **ssh_brute_force_demo**: 3 failed SSH attempts in 60 seconds → HIGH severity
+2. **sql_injection_demo**: SQL keywords in HTTP request → CRITICAL severity
+3. **unauthorized_sudo**: Unauthorized sudo attempt → HIGH severity
+4. **suspicious_download**: wget/curl to malicious domains → HIGH severity
+5. **port_scan_demo**: Multiple SYN packets to different ports → MEDIUM severity
 
 **Rule Configuration:**
 
 ```yaml
 # Example: docker/demo/rules/ssh-brute-force.yml
-id: ssh_brute_force
-title: SSH Brute Force Attack
-severity: high
+id: ssh_brute_force_demo
+title: SSH Brute Force Attempt
+severity: High
 detection:
   conditions:
     - field: process
-      modifier: equals
+      modifier: exact
       value: sshd
     - field: message
       modifier: contains
       value: "Failed password"
   threshold:
+    field: sd_meta_source_ip
     count: 3
     timeframe_secs: 60
-    field: src_ip
 ```
 
 ---
@@ -253,19 +253,24 @@ docker compose restart attack-simulator
 
 **Container Policies:**
 
-The demo uses policies defined in `docker/demo/policies/demo-policy.yml`:
+The demo uses TOML policies in `docker/demo/policies/`:
 
-```yaml
-- id: pause-web-on-high
-  name: Pause Web Servers on High Severity
-  severity_threshold: High
-  target_filter:
-    container_names:
-      - "ironpost-demo-nginx"
-    image_patterns:
-      - "nginx:*"
-  action: Pause
-  priority: 10
+```toml
+# Example: docker/demo/policies/pause-web-on-high.toml
+id = "pause-web-on-high"
+name = "Pause Web Servers on High Severity"
+description = "Automatically pause web server containers when HIGH or CRITICAL alerts are triggered"
+enabled = true
+severity_threshold = "High"
+priority = 10
+
+[target_filter]
+container_names = ["ironpost-demo-nginx", "web-*"]
+image_patterns = ["nginx:*", "httpd:*"]
+labels = []
+
+[action]
+Pause = []
 ```
 
 Containers matching the `target_filter` (by name or image pattern) are automatically paused when high-severity alerts occur. Label-based filtering is not yet supported in this version.
@@ -279,8 +284,8 @@ Containers matching the `target_filter` (by name or image pattern) are automatic
 Trigger a manual SBOM scan:
 
 ```bash
-# Run SBOM scan on the Ironpost workspace
-docker compose exec ironpost ironpost-cli scan /var/lib/ironpost --sbom-format cyclonedx
+# Run SBOM scan on the mounted workspace
+docker compose exec ironpost ironpost-cli scan /app --sbom-format cyclonedx
 ```
 
 **Expected Output:**
@@ -794,18 +799,19 @@ Create your own YAML rules in `docker/demo/rules/`:
 id: unauthorized_access
 title: Unauthorized File Access
 description: Detects attempts to access sensitive files
-severity: high
+severity: High
 
 detection:
   conditions:
     - field: process
-      modifier: equals
+      modifier: exact
       value: cat
     - field: message
       modifier: regex
       value: "/etc/(passwd|shadow)"
 
   threshold:
+    field: hostname
     count: 1
     timeframe_secs: 300
 
@@ -926,7 +932,7 @@ You've now experienced Ironpost's core features:
 
 **Next Actions:**
 - Explore custom detection rules in `docker/demo/rules/`
-- Modify container policies in `docker/demo/ironpost-demo.toml`
+- Modify container policies in `docker/demo/policies/*.toml`
 - Review architecture in [`.knowledge/architecture.md`](../.knowledge/architecture.md)
 - Build from source for local development
 - Deploy to production with hardened configuration

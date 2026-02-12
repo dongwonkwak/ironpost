@@ -17,6 +17,8 @@ services:
     volumes:
       # Replace production config with demo config
       - ./demo/ironpost-demo.toml:/etc/ironpost/ironpost.toml:ro
+      # Mount workspace for SBOM demo scans
+      - ..:/app:ro
       # Mount demo detection rules
       - ./demo/rules:/etc/ironpost/rules:ro
       # Mount demo container isolation policies
@@ -27,6 +29,7 @@ services:
       # Override with demo settings (lower thresholds, debug logging)
       IRONPOST_GENERAL_LOG_LEVEL: debug
       IRONPOST_CONTAINER_ENABLED: "true"
+      IRONPOST_CONTAINER_DOCKER_SOCKET: /var/run/docker.sock
       IRONPOST_CONTAINER_AUTO_ISOLATE: "true"
       IRONPOST_SBOM_ENABLED: "true"
 

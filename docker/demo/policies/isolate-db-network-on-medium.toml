@@ -11,4 +11,4 @@ image_patterns = ["postgres:*", "mysql:*", "mariadb:*"]
 labels = []
 
 [action.NetworkDisconnect]
-networks = ["ironpost-net"]
+networks = ["ironpost-network"]
