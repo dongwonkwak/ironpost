@@ -101,11 +101,14 @@ cp docker/.env.example docker/.env
 # 3. Start the demo stack (all services)
 docker compose -f docker/docker-compose.yml -f docker/docker-compose.demo.yml up -d
 
-# 4. Wait for services to be ready (~30 seconds)
+# 4. Move into docker/ directory (subsequent commands assume this)
+cd docker
+
+# 5. Wait for services to be ready (~30 seconds)
 echo "Waiting for Ironpost to start..."
 sleep 30
 
-# 5. Follow Ironpost logs (press Ctrl+C to exit)
+# 6. Follow Ironpost logs (press Ctrl+C to exit)
 docker compose logs -f ironpost
 ```
 
@@ -127,6 +130,10 @@ docker compose logs -f ironpost
 ---
 
 ## Step-by-Step Experience
+
+> **Note:** All `docker compose` commands below assume you are in the `docker/` directory
+> (as instructed in Quick Start step 4). If you are in the repository root instead,
+> prefix each command with `-f docker/docker-compose.yml -f docker/docker-compose.demo.yml`.
 
 ### 1. Log Monitoring
 
@@ -181,7 +188,7 @@ docker compose logs ironpost | grep -i "alert"
 **Rule Configuration:**
 
 ```yaml
-# Example: docker/demo/rules/demo-rules.yml (ssh_brute_force section)
+# Example: docker/demo/rules/ssh-brute-force.yml
 id: ssh_brute_force
 title: SSH Brute Force Attack
 severity: high
@@ -273,7 +280,7 @@ Trigger a manual SBOM scan:
 
 ```bash
 # Run SBOM scan on the Ironpost workspace
-docker compose exec ironpost ironpost-cli scan sbom --dir /var/lib/ironpost --format cyclonedx
+docker compose exec ironpost ironpost-cli scan /var/lib/ironpost --sbom-format cyclonedx
 ```
 
 **Expected Output:**
@@ -528,11 +535,14 @@ All services run on an isolated Docker network (`ironpost-net`):
 When you're done exploring the demo, stop and remove all containers and volumes:
 
 ```bash
+# Make sure you're in the docker/ directory
+cd docker
+
 # Stop all demo services
-docker compose -f docker/docker-compose.yml -f docker/docker-compose.demo.yml down
+docker compose down
 
 # Remove volumes (destroys all data: logs, SBOM scans, alert history)
-docker compose -f docker/docker-compose.yml -f docker/docker-compose.demo.yml down -v
+docker compose down -v
 
 # Verify cleanup
 docker ps -a | grep ironpost
@@ -576,8 +586,8 @@ lsof -i :514
 # For syslog on port 514:
 sudo systemctl stop rsyslog  # or syslog-ng
 
-# 3. Restart the demo
-docker compose -f docker/docker-compose.yml -f docker/docker-compose.demo.yml up -d
+# 3. Restart the demo (from docker/ directory)
+docker compose up -d
 ```
 
 **Alternative:** Change ports in `docker/.env`:
@@ -807,22 +817,11 @@ tags:
 **Test your rule:**
 
 ```bash
-# Validate rule syntax
-docker compose exec ironpost ironpost-cli rules validate --rule /etc/ironpost/rules/custom-rule.yml
+# Validate rule syntax (validates all rules in directory)
+docker compose exec ironpost ironpost-cli rules validate /etc/ironpost/rules
 
-# Test rule against sample log
-echo '<38>1 2026-02-12T01:00:00Z host cat - - - opened /etc/passwd' | \
-  docker compose exec ironpost ironpost-cli rules test --rule /etc/ironpost/rules/custom-rule.yml --stdin
-```
-
-**Hot-reload rules:**
-
-```bash
-# Edit rule file
-vim docker/demo/rules/demo-rules.yml
-
-# Reload configuration (triggers rule re-parsing)
-docker compose exec ironpost ironpost-cli reload
+# To apply changes, restart the daemon to reload rules
+docker compose restart ironpost
 ```
 
 ---
@@ -943,11 +942,10 @@ You've now experienced Ironpost's core features:
 **Ironpost Demo - Experience unified security monitoring in 3 minutes.**
 
 ```
-█████╗ ███╗   ██╗███████╗ ██████╗ ██████╗ ███╗   ██╗
-██╔══██╗████╗  ██║██╔════╝██╔═══██╗██╔══██╗████╗  ██║
-███████║██╔██╗ ██║███████╗██║   ██║██████╔╝██╔██╗ ██║
-██╔══██║██║╚██╗██║╚════██║██║   ██║██╔══██╗██║╚██╗██║
-██║  ██║██║ ╚████║███████║╚██████╔╝██║  ██║██║ ╚████║
-╚═╝  ╚═╝╚═╝  ╚═══╝╚══════╝ ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═══╝
+ ___ ____   ___  _   _ ____   ___  ____ _____
+|_ _|  _ \ / _ \| \ | |  _ \ / _ \/ ___|_   _|
+ | || |_) | | | |  \| | |_) | | | \___ \ | |
+ | ||  _ <| |_| | |\  |  __/| |_| |___) || |
+|___|_| \_\\___/|_| \_|_|    \___/|____/ |_|
 Unified Security Monitoring Platform
 ```

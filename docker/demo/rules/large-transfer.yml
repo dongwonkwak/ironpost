@@ -1,0 +1,17 @@
+id: large_transfer
+title: Large Outbound File Transfer
+description: Detects unusually large outbound file transfers
+severity: Low
+status: enabled
+detection:
+  conditions:
+    - field: message
+      modifier: regex
+      value: "(?i)(scp|rsync|ftp|sftp).*outbound"
+    - field: message
+      modifier: regex
+      value: "\\d{4,}\\s*(MB|GB)"
+tags:
+  - data_exfiltration
+  - file_transfer
+  - bandwidth

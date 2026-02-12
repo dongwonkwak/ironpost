@@ -1,0 +1,14 @@
+id: reverse_shell
+title: Reverse Shell Attempt
+description: Detects common reverse shell command patterns
+severity: Critical
+status: enabled
+detection:
+  conditions:
+    - field: message
+      modifier: regex
+      value: "(?i)(nc.*-e|/bin/bash.*-i|/bin/sh.*-i|python.*pty\\.spawn|perl.*socket)"
+tags:
+  - command_and_control
+  - reverse_shell
+  - post_exploitation

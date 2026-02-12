@@ -1,0 +1,18 @@
+id: port_scan_demo
+title: Port Scanning Activity
+description: Detects rapid connection attempts to multiple ports
+severity: Medium
+status: enabled
+detection:
+  conditions:
+    - field: message
+      modifier: regex
+      value: "(?i)(SYN packet|connection attempt|port)"
+  threshold:
+    field: sd_meta_source_ip
+    count: 5
+    timeframe_secs: 30
+tags:
+  - reconnaissance
+  - port_scan
+  - network

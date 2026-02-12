@@ -83,7 +83,7 @@ EXPOSE 1514/udp 8080
 # Health check using CLI status command
 # Check if daemon process is running and responding
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD ironpost-cli status --format json > /dev/null || exit 1
+    CMD ironpost-cli status --output json > /dev/null || exit 1
 
 # Set entrypoint and default command
 ENTRYPOINT ["ironpost-daemon"]

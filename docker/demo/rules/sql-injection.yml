@@ -1,0 +1,17 @@
+id: sql_injection_demo
+title: SQL Injection Attempt
+description: Detects common SQL injection patterns in web requests
+severity: Critical
+status: enabled
+detection:
+  conditions:
+    - field: process
+      modifier: exact
+      value: nginx
+    - field: message
+      modifier: regex
+      value: "(?i)(union.*select|drop.*table|' or '1'='1|; drop |--)"
+tags:
+  - web_attack
+  - sql_injection
+  - owasp_top10

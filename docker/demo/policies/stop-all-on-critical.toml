@@ -1,0 +1,14 @@
+id = "stop-all-on-critical"
+name = "Stop All Containers on Critical Alerts"
+description = "Stop any container when CRITICAL severity alerts are triggered"
+enabled = true
+severity_threshold = "Critical"
+priority = 5
+
+[target_filter]
+container_names = []
+image_patterns = []
+labels = []
+
+[action]
+Stop = []
