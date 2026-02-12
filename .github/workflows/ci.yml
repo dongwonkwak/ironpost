@@ -66,6 +66,9 @@ jobs:
   security:
     name: Security Audit
     runs-on: ubuntu-latest
+    # Note: continue-on-error means vulnerabilities won't fail CI.
+    # This is intentional for "warn-only" mode during development,
+    # but advisories will be visible in job output and annotations.
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4

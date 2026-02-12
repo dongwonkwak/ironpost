@@ -38,7 +38,6 @@ fn create_temp_cargo_lock(packages: &[(&str, &str)]) -> (tempfile::TempDir, Stri
         writeln!(file).expect("failed to write blank line");
     }
 
-    use std::io::Write;
     file.flush().expect("failed to flush Cargo.lock");
     drop(file); // Close the file
 

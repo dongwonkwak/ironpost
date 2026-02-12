@@ -124,8 +124,8 @@ async fn test_e2e_env_override_config() {
         .build();
 
     // Set environment variable
-    // SAFETY: This test is single-threaded and sets/unsets the env var before/after use.
-    // No other tests will observe this value as tokio::test runs tests serially by default.
+    // SAFETY: This test uses #[serial_test::serial] to ensure it runs exclusively,
+    // preventing concurrent tests from observing or interfering with this env var.
     unsafe {
         std::env::set_var("IRONPOST_GENERAL_LOG_LEVEL", "debug");
     }

@@ -986,3 +986,61 @@ async fn test_network_disconnect_action_full_flow() {
 
     guard.stop().await.unwrap();
 }
+
+/// Monitor-only mode: No policies loaded, alerts are received but no actions taken.
+#[tokio::test]
+async fn integration_monitor_only_mode_no_policies() {
+    let docker = Arc::new(mock::TestDockerClient::new());
+    let config = ContainerGuardConfig::default();
+
+    let (alert_tx, alert_rx) = mpsc::channel(10);
+    let (action_tx, mut action_rx) = mpsc::channel(10);
+
+    // Build guard with NO policies (monitor-only mode)
+    let (mut guard, _internal_action_rx) = ContainerGuardBuilder::new()
+        .config(config)
+        .docker_client(docker.clone())
+        .alert_receiver(alert_rx)
+        .action_sender(action_tx)
+        .build()
+        .unwrap();
+
+    guard.start().await.unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Add a container
+    docker
+        .add_container(ContainerInfo {
+            id: "test123".to_owned(),
+            name: "suspicious-container".to_owned(),
+            image: "malicious:latest".to_owned(),
+            status: "running".to_owned(),
+            created_at: SystemTime::now(),
+        })
+        .await;
+
+    // Send high-severity alert
+    alert_tx
+        .send(sample_alert(Severity::High, None))
+        .await
+        .unwrap();
+
+    // Wait a bit
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Should NOT receive any action event (no policies to match)
+    let result = tokio::time::timeout(Duration::from_millis(500), action_rx.recv()).await;
+    assert!(
+        result.is_err(),
+        "monitor-only mode should not produce action events"
+    );
+
+    // Health should still be healthy
+    let status = guard.health_check().await;
+    assert!(
+        matches!(status, HealthStatus::Healthy),
+        "monitor-only mode should be healthy"
+    );
+
+    guard.stop().await.unwrap();
+}

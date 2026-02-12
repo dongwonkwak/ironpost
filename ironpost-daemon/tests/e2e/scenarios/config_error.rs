@@ -183,19 +183,17 @@ async fn test_e2e_batch_size_too_large() {
     config.log_pipeline.batch_size = usize::MAX; // Unreasonably large
 
     let result = config.validate();
-    // The validation may or may not fail depending on the config implementation.
-    // If there's an upper bound check, it should fail.
-    // This test documents the expected behavior.
-    if let Err(err) = result {
-        let err_msg = err.to_string();
-        assert!(
-            err_msg.contains("batch_size") || err_msg.contains("too large"),
-            "error should mention batch_size limit: {}",
-            err_msg
-        );
-    }
-    // If no error, that's acceptable too (no upper bound enforced).
-    // This test serves as documentation.
+    assert!(
+        result.is_err(),
+        "batch_size validation should reject unreasonably large values"
+    );
+
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("batch_size") || err_msg.contains("too large"),
+        "error should mention batch_size limit: {}",
+        err_msg
+    );
 }
 
 /// Invalid min_severity for SBOM scanner -> validation error.

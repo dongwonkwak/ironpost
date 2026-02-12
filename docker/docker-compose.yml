@@ -22,6 +22,8 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+    # Note: deploy.resources is ignored in non-Swarm mode (docker compose up).
+    # For local limits, use mem_limit/cpus at service level or run with docker stack deploy.
     deploy:
       resources:
         limits:
@@ -133,7 +135,7 @@ services:
 
   # Prometheus metrics collection (optional, use profile 'monitoring')
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v2.54.1
     container_name: ironpost-prometheus
     restart: unless-stopped
     command:
@@ -165,7 +167,7 @@ services:
 
   # Grafana dashboards (optional, use profile 'monitoring')
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:11.3.1
     container_name: ironpost-grafana
     restart: unless-stopped
     ports:

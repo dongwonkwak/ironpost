@@ -58,6 +58,8 @@ docker_socket = "/var/run/docker.sock"
 poll_interval_secs = 5
 
 # Policy directory (mounted at runtime)
+# If empty, container-guard runs in monitor-only mode (no isolation policies loaded)
+# For demo, we load policies from the mounted directory
 policy_path = "/etc/ironpost/policies"
 
 # Auto-isolate is enabled for demo

@@ -53,21 +53,21 @@ pub fn init(
     let guard_config = ContainerGuardConfig::from_core(&config.container);
     let policy_path = guard_config.policy_path.clone();
 
-    if policy_path.trim().is_empty() {
-        return Err(anyhow::anyhow!(
-            "container.policy_path must not be empty when container guard is enabled"
-        ));
-    }
-
     // Create Docker client
     let docker = Arc::new(BollardDockerClient::connect_with_socket(
         &guard_config.docker_socket,
     )?);
 
-    // Load policies from configured directory before building the guard.
-    let policies = load_policies_from_dir(std::path::Path::new(&policy_path)).map_err(|e| {
-        anyhow::anyhow!("failed to load container policies from {policy_path}: {e}")
-    })?;
+    // Load policies from configured directory if path is non-empty.
+    // Empty policy_path means "no policies loaded" (monitor-only mode).
+    let policies = if policy_path.trim().is_empty() {
+        tracing::info!("container.policy_path is empty, no policies will be loaded");
+        Vec::new()
+    } else {
+        load_policies_from_dir(std::path::Path::new(&policy_path)).map_err(|e| {
+            anyhow::anyhow!("failed to load container policies from {policy_path}: {e}")
+        })?
+    };
 
     tracing::info!(
         policy_path = %policy_path,
