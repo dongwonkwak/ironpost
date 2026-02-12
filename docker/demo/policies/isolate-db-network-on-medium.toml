@@ -1,0 +1,14 @@
+id = "isolate-db-network-on-medium"
+name = "Network Isolation for Databases"
+description = "Disconnect database containers from external networks on MEDIUM+ alerts"
+enabled = false
+severity_threshold = "Medium"
+priority = 20
+
+[target_filter]
+container_names = ["ironpost-postgres*", "ironpost-redis*"]
+image_patterns = ["postgres:*", "redis:*"]
+labels = []
+
+[action.NetworkDisconnect]
+networks = ["ironpost-network"]

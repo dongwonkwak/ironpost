@@ -1,0 +1,96 @@
+# Ironpost Demo Compose Override
+# This file extends docker-compose.yml with demo workloads and attack simulation.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.demo.yml up
+#
+# Architecture:
+#   postgresql, redis (healthy)
+#     └─> ironpost (healthy, with demo config)
+#          ├─> nginx (demo workload)
+#          ├─> log-generator (sends normal logs every 5s)
+#          └─> attack-simulator (waits 10s, then triggers detection rules)
+
+services:
+  # Override ironpost service with demo configuration
+  ironpost:
+    volumes:
+      # Replace production config with demo config
+      - ./demo/ironpost-demo.toml:/etc/ironpost/ironpost.toml:ro
+      # Mount workspace for SBOM demo scans
+      - ..:/app:ro
+      # Mount demo detection rules
+      - ./demo/rules:/etc/ironpost/rules:ro
+      # Mount demo container isolation policies
+      - ./demo/policies:/etc/ironpost/policies:ro
+      # Enable docker socket for container monitoring demo
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      # Override with demo settings (lower thresholds, debug logging)
+      IRONPOST_GENERAL_LOG_LEVEL: debug
+      IRONPOST_CONTAINER_ENABLED: "true"
+      IRONPOST_CONTAINER_DOCKER_SOCKET: /var/run/docker.sock
+      IRONPOST_CONTAINER_AUTO_ISOLATE: "true"
+      IRONPOST_SBOM_ENABLED: "true"
+
+  # Nginx - Demo workload for container isolation
+  nginx:
+    image: nginx:alpine
+    container_name: ironpost-demo-nginx
+    restart: unless-stopped
+    ports:
+      - "8888:80"
+    networks:
+      - ironpost-net
+    labels:
+      # Security policy metadata for container-guard
+      com.ironpost.policy: "web-server"
+      com.ironpost.isolate: "pause"
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+          cpus: '0.25'
+
+  # Log Generator - Sends normal syslog messages to ironpost
+  log-generator:
+    image: busybox:latest
+    container_name: ironpost-log-generator
+    restart: unless-stopped
+    networks:
+      - ironpost-net
+    depends_on:
+      ironpost:
+        condition: service_healthy
+    volumes:
+      - ./demo/generate-logs.sh:/scripts/generate-logs.sh:ro
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+          cpus: '0.25'
+    command: sh /scripts/generate-logs.sh
+
+  # Attack Simulator - Generates suspicious patterns to trigger alerts
+  attack-simulator:
+    image: busybox:latest
+    container_name: ironpost-attack-simulator
+    restart: "no"
+    networks:
+      - ironpost-net
+    depends_on:
+      ironpost:
+        condition: service_healthy
+    volumes:
+      - ./demo/simulate-attack.sh:/scripts/simulate-attack.sh:ro
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+          cpus: '0.25'
+    command: sh /scripts/simulate-attack.sh

@@ -1,0 +1,14 @@
+id: off_hours_activity
+title: Off-Hours System Activity
+description: Detects suspicious activity during non-business hours
+severity: Low
+status: disabled
+detection:
+  conditions:
+    - field: message
+      modifier: contains
+      value: "off-hours"
+tags:
+  - anomaly
+  - timing
+  - user_behavior

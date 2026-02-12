@@ -1,0 +1,14 @@
+id: network_enum
+title: Network Enumeration
+description: Detects network scanning tools execution
+severity: Medium
+status: enabled
+detection:
+  conditions:
+    - field: message
+      modifier: regex
+      value: "(?i)(nmap|masscan|zmap|netcat|nc -z)"
+tags:
+  - reconnaissance
+  - network_enum
+  - scanning

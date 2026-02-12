@@ -1,0 +1,17 @@
+id: suspicious_download
+title: Suspicious Download Activity
+description: Detects wget/curl downloading from suspicious domains or IPs
+severity: High
+status: enabled
+detection:
+  conditions:
+    - field: message
+      modifier: regex
+      value: "(?i)(wget|curl).*http"
+    - field: message
+      modifier: regex
+      value: "(?i)(malicious|evil|c2|payload|exploit|\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3})"
+tags:
+  - command_and_control
+  - lateral_movement
+  - malware_download

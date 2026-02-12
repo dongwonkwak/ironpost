@@ -1,0 +1,14 @@
+id: sensitive_compression
+title: Compression of Sensitive Files
+description: Detects compression of files in sensitive directories
+severity: Medium
+status: enabled
+detection:
+  conditions:
+    - field: message
+      modifier: regex
+      value: "(?i)(tar|zip|gzip|7z|rar).*(etc|home|var)"
+tags:
+  - data_exfiltration
+  - compression
+  - suspicious_activity

@@ -1,0 +1,14 @@
+id = "pause-web-on-high"
+name = "Pause Web Servers on High Severity"
+description = "Automatically pause web server containers when HIGH or CRITICAL alerts are triggered"
+enabled = true
+severity_threshold = "High"
+priority = 10
+
+[target_filter]
+container_names = ["ironpost-demo-nginx", "web-*"]
+image_patterns = ["nginx:*", "httpd:*"]
+labels = []
+
+[action]
+Pause = []

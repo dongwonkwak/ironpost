@@ -1,0 +1,52 @@
+# Build artifacts
+target/
+**/*.rs.bk
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Documentation
+docs/
+*.md
+README.md
+CHANGELOG.md
+
+# Tasks and planning
+.tasks/
+.claude/
+.knowledge/
+.reviews/
+
+# GitHub workflows
+.github/
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Docker compose files (not needed in image)
+docker-compose*.yml
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test artifacts
+*.profraw
+*.profdata
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.bak

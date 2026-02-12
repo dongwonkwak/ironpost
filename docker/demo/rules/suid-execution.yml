@@ -1,0 +1,14 @@
+id: suid_execution
+title: SUID Binary Execution
+description: Detects execution of common SUID binaries that may be abused
+severity: Medium
+status: enabled
+detection:
+  conditions:
+    - field: message
+      modifier: regex
+      value: "(?i)(chmod.*\\+s|find.*-perm|pkexec|polkit)"
+tags:
+  - privilege_escalation
+  - suid
+  - linux

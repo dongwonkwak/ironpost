@@ -1,0 +1,17 @@
+id: xss_attack
+title: Cross-Site Scripting (XSS) Attempt
+description: Detects XSS attack patterns in web logs
+severity: High
+status: enabled
+detection:
+  conditions:
+    - field: process
+      modifier: exact
+      value: nginx
+    - field: message
+      modifier: regex
+      value: "(?i)(<script|javascript:|onerror=|onload=)"
+tags:
+  - web_attack
+  - xss
+  - owasp_top10

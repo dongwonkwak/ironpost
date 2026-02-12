@@ -1,0 +1,17 @@
+id: critical_file_mod
+title: Critical System File Modification
+description: Detects modifications to critical system files
+severity: Critical
+status: enabled
+detection:
+  conditions:
+    - field: message
+      modifier: regex
+      value: "(?i)(passwd|shadow|sudoers|ssh.*authorized_keys|cron)"
+    - field: message
+      modifier: regex
+      value: "(?i)(modified|changed|edited|written)"
+tags:
+  - system_integrity
+  - persistence
+  - backdoor

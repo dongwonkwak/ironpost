@@ -19,7 +19,9 @@ use tokio::sync::mpsc;
 use ironpost_core::config::IronpostConfig;
 use ironpost_core::event::{ActionEvent, AlertEvent};
 
-use ironpost_container_guard::{BollardDockerClient, ContainerGuardBuilder, ContainerGuardConfig};
+use ironpost_container_guard::{
+    BollardDockerClient, ContainerGuardBuilder, ContainerGuardConfig, load_policies_from_dir,
+};
 
 use super::ModuleHandle;
 
@@ -49,16 +51,40 @@ pub fn init(
     tracing::info!("initializing container guard");
 
     let guard_config = ContainerGuardConfig::from_core(&config.container);
+    let policy_path = guard_config.policy_path.clone();
 
     // Create Docker client
     let docker = Arc::new(BollardDockerClient::connect_with_socket(
         &guard_config.docker_socket,
     )?);
 
-    let (guard, action_rx) = ContainerGuardBuilder::new()
+    // Load policies from configured directory if path is non-empty.
+    // Empty policy_path means "no policies loaded" (monitor-only mode).
+    let policies = if policy_path.trim().is_empty() {
+        tracing::info!("container.policy_path is empty, no policies will be loaded");
+        Vec::new()
+    } else {
+        load_policies_from_dir(std::path::Path::new(&policy_path)).map_err(|e| {
+            anyhow::anyhow!("failed to load container policies from {policy_path}: {e}")
+        })?
+    };
+
+    tracing::info!(
+        policy_path = %policy_path,
+        count = policies.len(),
+        "loaded container guard policies"
+    );
+
+    let mut builder = ContainerGuardBuilder::new()
         .config(guard_config)
         .docker_client(docker)
-        .alert_receiver(alert_rx)
+        .alert_receiver(alert_rx);
+
+    for policy in policies {
+        builder = builder.add_policy(policy);
+    }
+
+    let (guard, action_rx) = builder
         .build()
         .map_err(|e| anyhow::anyhow!("failed to build container guard: {}", e))?;
 

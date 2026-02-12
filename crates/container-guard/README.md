@@ -81,7 +81,7 @@ tokio = { version = "1", features = ["full"] }
 
 ### Basic Usage
 
-```rust
+```rust,no_run
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use ironpost_container_guard::{
@@ -342,6 +342,30 @@ for policy in policies {
 # }
 ```
 
+#### Monitor-Only Mode
+
+If `policy_path` is empty or the configured directory contains no policies, the container-guard runs in **monitor-only mode**:
+
+- Receives and processes `AlertEvent` messages normally
+- Container inventory is refreshed and cached
+- Health checks return `Healthy`
+- **No isolation actions are taken** (no policies to evaluate)
+
+This mode is useful for:
+- Testing alert routing without affecting containers
+- Observing container inventory in production before enforcing policies
+- Gradual rollout (monitor first, then enable policies)
+
+```rust,ignore
+// Build guard with no policies (monitor-only mode)
+let (mut guard, action_rx) = ContainerGuardBuilder::new()
+    .config(/* ... */)
+    .docker_client(/* ... */)
+    .alert_receiver(/* ... */)
+    // Don't call .add_policy() - guard will monitor but not isolate
+    .build()?;
+```
+
 #### Policy Validation
 
 Policies are validated on load:
@@ -396,14 +420,12 @@ For `NetworkDisconnect` with multiple networks:
 
 After each isolation action (success or failure), an `ActionEvent` is emitted:
 
-```rust
-use ironpost_core::event::ActionEvent;
-
-// ActionEvent fields:
-// - action_type: "container_pause", "container_stop", "container_network_disconnect"
-// - target: container ID
-// - success: true/false
-// - metadata.trace_id: links back to the originating AlertEvent
+```text
+ActionEvent fields:
+- action_type: "container_pause", "container_stop", "container_network_disconnect"
+- target: container ID
+- success: true/false
+- metadata.trace_id: links back to the originating AlertEvent
 ```
 
 ## Testing
