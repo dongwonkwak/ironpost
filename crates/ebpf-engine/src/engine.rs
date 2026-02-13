@@ -1031,7 +1031,7 @@ mod tests {
 
             let (mut engine, _rx) = EbpfEngine::builder().config(config).build().unwrap();
 
-            let result = engine.start().await;
+            let result = ironpost_core::Pipeline::start(&mut engine).await;
             assert!(result.is_err());
 
             let err = result.unwrap_err();
@@ -1050,7 +1050,7 @@ mod tests {
             let config = EngineConfig::default();
             let (mut engine, _rx) = EbpfEngine::builder().config(config).build().unwrap();
 
-            let result = engine.start().await;
+            let result = ironpost_core::Pipeline::start(&mut engine).await;
             assert!(result.is_err());
 
             let err = result.unwrap_err();
@@ -1075,7 +1075,7 @@ mod tests {
             let (mut engine, _rx) = EbpfEngine::builder().config(config).build().unwrap();
 
             // start
-            let start_result = engine.start().await;
+            let start_result = ironpost_core::Pipeline::start(&mut engine).await;
             if start_result.is_err() {
                 // eBPF 바이너리가 없거나 권한 부족 시 스킵
                 tracing::warn!(error = ?start_result.unwrap_err(), "skipping test due to error");
@@ -1085,11 +1085,11 @@ mod tests {
             assert!(engine.running);
 
             // health check
-            let status = engine.health_check().await;
+            let status = ironpost_core::Pipeline::health_check(&engine).await;
             assert!(matches!(status, HealthStatus::Healthy));
 
             // stop
-            let stop_result = engine.stop().await;
+            let stop_result = ironpost_core::Pipeline::stop(&mut engine).await;
             assert!(stop_result.is_ok());
             assert!(!engine.running);
         }
