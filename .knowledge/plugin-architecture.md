@@ -1,13 +1,13 @@
-# Plugin Architecture
+# 플러그인 아키텍처
 
 > Ironpost 플러그인 시스템 설계 문서
 
 ## 개요
 
-Plugin 시스템은 기존 `Pipeline` trait의 상위 추상화로, 모듈 메타데이터·초기화 단계·동적 등록/해제를 추가합니다.
-기존 Pipeline trait은 그대로 유지되며, Plugin이 이를 포함하는 확장 인터페이스입니다.
+플러그인 시스템은 기존 `Pipeline` trait의 상위 추상화로, 모듈 메타데이터·초기화 단계·동적 등록/해제를 추가합니다.
+기존 `Pipeline` trait은 그대로 유지되며, `Plugin`이 이를 포함하는 확장 인터페이스입니다.
 
-## 1. Plugin Trait
+## 1. `Plugin` 트레이트
 
 ```rust
 pub trait Plugin: Send + Sync {
@@ -70,7 +70,7 @@ pub enum PluginState {
 }
 ```
 
-## 2. Pipeline Trait과의 관계
+## 2. `Pipeline` 트레이트와의 관계
 
 ```text
 ┌──────────────────────────────┐
@@ -85,9 +85,9 @@ pub enum PluginState {
 └──────────────────────────────┘
 ```
 
-- **Pipeline trait은 그대로 유지**: 기존 모듈 코드 변경 없음
-- **Plugin은 Pipeline의 superset**: start/stop/health_check를 포함하며 init()과 메타데이터를 추가
-- **마이그레이션 경로**: 기존 Pipeline 구현체에 info(), state(), init()만 추가하면 Plugin으로 전환 가능
+- **`Pipeline` 트레이트는 그대로 유지**: 기존 모듈 코드 변경 없음
+- **`Plugin`은 `Pipeline`의 상위 집합**: `start/stop/health_check`를 포함하며 `init()`과 메타데이터를 추가
+- **마이그레이션 경로**: 기존 `Pipeline` 구현체에 `info(), state(), init()`만 추가하면 `Plugin`으로 전환 가능
 
 ### 동적 디스패치
 
@@ -106,7 +106,7 @@ pub trait DynPlugin: Send + Sync {
 impl<T: Plugin> DynPlugin for T { ... }
 ```
 
-## 3. PluginRegistry
+## 3. `PluginRegistry`
 
 ```rust
 pub struct PluginRegistry {
@@ -121,9 +121,9 @@ pub struct PluginRegistry {
 | `register(plugin)` | 플러그인 등록 (중복 이름 거부) |
 | `unregister(name)` | 플러그인 해제 (소유권 반환) |
 | `get(name)` / `get_mut(name)` | 이름으로 조회 |
-| `init_all()` | 등록 순서대로 초기화 (fail-fast) |
-| `start_all()` | 등록 순서대로 시작 (fail-fast) |
-| `stop_all()` | 등록 순서대로 정지 (continue-on-error) |
+| `init_all()` | 등록 순서대로 초기화 (실패 시 즉시 중단) |
+| `start_all()` | 등록 순서대로 시작 (실패 시 즉시 중단) |
+| `stop_all()` | 등록 순서대로 정지 (오류가 나도 계속 진행) |
 | `health_check_all()` | 전체 건강 상태 조회 |
 | `list()` | 등록된 플러그인 정보 목록 |
 | `count()` | 등록된 플러그인 수 |
@@ -139,7 +139,7 @@ pub struct PluginRegistry {
 4. Container Guard (consumes AlertEvent, produces ActionEvent)
 ```
 
-- **init_all / start_all**: 등록 순서대로 실행 (fail-fast)
+- **init_all / start_all**: 등록 순서대로 실행 (실패 시 즉시 중단)
 - **stop_all**: 등록 순서대로 정지 (생산자 먼저 정지 → 소비자가 잔여 이벤트 드레인)
 
 ### 에러 처리
@@ -170,7 +170,7 @@ Orchestrator
   └── registry.start_all()
 ```
 
-플러그인은 서로를 직접 참조하지 않습니다. 모든 통신은 `tokio::mpsc` 채널을 통해 이루어지며, Orchestrator가 채널을 생성하고 주입합니다.
+플러그인은 서로를 직접 참조하지 않습니다. 모든 통신은 `tokio::mpsc` 채널을 통해 이루어지며, 오케스트레이터가 채널을 생성하고 주입합니다.
 
 ## 5. 향후 확장 가능성
 
@@ -187,13 +187,13 @@ Orchestrator
 - `extern "C" fn create_plugin() -> Box<dyn DynPlugin>` 팩토리 함수
 - 핫 리로드 지원
 
-### 단계 4: WebAssembly 플러그인 (장기)
+### 단계 4: 웹어셈블리(WebAssembly) 플러그인 (장기)
 - `wasmtime` 기반 WASM 런타임
 - 샌드박스 격리 (파일시스템/네트워크 접근 제한)
 - WASI 인터페이스를 통한 호스트 상호작용
 - 크로스 플랫폼 플러그인 배포
 
-## 6. 마이그레이션 가이드 (Pipeline → Plugin)
+## 6. 마이그레이션 가이드 (`Pipeline` → `Plugin`)
 
 기존 Pipeline 구현체를 Plugin으로 전환하는 방법:
 
