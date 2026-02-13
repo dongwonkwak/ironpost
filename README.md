@@ -204,11 +204,11 @@ sudo systemctl start ironpost
 # 데몬 상태 확인
 ./target/release/ironpost-cli status
 
-# YAML 탐지 룰 테스트
-./target/release/ironpost-cli rules test --rule rules/ssh_brute_force.yaml
+# YAML 탐지 룰 검증
+./target/release/ironpost-cli rules validate rules/
 
 # 수동 SBOM 스캔 실행
-./target/release/ironpost-cli scan sbom --dir .
+./target/release/ironpost-cli scan .
 
 # 로그 확인
 journalctl -u ironpost -f
@@ -278,11 +278,10 @@ ironpost-cli config validate --config ironpost.toml
 ironpost-cli config show
 
 # 모든 YAML 룰 검증
-ironpost-cli rules validate --dir rules/
+ironpost-cli rules validate rules/
 
-# 샘플 로그로 룰 테스트
-echo '<34>1 2024-02-09T10:30:00Z host sshd - - - Failed password for root from 192.168.1.100' \
-  | ironpost-cli rules test --rule rules/ssh_brute_force.yaml --stdin
+# 데몬 설정 확인(환경변수 오버라이드 반영)
+ironpost-cli config show
 ```
 
 ### 데몬 제어

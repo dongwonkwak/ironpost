@@ -49,7 +49,7 @@ Before starting, ensure you have:
 - **Docker** 20.10+ ([Installation Guide](https://docs.docker.com/get-docker/))
 - **Docker Compose** v2.0+ (bundled with Docker Desktop, or install separately)
 - **4GB+ RAM** recommended for all services
-- **Available Ports**: 514 (syslog), 80 (nginx demo), 6379 (redis)
+- **Available Ports**: 1514 (syslog), 80 (nginx demo), 6379 (redis), 8888 (nginx web demo)
 
 ### Verify Installation
 
@@ -72,8 +72,8 @@ docker ps
 Check if required ports are free:
 
 ```bash
-# Check syslog port (514)
-lsof -i :514 || echo "Port 514 is available"
+# Check syslog port (1514)
+lsof -i :1514 || echo "Port 1514 is available"
 
 # Check redis port (6379)
 lsof -i :6379 || echo "Port 6379 is available"
@@ -447,7 +447,7 @@ The demo environment consists of these components:
 │  │              Ironpost Daemon Services           │      │       │
 │  │  ┌────────────┬──────────────┬─────────────────┴──┐   │       │
 │  │  │ log-pipeline│ container-guard│ sbom-scanner    │   │       │
-│  │  │ (syslog:514)│ (/var/run/    │ (/app)          │   │       │
+│  │  │ (syslog:1514)│ (/var/run/    │ (/app)          │   │       │
 │  │  │             │  docker.sock) │                 │   │       │
 │  │  └─────┬──────┴──────┬────────┴─────────────────┘   │       │
 │  └────────┼─────────────┼──────────────────────────────┘       │
@@ -491,7 +491,7 @@ The demo environment consists of these components:
 │ log-generator│
 │ attack-sim   │
 └──────┬───────┘
-       │ UDP syslog (port 514)
+       │ UDP syslog (port 1514)
        ▼
 ┌──────────────────────────────────────┐
 │   Ironpost Daemon                    │
@@ -530,7 +530,7 @@ The demo environment consists of these components:
 
 All services run on an isolated Docker network (`ironpost-net`):
 - Internal DNS resolution (ironpost, redis, postgresql hostnames)
-- No external exposure except mapped ports (514, 8888)
+- No external exposure except mapped ports (1514, 8888)
 - Docker socket mounted read-only for container monitoring
 
 ---
@@ -579,16 +579,16 @@ docker images | grep 'ironpost\|nginx\|alpine\|postgres\|redis' | awk '{print $3
 
 ### Port Conflicts
 
-**Problem:** Port 514, 6379, or 8888 already in use.
+**Problem:** Port 1514, 6379, or 8888 already in use.
 
 **Solution:**
 
 ```bash
 # 1. Identify the process using the port
-lsof -i :514
+lsof -i :1514
 
 # 2. Stop the conflicting service
-# For syslog on port 514:
+# For syslog on port 1514:
 sudo systemctl stop rsyslog  # or syslog-ng
 
 # 3. Restart the demo (from docker/ directory)
