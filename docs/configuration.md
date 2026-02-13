@@ -65,7 +65,7 @@ IRONPOST_GENERAL_LOG_LEVEL=debug ironpost daemon start --log-level trace
 |------|---------|------|--------|------------|
 | `enabled` | `IRONPOST_LOG_PIPELINE_ENABLED` | bool | `true` | true, false |
 | `sources` | `IRONPOST_LOG_PIPELINE_SOURCES` | Vec | `["syslog","file"]` | CSV 형식 |
-| `syslog_bind` | `IRONPOST_LOG_PIPELINE_SYSLOG_BIND` | String | `"0.0.0.0:514"` | addr:port |
+| `syslog_bind` | `IRONPOST_LOG_PIPELINE_SYSLOG_BIND` | String | `"0.0.0.0:1514"` | addr:port (unprivileged) |
 | `watch_paths` | `IRONPOST_LOG_PIPELINE_WATCH_PATHS` | Vec | `["/var/log/syslog"]` | CSV 형식, 절대 경로 |
 | `batch_size` | `IRONPOST_LOG_PIPELINE_BATCH_SIZE` | usize | `100` | 1 ~ 10,000 |
 | `flush_interval_secs` | `IRONPOST_LOG_PIPELINE_FLUSH_INTERVAL_SECS` | u64 | `5` | > 0 |
