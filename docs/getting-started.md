@@ -39,7 +39,7 @@ Ironpost is a Rust-based platform that runs on **Linux, macOS, and Windows**. Fu
 **Linux (Full Support)**
 - All modules work natively
 - eBPF module requires kernel 5.7+ with `CONFIG_BPF=y`
-- Requires `CAP_BPF` capability or root for XDP packet filtering
+- Requires `CAP_NET_ADMIN` (or root) to attach XDP programs; `CAP_BPF` is used for BPF map/program operations
 - eBPF toolchain setup needed (see [Building with eBPF](#building-with-ebpf))
 
 **macOS (Partial Support)**
@@ -185,7 +185,7 @@ pid_file = "/tmp/ironpost.pid"
 [log_pipeline]
 enabled = true
 sources = ["syslog", "file"]
-syslog_bind = "127.0.0.1:514"  # Bind to localhost only (no root required)
+syslog_bind = "127.0.0.1:1514"  # Bind to localhost only (no root required; unprivileged port)
 watch_paths = ["/var/log/syslog", "/var/log/auth.log"]
 batch_size = 100
 flush_interval_secs = 5
@@ -270,7 +270,7 @@ Before starting the daemon, validate your configuration:
 
 ```bash
 # Validate configuration syntax and rules
-./target/release/ironpost-cli config validate --config ironpost.toml
+./target/release/ironpost-cli --config ironpost.toml config validate
 
 # Expected output:
 # Configuration validation: PASSED
@@ -503,17 +503,13 @@ cat > test-logs.txt << 'EOF'
 <34>1 2026-02-14T10:30:20Z webserver sshd - - - Failed password for admin from 192.168.1.100
 EOF
 
-# Test rule matching against sample logs
-cat test-logs.txt | ./target/release/ironpost-cli rules test \
-  --rule /etc/ironpost/rules/ssh-brute-force.yaml \
-  --stdin
+# Validate rule syntax before deployment
+./target/release/ironpost-cli rules validate /etc/ironpost/rules
 
 # Expected output:
-# Rule: ssh_brute_force
-# Title: SSH Brute Force Attack
-# Tested entries: 5
-# Matched: 1 alert (threshold triggered on entry #5)
-# Alert Details: 5 failed attempts from 192.168.1.100 in 20 seconds
+# Rule Validation: /etc/ironpost/rules
+#   Files: 1, 1 valid, 0 invalid
+#   ✓ ssh-brute-force.yaml
 ```
 
 ---

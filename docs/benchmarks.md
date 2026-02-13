@@ -7,7 +7,7 @@
 **주요 성과:**
 - Log Parser: **2.5M+ ops/s** (Syslog RFC5424)
 - Rule Engine: **167M ops/s** (exact match), **O(n) 선형 스케일링**
-- SBOM Scanner: **6.5K packages/sec** (E2E)
+- SBOM Scanner: **649K packages/sec** (E2E)
 - Container Guard: **71M ops/s** (policy evaluation, O(1) 상수시간)
 - Event System: **926K events/sec** (채널 처리량)
 
@@ -159,7 +159,7 @@ Rule Engine은 매칭 알고리즘을 기반으로 매우 빠른 성능을 제�
 **분석:**
 - **First-match 최적화**: 매칭되는 첫 규칙에서 즉시 반환
 - 규칙 개수에 따라 선형 증가: 정확히 O(n) 시간복잡도
-- 규칙 100개도 10.9µs에 처리 → **91K rules/sec** 달성 가능
+- 규칙 100개도 10.9µs에 처리 → **~91K events/sec (100 rules/event)** 달성 가능
 
 ### 규칙 컴파일 성능
 

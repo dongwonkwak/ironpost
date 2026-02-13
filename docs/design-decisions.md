@@ -611,9 +611,9 @@ Docker 이미지 빌드 방식으로 단일 Dockerfile (모든 빌드 도구 포
 보안 소프트웨어는 공격 표면 최소화와 이미지 크기 최적화가 중요합니다.
 
 **결정**:
-- **Multi-stage 빌드**: 빌드 스테이지 (cargo-chef + Rust 컴파일러) + 런타임 스테이지 (distroless) 분리
+- **Multi-stage 빌드**: 빌드 스테이지 (cargo-chef + Rust 컴파일러) + 런타임 스테이지 (debian:bookworm-slim) 분리
 - **cargo-chef 활용**: 의존성 레이어 캐싱으로 빌드 시간 단축
-- **Distroless 베이스 이미지**: gcr.io/distroless/cc-debian12 (glibc 포함, 쉘 없음)
+- **Debian Bookworm Slim 베이스 이미지**: debian:bookworm-slim (glibc 포함, 최소 패키지)
 
 **이유**:
 1. **공격 표면 최소화**: Distroless 이미지는 쉘, 패키지 매니저, 유틸리티 제거
@@ -621,10 +621,10 @@ Docker 이미지 빌드 방식으로 단일 Dockerfile (모든 빌드 도구 포
    - CVE 스캔 대상 제거 (apt, bash, coreutils 등)
    - 컨테이너 탈취 시 공격자가 사용 가능한 도구 부재
 2. **이미지 크기 최적화**: 빌드 도구를 런타임 이미지에서 제외
-   - 빌드 스테이지: rust:1.85-slim (약 1.2GB)
-   - 런타임 이미지: distroless/cc-debian12 (약 40MB)
-   - 최종 이미지 크기: 약 80MB (바이너리 + glibc + 런타임만 포함)
-   - Alpine + musl 대비 약 20MB 크기 증가하지만 glibc 호환성 이점
+   - 빌드 스테이지: lukemathwalker/cargo-chef:latest-rust-1 + rust:1-bookworm (약 1.2GB)
+   - 런타임 이미지: debian:bookworm-slim (약 80-100MB)
+   - 최종 이미지 크기: 약 150-200MB (바이너리 + glibc + 필수 라이브러리만 포함)
+   - Distroless 대비 약 60-100MB 크기 증가하지만 디버깅과 표준 glibc 호환성 이점
 3. **빌드 캐싱**: cargo-chef로 의존성 레이어 분리
    - 의존성 변경 없이 소스만 변경 시 의존성 재빌드 건너뜀
    - 빌드 시간 약 70% 단축 (첫 빌드 10분 → 증분 빌드 3분)
@@ -638,10 +638,10 @@ Docker 이미지 빌드 방식으로 단일 Dockerfile (모든 빌드 도구 포
   - 장점: 이미지 크기 가장 작음 (약 60MB), 패키지 매니저 (apk) 포함
   - 단점: musl libc 호환성 문제 (glibc 전용 크레이트 빌드 실패 가능), DNS 이슈
   - 평가: Rust는 glibc 타겟이 표준, musl 크로스 컴파일 복잡도 회피
-- **Debian Slim**:
-  - 장점: 표준 glibc, 디버깅 도구 포함 (bash, apt 등)
-  - 단점: 공격 표면 큼 (약 500개 패키지), 이미지 크기 약 200MB
-  - 평가: 프로덕션 환경에서 디버깅 도구 불필요 (로그는 stdout으로 수집)
+- **Distroless (gcr.io/distroless/cc-debian12)**:
+  - 장점: 공격 표면 극소화 (약 90% 패키지 제거), CVE 스캔 시간 단축
+  - 단점: 디버깅 어려움 (쉘 없음), 트러블슈팅 도구 부재
+  - 평가: 프로덕션 환경에서 최적이지만 개발/테스팅 환경에서 불편 → 추후 마이그레이션 고려
 - **Scratch (완전 빈 이미지)**:
   - 장점: 최소 크기, 공격 표면 제로
   - 단점: glibc 없음 → Rust 바이너리 실행 불가 (정적 링킹 필요)
@@ -649,44 +649,53 @@ Docker 이미지 빌드 방식으로 단일 Dockerfile (모든 빌드 도구 포
 
 **구현 세부사항**:
 ```dockerfile
-# 1. cargo-chef 스테이지 (의존성 레시피 생성)
-FROM rust:1.85-slim AS chef
-RUN cargo install cargo-chef
+# 1. planner 스테이지 (의존성 레시피 생성)
+FROM lukemathwalker/cargo-chef:latest-rust-1 AS planner
 WORKDIR /app
-
-# 2. planner 스테이지 (의존성 분석)
-FROM chef AS planner
-COPY . .
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
 RUN cargo chef prepare --recipe-path recipe.json
 
-# 3. builder 스테이지 (의존성 + 소스 빌드)
-FROM chef AS builder
+# 2. cacher 스테이지 (의존성 빌드 - 캐싱됨)
+FROM lukemathwalker/cargo-chef:latest-rust-1 AS cacher
+WORKDIR /app
 COPY --from=planner /app/recipe.json recipe.json
-RUN cargo chef cook --release --recipe-path recipe.json  # 의존성 빌드 (캐시됨)
-COPY . .
-RUN cargo build --release --bin ironpost-daemon
+RUN cargo chef cook --release --recipe-path recipe.json
 
-# 4. 런타임 스테이지 (distroless)
-FROM gcr.io/distroless/cc-debian12
-COPY --from=builder /app/target/release/ironpost-daemon /ironpost-daemon
-ENTRYPOINT ["/ironpost-daemon"]
+# 3. builder 스테이지 (소스 컴파일)
+FROM rust:1-bookworm AS builder
+WORKDIR /app
+COPY --from=cacher /app/target target
+COPY --from=cacher /usr/local/cargo /usr/local/cargo
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
+RUN cargo build --release
+
+# 4. 런타임 스테이지 (debian:bookworm-slim)
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y ca-certificates libssl3 && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /app/target/release/ironpost-daemon /usr/local/bin/
+COPY --from=builder /app/target/release/ironpost-cli /usr/local/bin/
+ENTRYPOINT ["ironpost-daemon"]
 ```
 
 **트레이드오프**:
-- **디버깅 어려움**: Distroless 이미지는 쉘 없음
-  - 디버깅 시 `docker exec` 불가 → 로그 출력으로 대체
-  - Debug 이미지 별도 제공 (gcr.io/distroless/cc-debian12:debug, busybox 포함)
+- **공격 표면 vs 디버깅 편의성**: Debian Slim은 Distroless 대비 더 많은 패키지 포함
+  - Debian Slim: 약 200-300개 패키지 (ca-certificates, libssl3 등)
+  - Distroless: 약 20-30개 패키지 (최소한의 런타임만)
+  - 선택: 개발/테스팅 단계에서 Debian Slim의 디버깅 편의성 우선
 - **빌드 복잡도**: Multi-stage + cargo-chef 조합으로 Dockerfile 복잡도 증가
-  - 4단계 빌드 스테이지 (chef, planner, builder, runtime)
-  - 문서화 (docs/demo.md)로 보완
+  - 4단계 빌드 스테이지 (planner, cacher, builder, runtime)
+  - 문서화 (docker/Dockerfile 주석)로 보완
 
 **결과**:
 - Phase 7에서 Dockerfile 개선 완료
-- 이미지 크기: 약 80MB (빌드 도구 제외)
+- 이미지 크기: 약 150-200MB (Debian Slim 기반)
 - 빌드 시간: 첫 빌드 약 10분, 증분 빌드 약 3분 (의존성 캐싱)
-- CVE 스캔: Trivy로 스캔 시 HIGH 이상 취약점 제로 (Distroless 기본 이미지)
+- CVE 스캔: Trivy로 스캔 시 주요 취약점 제로 (essential packages만 설치)
 - Docker Hub 또는 GitHub Container Registry 배포 예정 (향후)
-- 프로덕션 환경에서 컨테이너 탈취 위험 최소화 (쉘 없음)
+- 개발/테스팅 환경: 쉘 포함으로 디버깅 용이 (docker exec 가능)
+- 향후 계획: Distroless 마이그레이션 또는 Debug 이미지 제공
 
 ---
 
