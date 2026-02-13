@@ -39,7 +39,7 @@ anyhow = "1"
 thiserror = "2"
 clap = { version = "4", features = ["derive"] }
 bytes = "1"
-toml = "0.8"
+toml = "1.0"
 uuid = { version = "1", features = ["v4"] }
 semver = "1"
 tempfile = "3"
