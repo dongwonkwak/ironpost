@@ -31,6 +31,7 @@ async fn main() -> Result<()> {
     let cli = DaemonCli::parse();
 
     // Load configuration
+    let mut used_default_config = false;
     let mut config = if cli.config.exists() {
         ironpost_core::config::IronpostConfig::load(&cli.config)
             .await
@@ -38,12 +39,7 @@ async fn main() -> Result<()> {
                 anyhow::anyhow!("failed to load config from {}: {}", cli.config.display(), e)
             })?
     } else {
-        // Note: Using eprintln! here since tracing is not initialized yet.
-        // This is acceptable during daemon initialization phase.
-        eprintln!(
-            "WARN: config file not found at {}, using defaults",
-            cli.config.display()
-        );
+        used_default_config = true;
         ironpost_core::config::IronpostConfig::default()
     };
 
@@ -77,6 +73,13 @@ async fn main() -> Result<()> {
 
     // Initialize logging
     logging::init_tracing(&config.general)?;
+
+    if used_default_config {
+        tracing::warn!(
+            config_path = %cli.config.display(),
+            "config file not found, using defaults"
+        );
+    }
 
     tracing::info!(
         version = env!("CARGO_PKG_VERSION"),

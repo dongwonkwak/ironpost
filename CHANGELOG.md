@@ -5,7 +5,7 @@ All notable changes to the Ironpost project will be documented in this file.
 The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.0] - 2026-02-11
+## [0.1.0] - 2026-02-13
 
 Initial release of Ironpost, a unified security monitoring platform built in Rust.
 
@@ -119,6 +119,52 @@ Initial release of Ironpost, a unified security monitoring platform built in Rus
   - Module-specific validation (batch size, intervals, directory paths)
   - Hot-reload support via `tokio::watch` channels
 
+#### Phase 7: E2E Tests & Docker Demo
+- **E2E Scenario Tests** (46 tests across 6 scenarios)
+  - S1: Event pipeline flow (LogEvent → Rule → Alert → Isolate) — 5 tests
+  - S2: SBOM scan → AlertEvent integration — 5 tests
+  - S3: Configuration loading → Orchestrator initialization → health check — 8 tests
+  - S4: Graceful shutdown ordering (producer first, timeout handling) — 8 tests
+  - S5: Invalid configuration → error messages → non-zero exit — 10 tests
+  - S6: Module fault isolation (single module failure, others continue) — 10 tests
+- **Docker Multi-Stage Build**
+  - `cargo-chef` for dependency caching optimization
+  - Distroless base image for minimal attack surface
+  - Multi-architecture support (amd64/arm64)
+- **Production Docker Compose** (`docker-compose.yml`)
+  - Health checks with readiness probes
+  - Bridge network isolation
+  - Resource limits (CPU, memory)
+  - Volume mounts for config/logs/data
+- **Demo Environment** (`docker-compose.demo.yml`)
+  - 3-minute hands-on experience
+  - `nginx` web server (attack target)
+  - `redis` cache (log source)
+  - `log-generator` service (simulated traffic)
+  - `attack-simulator` service (malicious patterns)
+- **CI/CD Enhancements**
+  - Matrix builds (Rust stable/beta, Ubuntu/macOS)
+  - `cargo audit` security scanning
+  - Dependency caching with cache key versioning
+  - Concurrency control to cancel outdated runs
+  - `.github/dependabot.yml`: automated updates for cargo, github-actions, docker ecosystems
+
+#### Phase 8: Final Release & Plugin Architecture
+- **Plugin Architecture**
+  - `Plugin` trait for modular component registration (37 tests)
+  - `PluginRegistry` with lifecycle management (Created → Initialized → Running → Stopped → Failed)
+  - `PluginInfo` metadata (name, version, description, plugin_type)
+  - `DynPlugin` trait object support for heterogeneous collections
+  - All 4 security modules implement `Plugin` trait (LogPipeline, ContainerGuard, SbomScanner, EbpfEngine)
+- **Configuration Documentation**
+  - `ironpost.toml.example` comprehensive template file
+  - `docs/configuration.md` guide with validation rules and environment variable overrides
+- **Documentation Infrastructure**
+  - `.github/workflows/docs.yml` for automated GitHub Pages deployment
+  - `cargo doc --workspace --no-deps` builds without warnings
+  - Improved doc comments: `# Errors` sections on 10 functions, `# Examples` sections on 2 APIs
+  - README.md documentation badge: https://dongwonkwak.github.io/ironpost/
+
 ### Changed
 
 - Upgraded all crates to Rust Edition 2024
@@ -127,6 +173,33 @@ Initial release of Ironpost, a unified security monitoring platform built in Rus
 - Replaced `Arc<Mutex<u64>>` counters with `Arc<AtomicU64>` for lock-free performance
 - Converted all `std::sync::Mutex` to `tokio::sync::Mutex` in async contexts
 - Upgraded Display implementations to use safe slice bounds (`[..n.min(len)]`)
+
+#### Phase 8: Architecture Migration
+- **Module Registration System**
+  - Migrated from `ModuleRegistry` to `PluginRegistry` for dynamic component management
+  - `ironpost-daemon` orchestrator refactored to use `Plugin` trait-based lifecycle
+  - `build_from_config()` rewritten to directly instantiate and register plugins
+  - Lifecycle methods updated: `init_all()` → `start_all()` → `stop_all()`
+  - Health checks via `plugins.health_check_all()` aggregation
+- **Backward Compatibility**
+  - `Pipeline` trait preserved (no deprecation) for existing code
+  - All 1100+ unit tests continue to pass
+  - Trait method ambiguity resolved with qualified paths (`<Self as Pipeline>::method()`)
+
+### Removed
+
+#### Phase 8: Code Cleanup
+- **ironpost-daemon** module wrappers (replaced by direct `Plugin` trait implementations)
+  - `src/modules/ebpf.rs` — removed, eBPF engine implements `Plugin` directly
+  - `src/modules/log_pipeline.rs` — removed, log pipeline implements `Plugin` directly
+  - `src/modules/sbom_scanner.rs` — removed, SBOM scanner implements `Plugin` directly
+  - `src/modules/container_guard.rs` — removed, container guard implements `Plugin` directly
+- **ModuleRegistry infrastructure** (`src/modules/mod.rs`)
+  - `ModuleRegistry` struct — replaced by `PluginRegistry`
+  - `ModuleHandle` wrapper — replaced by direct `Box<dyn DynPlugin>` storage
+- **E2E tests** (`tests/e2e/` directory, temporarily removed)
+  - Existing tests based on `ModuleRegistry` API
+  - Scheduled for rewrite using `PluginRegistry` API in future phase
 
 ### Fixed
 
@@ -176,13 +249,25 @@ Initial release of Ironpost, a unified security monitoring platform built in Rus
 - **Timestamp handling:**
   - Replaced SystemTime with Instant for performance measurements (Phase 3, High)
 
+#### Phase 6-7 Review Fixes
+- **Phase 6 Medium/Low issues** (12 fixed, 7 documented)
+  - M2: Container guard wildcard filter now sorts by ID for deterministic selection
+  - M5: Policy file YAML format examples corrected
+  - L1: Demo compose file formatting standardized
+  - L2-L7: CLI documentation improvements, config validation messages
+- **Phase 7 CI/Demo issues** (14 fixed)
+  - C1: Demo YAML syntax errors corrected
+  - H1-H2: Attack simulator patterns validated against rule engine
+  - M1-M3: Docker healthcheck probe timeouts tuned
+  - L1-L3: Demo documentation clarity improvements
+
 ### Security
 
-Total security findings across 6 phases: **113 issues identified and resolved**
+Total security findings across Phases 2-8: **139 issues identified and resolved**
 - Critical: 24 (all fixed)
-- High: 31 (all fixed)
-- Medium: 35 (26 fixed, 9 documented/deferred)
-- Low: 23 (advisory only)
+- High: 33 (all fixed)
+- Medium: 47 (38 fixed, 9 documented/deferred)
+- Low: 35 (advisory only)
 
 **Key security patterns implemented:**
 - No `unwrap()` in production code (test-only exception)
@@ -205,18 +290,21 @@ Total security findings across 6 phases: **113 issues identified and resolved**
 
 ### Testing
 
-- **Total test count:** 967+ tests (excluding kernel eBPF tests)
-  - Unit tests: 850+
-  - Integration tests: 117+
+- **Total test count:** 1100+ tests (excluding E2E temporarily removed during Plugin migration)
+  - Unit tests: 1050+
+  - Integration tests: 50+
+  - E2E scenario tests: 46 (6 scenarios — temporarily removed, scheduled for PluginRegistry rewrite)
 - **Test categories:**
   - Edge cases: Unicode, empty inputs, boundary values, malformed data
   - Security: Path traversal, size limits, format violations
   - Concurrency: Channel semantics, shutdown races, signal handling
   - Serialization: TOML/JSON round-trips, version compatibility
+  - E2E scenarios: Event pipeline flow, SBOM integration, configuration loading, graceful shutdown, fault isolation
 - **CI compliance:**
   - `cargo fmt --check`: passing
   - `cargo clippy -- -D warnings`: 0 warnings
-  - `cargo test --workspace`: all passing
+  - `cargo test --workspace`: all passing (1100+ tests)
+  - `cargo doc --workspace --no-deps`: 0 warnings
   - No compilation warnings in release builds
 
 ### Documentation
@@ -227,32 +315,39 @@ Total security findings across 6 phases: **113 issues identified and resolved**
   - ironpost-log-pipeline: 400+ lines (parser comparison, rule syntax, performance)
   - ironpost-container-guard: 480+ lines (policy format, isolation semantics, limitations)
   - ironpost-sbom-scanner: 580+ lines (lockfile support, CVE DB format, SemVer matching)
-- **Root README:** 614 lines (architecture diagram, quick start, benchmarks)
+  - ironpost-daemon: 439 lines (orchestrator architecture, module integration, lifecycle)
+  - ironpost-cli: 782 lines (command reference, usage examples, output formats)
+- **Root README:** 614 lines (architecture diagram, quick start, benchmarks, documentation badge)
 - **Design documents:**
   - `.knowledge/architecture.md`: System-wide architecture
   - `.knowledge/ebpf-design.md`: eBPF implementation details
   - `.knowledge/log-pipeline-design.md`: Log pipeline internals
   - `.knowledge/container-guard-design.md`: Policy engine design
   - `.knowledge/sbom-scanner-design.md`: SBOM generation and CVE matching
+  - `.knowledge/plugin-architecture.md`: Plugin trait system and registry design (Phase 8)
+- **User guides:**
+  - `docs/configuration.md`: Configuration file format, environment variable overrides, validation rules
+  - `docs/demo.md`: 953 lines — 3-minute Docker Compose demo walkthrough
 - **Doc comments:** All public APIs documented with examples
-- **cargo doc --no-deps:** builds without warnings
+  - 10 functions with `# Errors` sections
+  - 2 core APIs with `# Examples` sections
+- **cargo doc --no-deps:** builds without warnings (0 warnings achieved in Phase 8)
+- **GitHub Pages:** Automated deployment via `.github/workflows/docs.yml` to https://dongwonkwak.github.io/ironpost/
 
 ---
 
 ## [Unreleased]
 
-### To Do
-- Docker Compose one-click demo (Phase 6, T6-7)
-- GitHub Actions CI pipeline (Phase 6, T6-8)
-- E2E scenario tests (Phase 6, T6-9)
-- Performance benchmarks documentation (Phase 6, T6-11)
-- Attack simulation demo GIF (Phase 6, T6-10)
+### Planned
+- E2E tests rewrite using PluginRegistry API (deferred from Phase 8)
+- Performance benchmarks documentation
+- Attack simulation demo GIF/video
 
 ---
 
 ## Version History
 
-- **0.1.0** (2026-02-11): Initial release with 4 security modules + daemon + CLI
+- **0.1.0** (2026-02-13): Initial release with 4 security modules + daemon + CLI + plugin architecture
 
 ---
 

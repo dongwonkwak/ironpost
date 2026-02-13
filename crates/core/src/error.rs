@@ -37,6 +37,10 @@ pub enum IronpostError {
     #[error("sbom error: {0}")]
     Sbom(#[from] SbomError),
 
+    /// 플러그인 에러
+    #[error("plugin error: {0}")]
+    Plugin(#[from] PluginError),
+
     /// I/O 에러
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
@@ -190,6 +194,39 @@ pub enum SbomError {
     /// SBOM 파싱 실패
     #[error("sbom parse failed: {0}")]
     ParseFailed(String),
+}
+
+/// 플러그인 에러
+#[derive(Debug, thiserror::Error)]
+pub enum PluginError {
+    /// 이미 등록된 플러그인
+    #[error("plugin already registered: {name}")]
+    AlreadyRegistered {
+        /// 중복된 플러그인 이름
+        name: String,
+    },
+
+    /// 플러그인을 찾을 수 없음
+    #[error("plugin not found: {name}")]
+    NotFound {
+        /// 찾으려 했던 플러그인 이름
+        name: String,
+    },
+
+    /// 잘못된 상태 전환
+    #[error("invalid state for plugin '{name}': current={current}, expected={expected}")]
+    InvalidState {
+        /// 플러그인 이름
+        name: String,
+        /// 현재 상태
+        current: String,
+        /// 기대 상태
+        expected: String,
+    },
+
+    /// 정지 중 에러 발생 (복수 에러)
+    #[error("errors stopping plugins: {0}")]
+    StopFailed(String),
 }
 
 #[cfg(test)]

@@ -30,6 +30,7 @@ use tracing::{debug, info, warn};
 use ironpost_core::error::IronpostError;
 use ironpost_core::event::{AlertEvent, MODULE_SBOM_SCANNER};
 use ironpost_core::pipeline::{HealthStatus, Pipeline};
+use ironpost_core::plugin::{Plugin, PluginInfo, PluginState, PluginType};
 use ironpost_core::types::Alert;
 
 use crate::config::SbomScannerConfig;
@@ -65,6 +66,10 @@ enum ScannerState {
 ///
 /// `stop()` 후 재시작이 필요하면 `SbomScannerBuilder`로 새 인스턴스를 생성해야 합니다.
 pub struct SbomScanner {
+    /// 플러그인 메타데이터
+    plugin_info: PluginInfo,
+    /// 플러그인 상태
+    plugin_state: PluginState,
     /// 스캐너 설정
     config: SbomScannerConfig,
     /// 현재 상태
@@ -348,6 +353,52 @@ impl Pipeline for SbomScanner {
     }
 }
 
+/// Plugin trait 구현
+///
+/// SbomScanner를 플러그인 시스템에 통합하여
+/// PluginRegistry를 통한 생명주기 관리를 지원합니다.
+impl Plugin for SbomScanner {
+    fn info(&self) -> &PluginInfo {
+        &self.plugin_info
+    }
+
+    fn state(&self) -> PluginState {
+        self.plugin_state
+    }
+
+    async fn init(&mut self) -> Result<(), IronpostError> {
+        // 현재는 별도 초기화 로직 없음
+        // 필요 시 VulnDb 검증 등을 여기에 추가
+        self.plugin_state = PluginState::Initialized;
+        tracing::debug!(plugin = %self.plugin_info.name, "plugin initialized");
+        Ok(())
+    }
+
+    async fn start(&mut self) -> Result<(), IronpostError> {
+        let result = <Self as Pipeline>::start(self).await;
+        if result.is_ok() {
+            self.plugin_state = PluginState::Running;
+        } else {
+            self.plugin_state = PluginState::Failed;
+        }
+        result
+    }
+
+    async fn stop(&mut self) -> Result<(), IronpostError> {
+        let result = <Self as Pipeline>::stop(self).await;
+        if result.is_ok() {
+            self.plugin_state = PluginState::Stopped;
+        } else {
+            self.plugin_state = PluginState::Failed;
+        }
+        result
+    }
+
+    async fn health_check(&self) -> HealthStatus {
+        <Self as Pipeline>::health_check(self).await
+    }
+}
+
 /// SBOM 스캐너 빌더
 ///
 /// 스캐너를 구성하고 필요한 채널을 생성합니다.
@@ -394,6 +445,10 @@ impl SbomScannerBuilder {
     /// - `SbomScanner`: 스캐너 인스턴스
     /// - `Option<mpsc::Receiver<AlertEvent>>`: 알림 수신 채널
     ///   (외부 alert_sender를 설정한 경우 None)
+    ///
+    /// # Errors
+    ///
+    /// 설정 검증에 실패하면 에러를 반환합니다.
     pub fn build(
         self,
     ) -> Result<(SbomScanner, Option<mpsc::Receiver<AlertEvent>>), SbomScannerError> {
@@ -408,7 +463,16 @@ impl SbomScannerBuilder {
 
         let generator = SbomGenerator::new(self.config.output_format);
 
+        let plugin_info = PluginInfo {
+            name: MODULE_SBOM_SCANNER.to_owned(),
+            version: env!("CARGO_PKG_VERSION").to_owned(),
+            description: "SBOM generation and vulnerability scanning".to_owned(),
+            plugin_type: PluginType::Scanner,
+        };
+
         let scanner = SbomScanner {
+            plugin_info,
+            plugin_state: PluginState::Created,
             config: self.config,
             state: ScannerState::Initialized,
             generator,
@@ -763,13 +827,13 @@ mod tests {
     #[tokio::test]
     async fn scanner_health_check_before_start() {
         let (scanner, _) = SbomScannerBuilder::new().build().unwrap();
-        assert!(scanner.health_check().await.is_unhealthy());
+        assert!(Pipeline::health_check(&scanner).await.is_unhealthy());
     }
 
     #[tokio::test]
     async fn scanner_double_stop_fails() {
         let (mut scanner, _) = SbomScannerBuilder::new().build().unwrap();
-        let err = scanner.stop().await;
+        let err = Pipeline::stop(&mut scanner).await;
         assert!(err.is_err());
     }
 
@@ -778,30 +842,30 @@ mod tests {
         let (mut scanner, _) = SbomScannerBuilder::new().build().unwrap();
 
         // Start
-        scanner.start().await.unwrap();
+        Pipeline::start(&mut scanner).await.unwrap();
         assert_eq!(scanner.state_name(), "running");
 
         // Double start fails
-        assert!(scanner.start().await.is_err());
+        assert!(Pipeline::start(&mut scanner).await.is_err());
 
         // Stop
-        scanner.stop().await.unwrap();
+        Pipeline::stop(&mut scanner).await.unwrap();
         assert_eq!(scanner.state_name(), "stopped");
 
         // Double stop fails
-        assert!(scanner.stop().await.is_err());
+        assert!(Pipeline::stop(&mut scanner).await.is_err());
     }
 
     #[tokio::test]
     async fn scanner_health_check_running_no_db() {
         let (mut scanner, _) = SbomScannerBuilder::new().build().unwrap();
-        scanner.start().await.unwrap();
+        Pipeline::start(&mut scanner).await.unwrap();
 
         // Without vuln DB, should be degraded
-        let status = scanner.health_check().await;
+        let status = Pipeline::health_check(&scanner).await;
         assert!(!status.is_healthy() || !scanner.is_vuln_db_loaded());
 
-        scanner.stop().await.unwrap();
+        Pipeline::stop(&mut scanner).await.unwrap();
     }
 
     #[tokio::test]
@@ -814,11 +878,11 @@ mod tests {
             .build()
             .unwrap();
 
-        scanner.start().await.unwrap();
+        Pipeline::start(&mut scanner).await.unwrap();
 
         let results = scanner.scan_once().await.unwrap();
         assert!(results.is_empty());
 
-        scanner.stop().await.unwrap();
+        Pipeline::stop(&mut scanner).await.unwrap();
     }
 }

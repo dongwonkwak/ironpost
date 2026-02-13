@@ -5,13 +5,8 @@
 //! - 환경변수 우선순위 테스트
 //! - 빈 파일 / 잘못된 형식 에러 테스트
 
-use std::sync::Mutex;
-
 use ironpost_core::config::IronpostConfig;
 use ironpost_core::error::{ConfigError, IronpostError};
-
-/// 환경변수 조작 테스트 직렬화용 뮤텍스
-static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 // =============================================================================
 // ironpost.toml.example 파싱 테스트
@@ -298,9 +293,8 @@ postgres_url = "postgresql://db:5432/ironpost"
 // =============================================================================
 
 #[test]
+#[serial_test::serial]
 fn env_override_takes_precedence_over_toml() {
-    let _guard = ENV_LOCK.lock().expect("lock poisoned");
-
     let toml = r#"
 [general]
 log_level = "info"
@@ -328,9 +322,8 @@ log_level = "info"
 }
 
 #[test]
+#[serial_test::serial]
 fn env_override_takes_precedence_over_defaults() {
-    let _guard = ENV_LOCK.lock().expect("lock poisoned");
-
     let original = std::env::var("IRONPOST_EBPF_INTERFACE").ok();
     // SAFETY: 테스트는 ENV_LOCK으로 직렬화되어 환경변수 조작이 안전합니다.
     unsafe {
@@ -353,9 +346,8 @@ fn env_override_takes_precedence_over_defaults() {
 }
 
 #[test]
+#[serial_test::serial]
 fn env_override_csv_for_vec_fields() {
-    let _guard = ENV_LOCK.lock().expect("lock poisoned");
-
     let original = std::env::var("IRONPOST_SBOM_SCAN_DIRS").ok();
     // SAFETY: 테스트는 ENV_LOCK으로 직렬화되어 환경변수 조작이 안전합니다.
     unsafe {
@@ -378,9 +370,8 @@ fn env_override_csv_for_vec_fields() {
 }
 
 #[test]
+#[serial_test::serial]
 fn env_override_bool_field() {
-    let _guard = ENV_LOCK.lock().expect("lock poisoned");
-
     let original = std::env::var("IRONPOST_EBPF_ENABLED").ok();
     // SAFETY: 테스트는 ENV_LOCK으로 직렬화되어 환경변수 조작이 안전합니다.
     unsafe {
@@ -403,9 +394,8 @@ fn env_override_bool_field() {
 }
 
 #[test]
+#[serial_test::serial]
 fn env_override_numeric_field() {
-    let _guard = ENV_LOCK.lock().expect("lock poisoned");
-
     let original = std::env::var("IRONPOST_LOG_PIPELINE_BATCH_SIZE").ok();
     // SAFETY: 테스트는 ENV_LOCK으로 직렬화되어 환경변수 조작이 안전합니다.
     unsafe {
@@ -428,9 +418,8 @@ fn env_override_numeric_field() {
 }
 
 #[test]
+#[serial_test::serial]
 fn env_override_missing_var_keeps_toml_value() {
-    let _guard = ENV_LOCK.lock().expect("lock poisoned");
-
     let toml = r#"
 [general]
 log_level = "warn"
@@ -448,9 +437,8 @@ log_level = "warn"
 }
 
 #[test]
+#[serial_test::serial]
 fn env_override_storage_section() {
-    let _guard = ENV_LOCK.lock().expect("lock poisoned");
-
     let toml = r#"
 [log_pipeline.storage]
 retention_days = 30

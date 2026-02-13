@@ -16,8 +16,9 @@ use tokio::sync::{Mutex, mpsc};
 use tokio::time::{Instant, interval};
 
 use ironpost_core::error::IronpostError;
-use ironpost_core::event::{AlertEvent, PacketEvent};
+use ironpost_core::event::{AlertEvent, MODULE_LOG_PIPELINE, PacketEvent};
 use ironpost_core::pipeline::{HealthStatus, Pipeline};
+use ironpost_core::plugin::{Plugin, PluginInfo, PluginState, PluginType};
 
 use crate::alert::AlertGenerator;
 use crate::buffer::LogBuffer;
@@ -56,6 +57,10 @@ enum PipelineState {
 /// pipeline.start().await?;
 /// ```
 pub struct LogPipeline {
+    /// 플러그인 메타데이터
+    plugin_info: PluginInfo,
+    /// 플러그인 상태
+    plugin_state: PluginState,
     /// 파이프라인 설정
     config: PipelineConfig,
     /// 현재 상태
@@ -419,9 +424,69 @@ impl Pipeline for LogPipeline {
     }
 }
 
+/// Plugin trait 구현
+///
+/// LogPipeline을 플러그인 시스템에 통합하여
+/// PluginRegistry를 통한 생명주기 관리를 지원합니다.
+impl Plugin for LogPipeline {
+    fn info(&self) -> &PluginInfo {
+        &self.plugin_info
+    }
+
+    fn state(&self) -> PluginState {
+        self.plugin_state
+    }
+
+    async fn init(&mut self) -> Result<(), IronpostError> {
+        // 현재는 별도 초기화 로직 없음
+        // 필요 시 규칙 검증, 설정 검증 등을 여기에 추가
+        self.plugin_state = PluginState::Initialized;
+        tracing::debug!(plugin = %self.plugin_info.name, "plugin initialized");
+        Ok(())
+    }
+
+    async fn start(&mut self) -> Result<(), IronpostError> {
+        let result = <Self as Pipeline>::start(self).await;
+        if result.is_ok() {
+            self.plugin_state = PluginState::Running;
+        } else {
+            self.plugin_state = PluginState::Failed;
+        }
+        result
+    }
+
+    async fn stop(&mut self) -> Result<(), IronpostError> {
+        let result = <Self as Pipeline>::stop(self).await;
+        if result.is_ok() {
+            self.plugin_state = PluginState::Stopped;
+        } else {
+            self.plugin_state = PluginState::Failed;
+        }
+        result
+    }
+
+    async fn health_check(&self) -> HealthStatus {
+        <Self as Pipeline>::health_check(self).await
+    }
+}
+
 /// 로그 파이프라인 빌더
 ///
 /// 파이프라인을 구성하고 필요한 채널을 생성합니다.
+///
+/// # Examples
+///
+/// ```no_run
+/// # async fn example() -> Result<(), ironpost_log_pipeline::error::LogPipelineError> {
+/// use ironpost_log_pipeline::{LogPipelineBuilder, PipelineConfig};
+///
+/// let config = PipelineConfig::default();
+/// let (pipeline, alert_rx) = LogPipelineBuilder::new()
+///     .config(config)
+///     .build()?;
+/// # Ok(())
+/// # }
+/// ```
 pub struct LogPipelineBuilder {
     config: PipelineConfig,
     packet_rx: Option<mpsc::Receiver<PacketEvent>>,
@@ -474,6 +539,10 @@ impl LogPipelineBuilder {
     /// - `LogPipeline`: 파이프라인 인스턴스
     /// - `Option<mpsc::Receiver<AlertEvent>>`: 알림 수신 채널
     ///   (외부 alert_sender를 설정한 경우 None)
+    ///
+    /// # Errors
+    ///
+    /// 설정 검증에 실패하면 에러를 반환합니다.
     pub fn build(
         self,
     ) -> Result<(LogPipeline, Option<mpsc::Receiver<AlertEvent>>), LogPipelineError> {
@@ -498,7 +567,16 @@ impl LogPipelineBuilder {
             self.config.alert_rate_limit_per_rule,
         )));
 
+        let plugin_info = PluginInfo {
+            name: MODULE_LOG_PIPELINE.to_owned(),
+            version: env!("CARGO_PKG_VERSION").to_owned(),
+            description: "Log collection, parsing, and rule-based detection pipeline".to_owned(),
+            plugin_type: PluginType::LogPipeline,
+        };
+
         let pipeline = LogPipeline {
+            plugin_info,
+            plugin_state: PluginState::Created,
             config: self.config,
             state: PipelineState::Initialized,
             parser: Arc::new(ParserRouter::with_defaults()),
@@ -561,10 +639,10 @@ mod tests {
         let (mut pipeline, _alert_rx) = LogPipelineBuilder::new().build().unwrap();
 
         // Before start
-        assert!(pipeline.health_check().await.is_unhealthy());
+        assert!(Pipeline::health_check(&pipeline).await.is_unhealthy());
 
         // Double stop before start fails
-        let err = pipeline.stop().await;
+        let err = Pipeline::stop(&mut pipeline).await;
         assert!(err.is_err());
     }
 
@@ -605,19 +683,19 @@ mod tests {
         let (mut pipeline, _alert_rx) = LogPipelineBuilder::new().config(config).build().unwrap();
 
         // Start the pipeline
-        pipeline.start().await.unwrap();
+        Pipeline::start(&mut pipeline).await.unwrap();
         assert_eq!(pipeline.state_name(), "running");
 
         // Stop the pipeline
-        pipeline.stop().await.unwrap();
+        Pipeline::stop(&mut pipeline).await.unwrap();
         assert_eq!(pipeline.state_name(), "stopped");
 
         // Restart the pipeline
-        let result = pipeline.start().await;
+        let result = Pipeline::start(&mut pipeline).await;
         assert!(result.is_ok(), "pipeline should be restartable after stop");
         assert_eq!(pipeline.state_name(), "running");
 
         // Clean up
-        pipeline.stop().await.unwrap();
+        Pipeline::stop(&mut pipeline).await.unwrap();
     }
 }
