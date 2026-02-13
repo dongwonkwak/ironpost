@@ -13,16 +13,16 @@ cargo test --workspace
 ### 모듈별 테스트
 ```bash
 cargo test -p ironpost-core
-cargo test -p log-pipeline
-cargo test -p container-guard
-cargo test -p sbom-scanner
-cargo test -p ebpf-engine      # Linux 전용
+cargo test -p ironpost-log-pipeline
+cargo test -p ironpost-container-guard
+cargo test -p ironpost-sbom-scanner
+cargo test -p ironpost-ebpf-engine      # Linux 전용
 ```
 
 ### 옵션
 ```bash
 # 통합 테스트만 실행
-cargo test --test '*' --workspace
+cargo test --tests --workspace
 
 # 출력 포함 실행 (println! 포함)
 cargo test --workspace -- --nocapture
@@ -89,20 +89,20 @@ cargo test --doc
 
 ## 벤치마크
 
-Ironpost는 5개의 criterion 벤치마크 파일을 포함합니다:
-- `benches/ebpf_performance.rs` — eBPF 패킷 필터링 성능
-- `benches/log_parsing.rs` — 로그 파싱 처리량
-- `benches/container_isolation.rs` — 컨테이너 격리 오버헤드
-- `benches/sbom_scanning.rs` — SBOM 스캔 속도
-- `benches/end_to_end.rs` — 전체 시스템 성능
+Ironpost의 criterion 벤치마크는 `crates/*/benches/` 아래에 위치하며, 주요 벤치는 다음과 같습니다:
+- `event_bench` — 이벤트/로그 파이프라인 처리량
+- `parser_bench` — 파서 성능 및 처리량
+- `rule_bench` — 규칙/정책 평가 성능
+- `policy_bench` — 정책 엔진 오버헤드
+- `scanner_bench` — 스캐너(SBOM 등) 성능
 
 ### 벤치마크 실행
 ```bash
 # 모든 벤치마크
 cargo bench --workspace
 
-# 특정 벤치마크
-cargo bench --bench ebpf_performance
+# 특정 벤치마크 (예: log-pipeline 크레이트의 event_bench)
+cargo bench -p ironpost-log-pipeline --bench event_bench
 
 # 상세 결과
 cargo bench --workspace -- --verbose

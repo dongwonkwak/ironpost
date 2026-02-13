@@ -13,10 +13,10 @@ Ironpost에 기여해주셔서 감사합니다. 이 문서는 개발 환경 설�
 cargo build --release
 ```
 
-**eBPF 코드 포함 빌드** (Linux에서만 가능):
+**eBPF 코드 포함 빌드** (Linux에서만 가능, nightly toolchain 필요):
 ```bash
 rustup toolchain install nightly
-cargo +nightly build --release -p ebpf-engine
+cargo +nightly run -p xtask -- build-ebpf --release
 ```
 
 ## 코드 규칙
