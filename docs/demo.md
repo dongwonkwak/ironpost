@@ -92,7 +92,7 @@ Copy and paste these commands to start the full demo stack:
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/<your-username>/ironpost.git
+git clone https://github.com/dongwonkwak/ironpost.git
 cd ironpost
 
 # 2. Copy environment configuration
@@ -758,7 +758,7 @@ Build Ironpost from source for local development:
 
 ```bash
 # Clone repository (if not already done)
-git clone https://github.com/yourusername/ironpost.git
+git clone https://github.com/dongwonkwak/ironpost.git
 cd ironpost
 
 # Install Rust toolchain (if not installed)
