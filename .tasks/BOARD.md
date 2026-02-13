@@ -15,10 +15,29 @@
 | 8-release | 9 | 8 | 0 | 1 | ⏳ 최종 리뷰 완료 (C1: cargo fmt 수정 필요), 다음: T8.9 릴리스 태그 |
 
 ## 블로커
-- **C1**: `cargo fmt --all --check` 실패 -- `cargo fmt --all` 실행 후 커밋 필요 (T8.9 전 필수)
+- 없음
 
 ## 현재 진행중
-- Phase 8: Final Release (v0.1.0) -- 최종 리뷰 완료, cargo fmt 수정 후 v0.1.0 태그 생성
+- 없음 (Phase 8 완료, 다음 phase 대기)
+
+## 최근 완료
+- **docs/design-decisions.md ADR 추가 작업** (2026-02-14 04:35-04:40, 6분, writer)
+  - ✅ 기존 ADR-001~009 유지
+  - ✅ ADR-010~019 추가 (10개, 총 19개 ADR)
+    - ADR-010: 모노레포 워크스페이스 구조
+    - ADR-011: Plugin 아키텍처 도입
+    - ADR-012: Rust Edition 2024 선택
+    - ADR-013: Docker Multi-Stage 빌드 + Distroless
+    - ADR-014: Mock 기반 E2E 테스트 전략
+    - ADR-015: 탐지 룰 YAML + 정책 TOML 분리
+    - ADR-016: tracing 구조화 로깅
+    - ADR-017: bytes 크레이트 제로카피 최적화
+    - ADR-018: clap derive 매크로 (CLI)
+    - ADR-019: 크로스 플랫폼 빌드 전략
+  - ✅ 요약 테이블 업데이트 (19개 항목)
+  - ✅ 참고 문서 섹션 확장 (9개 링크)
+  - ✅ 총 추가 라인: 약 600+ 라인
+  - 산출물: `docs/design-decisions.md` (총 1018 라인)
 
 ---
 
