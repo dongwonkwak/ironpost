@@ -13,7 +13,7 @@ toml = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true }
-bollard = "0.18"
+bollard = "0.20"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util", "macros"] }
