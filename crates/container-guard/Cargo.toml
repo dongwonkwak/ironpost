@@ -17,3 +17,8 @@ bollard = "0.18"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util", "macros"] }
+criterion = { workspace = true }
+
+[[bench]]
+name = "policy_bench"
+harness = false
