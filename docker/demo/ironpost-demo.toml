@@ -43,7 +43,11 @@ batch_size = 50
 flush_interval_secs = 2
 
 [log_pipeline.storage]
-postgres_url = "postgresql://ironpost:changeme@postgresql:5432/ironpost"
+# WARNING: These credentials are for DEMO purposes only.
+# DO NOT use these in production. Override via environment variables:
+#   IRONPOST_LOG_PIPELINE_POSTGRES_URL
+#   IRONPOST_LOG_PIPELINE_REDIS_URL
+postgres_url = "postgresql://ironpost:CHANGE_THIS_PASSWORD@postgresql:5432/ironpost"
 redis_url = "redis://redis:6379"
 retention_days = 7
 

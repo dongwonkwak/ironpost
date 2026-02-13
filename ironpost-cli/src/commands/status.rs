@@ -142,15 +142,16 @@ fn build_status_report(config: &IronpostConfig, verbose: bool) -> Result<StatusR
 fn check_daemon_status(pid_file: &str) -> (bool, Option<u64>) {
     let pid_path = std::path::Path::new(pid_file);
 
-    if !pid_path.exists() {
-        debug!(pid_file, "pid file does not exist");
-        return (false, None);
-    }
-
+    // Read PID file directly without exists() check to avoid TOCTOU race.
+    // If the file doesn't exist, read_to_string will return an error.
     let pid_content = match std::fs::read_to_string(pid_path) {
         Ok(content) => content,
         Err(e) => {
-            warn!(pid_file, error = %e, "failed to read pid file");
+            if e.kind() == std::io::ErrorKind::NotFound {
+                debug!(pid_file, "pid file does not exist");
+            } else {
+                warn!(pid_file, error = %e, "failed to read pid file");
+            }
             return (false, None);
         }
     };

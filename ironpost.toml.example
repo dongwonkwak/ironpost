@@ -1,138 +1,267 @@
 # =============================================================================
-# Ironpost Configuration File
+# Ironpost 통합 설정 파일 (ironpost.toml)
 # =============================================================================
 #
-# This is the unified configuration file for the ironpost security monitoring
-# platform. Each section controls a specific module.
+# Ironpost 보안 모니터링 플랫폼의 전체 설정 예시입니다.
+# 복사하여 ironpost.toml로 사용하세요:
 #
-# Configuration loading priority (highest to lowest):
-#   1. CLI arguments (--log-level, --config, etc.)
-#   2. Environment variables (IRONPOST_{SECTION}_{FIELD})
-#   3. This configuration file (ironpost.toml)
-#   4. Built-in defaults
+#   cp ironpost.toml.example ironpost.toml
 #
-# To validate this file:
-#   ironpost-cli config validate --config ironpost.toml
+# 설정 로딩 우선순위 (높은 순):
+#   1. CLI 인자        (--log-level, --config 등)
+#   2. 환경변수        (IRONPOST_{SECTION}_{FIELD})
+#   3. 설정 파일       (ironpost.toml)
+#   4. 기본값          (코드 내 Default 구현)
+#
+# 부분 설정 지원:
+#   필요한 섹션만 작성해도 됩니다. 생략된 섹션/필드는 기본값이 적용됩니다.
+#
+# 설정 검증:
+#   ironpost config validate --config ironpost.toml
+#
+# =============================================================================
 
-# =============================================================================
-# [general] -- Daemon-level settings
-# =============================================================================
+
+# -----------------------------------------------------------------------------
+# [general] — 일반 설정
+# -----------------------------------------------------------------------------
 [general]
-# Log verbosity level: trace, debug, info, warn, error
+
+# 로그 레벨
+# 타입: String
+# 허용값: "trace", "debug", "info", "warn", "error"
+# 기본값: "info"
+# 환경변수: IRONPOST_GENERAL_LOG_LEVEL
 log_level = "info"
 
-# Log output format: "json" for structured logs, "pretty" for human-readable
+# 로그 출력 형식
+# 타입: String
+# 허용값: "json" (구조화 로그), "pretty" (사람 읽기용)
+# 기본값: "json"
+# 환경변수: IRONPOST_GENERAL_LOG_FORMAT
 log_format = "json"
 
-# Directory for persistent data (vuln DB, state files, etc.)
+# 데이터 디렉토리 (내부 상태, DB 등)
+# 타입: String
+# 기본값: "/var/lib/ironpost"
+# 환경변수: IRONPOST_GENERAL_DATA_DIR
 data_dir = "/var/lib/ironpost"
 
-# PID file path (prevents duplicate daemon instances)
+# PID 파일 경로 (중복 실행 방지)
+# 타입: String
+# 기본값: "/var/run/ironpost.pid"
+# 환경변수: IRONPOST_GENERAL_PID_FILE
 pid_file = "/var/run/ironpost.pid"
 
-# =============================================================================
-# [ebpf] -- eBPF XDP Network Packet Engine (Linux only)
-# =============================================================================
-# Captures network packets via XDP programs, detects anomalies (SYN flood,
-# port scan), and forwards PacketEvents to the log pipeline.
+
+# -----------------------------------------------------------------------------
+# [ebpf] — eBPF XDP 네트워크 패킷 엔진 (Linux 전용)
+# -----------------------------------------------------------------------------
+# 네트워크 패킷을 XDP로 캡처하여 이상 징후(SYN flood, 포트 스캔)를 탐지하고
+# PacketEvent를 로그 파이프라인에 전달합니다.
 #
-# Requires: Linux kernel 5.7+, CAP_BPF or root privileges
-# Ignored on non-Linux platforms.
+# 요구사항: Linux 커널 5.7+, CAP_BPF 또는 root 권한
+# 비Linux 플랫폼에서는 무시됩니다.
 [ebpf]
-# Enable/disable the eBPF engine
+
+# 모듈 활성화 여부
+# 타입: bool
+# 기본값: false
+# 환경변수: IRONPOST_EBPF_ENABLED
 enabled = false
 
-# Network interface to attach XDP program to
+# 감시할 네트워크 인터페이스
+# 타입: String
+# 기본값: "eth0"
+# 환경변수: IRONPOST_EBPF_INTERFACE
+# 참고: enabled=true일 때 비어있으면 검증 실패
 interface = "eth0"
 
-# XDP attach mode: "native" (driver), "skb" (generic), "hw" (hardware offload)
-# Use "skb" for maximum compatibility, "native" for best performance
+# XDP 모드
+# 타입: String
+# 허용값: "native" (드라이버 레벨), "skb" (범용), "hw" (하드웨어 오프로드)
+# 기본값: "skb"
+# 환경변수: IRONPOST_EBPF_XDP_MODE
+# 참고: "skb"는 호환성 최대, "native"는 성능 최대
 xdp_mode = "skb"
 
-# Ring buffer size for kernel-to-userspace event transfer (bytes)
-# Larger values reduce event loss under high packet rates
-ring_buffer_size = 262144  # 256 KB
+# 이벤트 링 버퍼 크기 (바이트)
+# 타입: usize
+# 기본값: 262144 (256KB)
+# 환경변수: IRONPOST_EBPF_RING_BUFFER_SIZE
+# 참고: 값이 클수록 높은 패킷 속도에서 이벤트 손실 감소
+#       enabled=true일 때 0이면 검증 실패
+ring_buffer_size = 262144
 
-# Maximum entries in the IP blocklist eBPF map
+# 차단 목록 최대 엔트리 수 (eBPF HashMap)
+# 타입: usize
+# 기본값: 10000
+# 환경변수: IRONPOST_EBPF_BLOCKLIST_MAX_ENTRIES
+# 참고: enabled=true일 때 0이면 검증 실패
 blocklist_max_entries = 10000
 
-# =============================================================================
-# [log_pipeline] -- Log Collection, Parsing, and Detection
-# =============================================================================
-# Collects logs from multiple sources, parses them (syslog RFC 5424, JSON),
-# matches against YAML detection rules, and generates AlertEvents.
+
+# -----------------------------------------------------------------------------
+# [log_pipeline] — 로그 수집/분석 파이프라인
+# -----------------------------------------------------------------------------
+# 다중 소스에서 로그를 수집하고, 파싱(syslog RFC 5424, JSON)한 뒤
+# YAML 탐지 규칙과 매칭하여 AlertEvent를 생성합니다.
 [log_pipeline]
-# Enable/disable the log pipeline
+
+# 모듈 활성화 여부
+# 타입: bool
+# 기본값: true
+# 환경변수: IRONPOST_LOG_PIPELINE_ENABLED
 enabled = true
 
-# Log collection sources: "syslog", "file"
+# 수집 소스 목록
+# 타입: Vec<String>
+# 허용값: "syslog", "file"
+# 기본값: ["syslog", "file"]
+# 환경변수: IRONPOST_LOG_PIPELINE_SOURCES (CSV 형식, 예: "syslog,file")
+# 참고: enabled=true일 때 최소 1개 필요
 sources = ["syslog", "file"]
 
-# Syslog UDP/TCP receiver bind address
+# Syslog 수신 바인드 주소 (UDP/TCP)
+# 타입: String
+# 기본값: "0.0.0.0:514"
+# 환경변수: IRONPOST_LOG_PIPELINE_SYSLOG_BIND
 syslog_bind = "0.0.0.0:514"
 
-# File paths to watch for new log entries
+# 파일 감시 경로 목록
+# 타입: Vec<String>
+# 기본값: ["/var/log/syslog"]
+# 환경변수: IRONPOST_LOG_PIPELINE_WATCH_PATHS (CSV 형식)
+# 참고: 절대 경로만 허용, ".." 포함 불가, /var/log 또는 /tmp 하위만 허용
 watch_paths = ["/var/log/syslog"]
 
-# Number of log entries to accumulate before processing as a batch
+# 배치 크기 (이벤트 수)
+# 타입: usize
+# 범위: 1 ~ 10,000
+# 기본값: 100
+# 환경변수: IRONPOST_LOG_PIPELINE_BATCH_SIZE
 batch_size = 100
 
-# Maximum seconds between batch flushes (even if batch_size not reached)
+# 배치 플러시 간격 (초)
+# 타입: u64
+# 범위: 1 이상
+# 기본값: 5
+# 환경변수: IRONPOST_LOG_PIPELINE_FLUSH_INTERVAL_SECS
 flush_interval_secs = 5
 
-# --- Storage (future: PostgreSQL/Redis for log persistence) ---
+
+# -----------------------------------------------------------------------------
+# [log_pipeline.storage] — 로그 스토리지 설정
+# -----------------------------------------------------------------------------
 [log_pipeline.storage]
+
+# PostgreSQL 연결 문자열
+# 타입: String
+# 기본값: "postgresql://localhost:5432/ironpost"
+# 환경변수: IRONPOST_STORAGE_POSTGRES_URL
+# 주의: 비밀번호 포함 시 환경변수 사용 권장
 postgres_url = "postgresql://localhost:5432/ironpost"
+
+# Redis 연결 문자열 (캐시/큐)
+# 타입: String
+# 기본값: "redis://localhost:6379"
+# 환경변수: IRONPOST_STORAGE_REDIS_URL
 redis_url = "redis://localhost:6379"
 
-# How many days to retain stored logs
+# 로그 보존 기간 (일)
+# 타입: u32
+# 범위: 1 ~ 3,650 (10년)
+# 기본값: 30
+# 환경변수: IRONPOST_STORAGE_RETENTION_DAYS
 retention_days = 30
 
-# =============================================================================
-# [container] -- Container Guard / Automatic Isolation
-# =============================================================================
-# Monitors Docker containers, evaluates security policies against incoming
-# AlertEvents, and executes isolation actions (pause, stop, network disconnect).
+
+# -----------------------------------------------------------------------------
+# [container] — 컨테이너 격리 가드
+# -----------------------------------------------------------------------------
+# Docker 컨테이너를 모니터링하고, AlertEvent에 대해 보안 정책을 평가하여
+# 격리 액션(pause, stop, network disconnect)을 실행합니다.
 #
-# Requires: Docker daemon access (socket or TCP)
+# 요구사항: Docker 데몬 접근 (소켓 또는 TCP)
 [container]
-# Enable/disable the container guard
+
+# 모듈 활성화 여부
+# 타입: bool
+# 기본값: false
+# 환경변수: IRONPOST_CONTAINER_ENABLED
 enabled = false
 
-# Docker daemon socket path
+# Docker 소켓 경로
+# 타입: String
+# 기본값: "/var/run/docker.sock"
+# 환경변수: IRONPOST_CONTAINER_DOCKER_SOCKET
+# 참고: enabled=true일 때 비어있으면 검증 실패
 docker_socket = "/var/run/docker.sock"
 
-# How often to refresh container inventory (seconds)
+# 컨테이너 목록 폴링 주기 (초)
+# 타입: u64
+# 범위: 1 ~ 3,600
+# 기본값: 10
+# 환경변수: IRONPOST_CONTAINER_POLL_INTERVAL_SECS
 poll_interval_secs = 10
 
-# Directory containing TOML security policy files
+# 격리 정책 TOML 파일 디렉토리
+# 타입: String
+# 기본값: "/etc/ironpost/policies"
+# 환경변수: IRONPOST_CONTAINER_POLICY_PATH
 policy_path = "/etc/ironpost/policies"
 
-# Automatically execute isolation actions when policies match
-# WARNING: Set to true only after thorough policy testing
+# 자동 격리 활성화
+# 타입: bool
+# 기본값: false
+# 환경변수: IRONPOST_CONTAINER_AUTO_ISOLATE
+# 주의: 프로덕션에서 신중히 활성화. 정책 테스트 후 사용 권장
 auto_isolate = false
 
-# =============================================================================
-# [sbom] -- SBOM Generation and Vulnerability Scanning
-# =============================================================================
-# Discovers lockfiles (Cargo.lock, package-lock.json), generates SBOM documents
-# (CycloneDX, SPDX), and scans against a local vulnerability database.
+
+# -----------------------------------------------------------------------------
+# [sbom] — SBOM 생성 및 취약점 스캔
+# -----------------------------------------------------------------------------
+# lockfile(Cargo.lock, package-lock.json)을 탐색하여 SBOM 문서를 생성하고
+# (CycloneDX, SPDX), 로컬 취약점 DB와 대조하여 CVE를 검출합니다.
 [sbom]
-# Enable/disable the SBOM scanner
+
+# 모듈 활성화 여부
+# 타입: bool
+# 기본값: false
+# 환경변수: IRONPOST_SBOM_ENABLED
 enabled = false
 
-# Directories to scan for lockfiles (non-recursive, 1 level only)
+# 스캔 대상 디렉토리 목록 (비재귀, 직계 파일만)
+# 타입: Vec<String>
+# 기본값: ["."]
+# 환경변수: IRONPOST_SBOM_SCAN_DIRS (CSV 형식, 예: "/app,/opt")
+# 참고: ".." 포함 불가, enabled=true일 때 최소 1개 필요
 scan_dirs = ["."]
 
-# Hours between vulnerability database refresh checks
+# 취약점 DB 업데이트 주기 (시간)
+# 타입: u32
+# 범위: 1 ~ 8,760 (1년)
+# 기본값: 24
+# 환경변수: IRONPOST_SBOM_VULN_DB_UPDATE_HOURS
 vuln_db_update_hours = 24
 
-# Local vulnerability database directory path
+# 로컬 취약점 DB 저장 경로
+# 타입: String
+# 기본값: "/var/lib/ironpost/vuln-db"
+# 환경변수: IRONPOST_SBOM_VULN_DB_PATH
 vuln_db_path = "/var/lib/ironpost/vuln-db"
 
-# Minimum severity level for generating alert events
-# Options: info, low, medium, high, critical
+# 최소 심각도 알림 수준
+# 타입: String
+# 허용값: "info", "low", "medium", "high", "critical"
+# 기본값: "medium"
+# 환경변수: IRONPOST_SBOM_MIN_SEVERITY
 min_severity = "medium"
 
-# SBOM output document format: "cyclonedx" or "spdx"
+# SBOM 출력 형식
+# 타입: String
+# 허용값: "spdx" (SPDX 2.3), "cyclonedx" (CycloneDX 1.5)
+# 기본값: "cyclonedx"
+# 환경변수: IRONPOST_SBOM_OUTPUT_FORMAT
 output_format = "cyclonedx"

@@ -26,9 +26,9 @@ use tokio::sync::{broadcast, mpsc};
 
 use ironpost_core::config::IronpostConfig;
 use ironpost_core::event::{ActionEvent, AlertEvent};
+use ironpost_core::plugin::PluginRegistry;
 
 use crate::health::{DaemonHealth, ModuleHealth, aggregate_status};
-use crate::modules::ModuleRegistry;
 
 /// Channel capacity constants.
 const PACKET_CHANNEL_CAPACITY: usize = 1024;
@@ -42,8 +42,8 @@ const ALERT_CHANNEL_CAPACITY: usize = 256;
 pub struct Orchestrator {
     /// Loaded and validated configuration.
     config: IronpostConfig,
-    /// Registry of all module handles (ordered for start/stop).
-    modules: ModuleRegistry,
+    /// Registry of all plugins (ordered for start/stop).
+    plugins: PluginRegistry,
     /// Shutdown broadcast sender (signals all background tasks).
     shutdown_tx: broadcast::Sender<()>,
     /// Daemon start time (for uptime reporting).
@@ -96,14 +96,21 @@ impl Orchestrator {
         let (alert_tx, alert_rx) = mpsc::channel::<AlertEvent>(ALERT_CHANNEL_CAPACITY);
         let (shutdown_tx, _) = broadcast::channel(16);
 
-        let mut modules = ModuleRegistry::new();
+        let mut plugins = PluginRegistry::new();
         let mut action_rx = None;
 
         // Initialize eBPF engine (Linux only)
         #[cfg(target_os = "linux")]
         {
-            if let Some((handle, _packet_rx)) = crate::modules::ebpf::init(&config, packet_tx)? {
-                modules.register(handle);
+            if config.ebpf.enabled {
+                tracing::info!("initializing eBPF engine");
+                let engine_config = ironpost_ebpf_engine::EngineConfig::from_core(&config.ebpf);
+                let (engine, _packet_rx) = ironpost_ebpf_engine::EbpfEngine::builder()
+                    .config(engine_config)
+                    .event_sender(packet_tx.clone())
+                    .build()
+                    .map_err(|e| anyhow::anyhow!("failed to build eBPF engine: {}", e))?;
+                plugins.register(Box::new(engine))?;
             }
         }
         #[cfg(not(target_os = "linux"))]
@@ -112,38 +119,72 @@ impl Orchestrator {
         }
 
         // Initialize log pipeline
-        // On non-Linux, packet_rx will be None since eBPF is not available
-        #[cfg(target_os = "linux")]
-        let packet_rx_for_pipeline = Some(_packet_rx_for_ebpf);
-        #[cfg(not(target_os = "linux"))]
-        let packet_rx_for_pipeline = None;
+        if config.log_pipeline.enabled {
+            tracing::info!("initializing log pipeline");
+            let pipeline_config =
+                ironpost_log_pipeline::PipelineConfig::from_core(&config.log_pipeline);
 
-        if let Some(handle) =
-            crate::modules::log_pipeline::init(&config, packet_rx_for_pipeline, alert_tx.clone())?
-        {
-            modules.register(handle);
+            #[cfg(target_os = "linux")]
+            let builder = ironpost_log_pipeline::LogPipelineBuilder::new()
+                .config(pipeline_config)
+                .alert_sender(alert_tx.clone())
+                .packet_receiver(_packet_rx_for_ebpf);
+
+            #[cfg(not(target_os = "linux"))]
+            let builder = {
+                let (_, dummy_rx) = mpsc::channel(1);
+                ironpost_log_pipeline::LogPipelineBuilder::new()
+                    .config(pipeline_config)
+                    .alert_sender(alert_tx.clone())
+                    .packet_receiver(dummy_rx)
+            };
+
+            let (pipeline, _) = builder
+                .build()
+                .map_err(|e| anyhow::anyhow!("failed to build log pipeline: {}", e))?;
+            plugins.register(Box::new(pipeline))?;
         }
 
         // Initialize SBOM scanner
-        if let Some(handle) = crate::modules::sbom_scanner::init(&config, alert_tx.clone())? {
-            modules.register(handle);
+        if config.sbom.enabled {
+            tracing::info!("initializing SBOM scanner");
+            let scanner_config = ironpost_sbom_scanner::SbomScannerConfig::from_core(&config.sbom);
+            let (scanner, _) = ironpost_sbom_scanner::SbomScannerBuilder::new()
+                .config(scanner_config)
+                .alert_sender(alert_tx.clone())
+                .build()
+                .map_err(|e| anyhow::anyhow!("failed to build SBOM scanner: {}", e))?;
+            plugins.register(Box::new(scanner))?;
         }
 
         // Initialize container guard
-        if let Some((handle, rx)) = crate::modules::container_guard::init(&config, alert_rx)? {
-            modules.register(handle);
-            action_rx = Some(rx);
+        if config.container.enabled {
+            tracing::info!("initializing container guard");
+            let guard_config =
+                ironpost_container_guard::ContainerGuardConfig::from_core(&config.container);
+            let docker = std::sync::Arc::new(
+                ironpost_container_guard::BollardDockerClient::connect_local()?,
+            );
+            let (guard, rx) = ironpost_container_guard::ContainerGuardBuilder::new()
+                .config(guard_config)
+                .docker_client(docker)
+                .alert_receiver(alert_rx)
+                .build()
+                .map_err(|e| anyhow::anyhow!("failed to build container guard: {}", e))?;
+            plugins.register(Box::new(guard))?;
+            action_rx = rx;
+        } else {
+            // When container guard is disabled, spawn a task to drain alerts (prevents send errors)
+            tracing::debug!("container guard disabled, spawning alert drain task");
+            let shutdown_rx = shutdown_tx.subscribe();
+            tokio::spawn(drain_alerts(alert_rx, shutdown_rx));
         }
 
-        tracing::info!(
-            total_modules = modules.count(),
-            enabled_modules = modules.enabled_count(),
-            "orchestrator initialized"
-        );
+        tracing::info!(total_plugins = plugins.count(), "orchestrator initialized");
 
         Ok(Self {
             config,
-            modules,
+            plugins,
             shutdown_tx,
             start_time: Instant::now(),
             action_rx,
@@ -166,15 +207,35 @@ impl Orchestrator {
             write_pid_file(path)?;
         }
 
-        // Start all modules
-        tracing::info!("starting all enabled modules");
-        if let Err(e) = self.modules.start_all().await {
+        // Initialize and start all plugins
+        tracing::info!("initializing all plugins");
+        if let Err(e) = self.plugins.init_all().await {
+            tracing::error!(error = %e, "plugin initialization failed");
+            if !self.config.general.pid_file.is_empty() {
+                let path = Path::new(&self.config.general.pid_file);
+                remove_pid_file(path);
+            }
+            return Err(e.into());
+        }
+
+        tracing::info!("starting all plugins");
+        if let Err(e) = self.plugins.start_all().await {
+            // Rollback: stop any plugins that were successfully started
+            tracing::warn!("startup failed, rolling back already-started plugins");
+            if let Err(stop_err) = self.plugins.stop_all().await {
+                tracing::error!(
+                    startup_error = %e,
+                    rollback_error = %stop_err,
+                    "rollback also failed during startup failure cleanup"
+                );
+            }
+
             // Cleanup PID file on startup failure
             if !self.config.general.pid_file.is_empty() {
                 let path = Path::new(&self.config.general.pid_file);
                 remove_pid_file(path);
             }
-            return Err(e);
+            return Err(e.into());
         }
 
         // Spawn action logger task
@@ -211,24 +272,24 @@ impl Orchestrator {
         Ok(())
     }
 
-    /// Perform graceful shutdown of all modules.
+    /// Perform graceful shutdown of all plugins.
     ///
-    /// Stops modules in registration order (producers first, consumers last).
+    /// Stops plugins in registration order (producers first, consumers last).
     /// This allows consumers to drain remaining events from their channels.
     async fn shutdown(&mut self) -> Result<()> {
-        tracing::info!("stopping all modules");
-        self.modules.stop_all().await
+        tracing::info!("stopping all plugins");
+        self.plugins.stop_all().await.map_err(|e| e.into())
     }
 
     /// Get the current aggregated health status.
     #[allow(dead_code)] // Future health endpoint
     pub async fn health(&self) -> DaemonHealth {
-        let statuses = self.modules.health_statuses().await;
+        let statuses = self.plugins.health_check_all().await;
         let modules: Vec<ModuleHealth> = statuses
             .into_iter()
-            .map(|(name, enabled, status)| ModuleHealth {
+            .map(|(name, _plugin_state, status)| ModuleHealth {
                 name,
-                enabled,
+                enabled: true, // All registered plugins are enabled
                 status,
             })
             .collect();
@@ -275,6 +336,12 @@ async fn wait_for_shutdown_signal() -> Result<&'static str> {
 ///
 /// Used to prevent duplicate daemon instances.
 ///
+/// # Security
+///
+/// - Uses `create_new(true)` to atomically create file (prevents TOCTOU races)
+/// - Verifies the created file is a regular file (prevents symlink attacks)
+/// - Creates parent directory with restrictive permissions (0o700)
+///
 /// # Errors
 ///
 /// Returns an error if the PID file cannot be written.
@@ -282,9 +349,19 @@ fn write_pid_file(path: &Path) -> Result<()> {
     use std::fs::{self, OpenOptions};
     use std::io::{ErrorKind, Write};
 
-    // Create parent directory if it doesn't exist
+    // Create parent directory with restrictive permissions (0o700)
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            let mut builder = fs::DirBuilder::new();
+            builder.mode(0o700).recursive(true);
+            builder.create(parent)?;
+        }
+        #[cfg(not(unix))]
+        {
+            fs::create_dir_all(parent)?;
+        }
     }
 
     let pid = std::process::id();
@@ -304,6 +381,25 @@ fn write_pid_file(path: &Path) -> Result<()> {
         Err(e) => return Err(e.into()),
     };
 
+    // Verify the created file is a regular file (not a symlink or other special file)
+    let metadata = file.metadata()?;
+    if !metadata.is_file() {
+        // Remove the non-regular file and return error
+        let _ = fs::remove_file(path);
+        return Err(anyhow::anyhow!(
+            "PID file {} is not a regular file (possible symlink attack)",
+            path.display()
+        ));
+    }
+
+    // Set restrictive permissions on the PID file (0o600)
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let permissions = std::fs::Permissions::from_mode(0o600);
+        file.set_permissions(permissions)?;
+    }
+
     writeln!(file, "{}", pid)?;
 
     tracing::info!(pid = pid, path = %path.display(), "PID file written");
@@ -322,6 +418,41 @@ fn remove_pid_file(path: &Path) {
         );
     } else {
         tracing::info!(path = %path.display(), "PID file removed");
+    }
+}
+
+/// Drain alert events when container guard is disabled.
+///
+/// This prevents alert producers (log pipeline, SBOM scanner) from encountering
+/// send errors when the container guard is not running. Alerts are logged but
+/// not acted upon.
+async fn drain_alerts(
+    mut alert_rx: mpsc::Receiver<AlertEvent>,
+    mut shutdown_rx: broadcast::Receiver<()>,
+) {
+    loop {
+        tokio::select! {
+            alert_result = alert_rx.recv() => {
+                match alert_result {
+                    Some(alert) => {
+                        tracing::debug!(
+                            alert_id = %alert.id,
+                            alert_title = %alert.alert.title,
+                            severity = %alert.severity,
+                            "alert received but container guard disabled (alert dropped)"
+                        );
+                    }
+                    None => {
+                        tracing::debug!("alert channel closed, exiting drain task");
+                        break;
+                    }
+                }
+            }
+            _ = shutdown_rx.recv() => {
+                tracing::debug!("alert drain task shutting down");
+                break;
+            }
+        }
     }
 }
 

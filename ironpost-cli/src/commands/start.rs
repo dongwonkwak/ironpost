@@ -13,13 +13,9 @@ use crate::error::CliError;
 /// In foreground mode, spawns `ironpost-daemon` and replaces the current process.
 /// In daemon mode (`-d`), spawns `ironpost-daemon` as a detached background process.
 pub async fn execute(args: StartArgs, config_path: &Path) -> Result<(), CliError> {
-    // Validate config exists
-    if !config_path.exists() {
-        return Err(CliError::Config(format!(
-            "configuration file not found: {}",
-            config_path.display()
-        )));
-    }
+    // Note: We don't validate config file existence here to avoid TOCTOU race.
+    // Instead, let ironpost-daemon handle the config load and report any errors.
+    // This eliminates the window between exists() check and daemon spawn.
 
     info!(
         daemonize = args.daemonize,

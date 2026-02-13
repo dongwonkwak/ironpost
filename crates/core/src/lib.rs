@@ -4,6 +4,7 @@ pub mod config;
 pub mod error;
 pub mod event;
 pub mod pipeline;
+pub mod plugin;
 pub mod types;
 
 // --- 주요 타입 re-export ---
@@ -12,7 +13,7 @@ pub mod types;
 // 에러
 pub use error::{
     ConfigError, ContainerError, DetectionError, IronpostError, ParseError, PipelineError,
-    SbomError, StorageError,
+    PluginError, SbomError, StorageError,
 };
 
 // 설정
@@ -29,6 +30,9 @@ pub use event::{
 pub use pipeline::{
     BoxFuture, Detector, DynPipeline, HealthStatus, LogParser, Pipeline, PolicyEnforcer,
 };
+
+// 플러그인 시스템
+pub use plugin::{DynPlugin, Plugin, PluginInfo, PluginRegistry, PluginState, PluginType};
 
 // 도메인 타입
 pub use types::{Alert, ContainerInfo, LogEntry, PacketInfo, Severity, Vulnerability};

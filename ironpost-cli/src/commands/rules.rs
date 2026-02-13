@@ -43,15 +43,19 @@ async fn execute_list(
     status_filter: Option<String>,
     writer: &OutputWriter,
 ) -> Result<(), CliError> {
-    let _config = IronpostConfig::load(config_path).await?;
+    let config = IronpostConfig::load(config_path).await?;
 
-    // Default rules directory (hardcoded for now, should come from config in future)
-    let rules_dir = "/etc/ironpost/rules";
+    // Use data_dir as base for rules directory
+    // Rules are stored in {data_dir}/rules by convention
+    let rules_dir = std::path::Path::new(&config.general.data_dir).join("rules");
+    let rules_dir_str = rules_dir
+        .to_str()
+        .ok_or_else(|| CliError::Rule("rules directory path contains invalid UTF-8".to_string()))?;
 
-    info!(rules_dir, "loading detection rules");
+    info!(rules_dir = rules_dir_str, "loading detection rules");
 
     // Load rules from directory
-    let rules = RuleLoader::load_directory(rules_dir)
+    let rules = RuleLoader::load_directory(rules_dir_str)
         .await
         .map_err(|e| CliError::Rule(format!("failed to load rules: {}", e)))?;
 

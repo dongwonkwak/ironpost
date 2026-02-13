@@ -22,8 +22,9 @@ use tokio::sync::{Mutex, mpsc};
 use tracing::{debug, error, info, warn};
 
 use ironpost_core::error::IronpostError;
-use ironpost_core::event::{ActionEvent, AlertEvent};
+use ironpost_core::event::{ActionEvent, AlertEvent, MODULE_CONTAINER_GUARD};
 use ironpost_core::pipeline::{HealthStatus, Pipeline};
+use ironpost_core::plugin::{Plugin, PluginInfo, PluginState, PluginType};
 
 use crate::config::ContainerGuardConfig;
 use crate::docker::DockerClient;
@@ -58,9 +59,13 @@ enum GuardState {
 ///     .build()?;
 ///
 /// // Pipeline trait으로 시작
-/// guard.start().await?;
+/// Pipeline::start(&mut guard).await?;
 /// ```
 pub struct ContainerGuard<D: DockerClient> {
+    /// 플러그인 메타데이터
+    plugin_info: PluginInfo,
+    /// 플러그인 상태
+    plugin_state: PluginState,
     /// 가드 설정
     config: ContainerGuardConfig,
     /// 현재 상태
@@ -305,6 +310,52 @@ impl<D: DockerClient> Pipeline for ContainerGuard<D> {
     }
 }
 
+/// Plugin trait 구현
+///
+/// ContainerGuard를 플러그인 시스템에 통합하여
+/// PluginRegistry를 통한 생명주기 관리를 지원합니다.
+impl<D: DockerClient> Plugin for ContainerGuard<D> {
+    fn info(&self) -> &PluginInfo {
+        &self.plugin_info
+    }
+
+    fn state(&self) -> PluginState {
+        self.plugin_state
+    }
+
+    async fn init(&mut self) -> Result<(), IronpostError> {
+        // 현재는 별도 초기화 로직 없음
+        // 필요 시 정책 검증 등을 여기에 추가
+        self.plugin_state = PluginState::Initialized;
+        tracing::debug!(plugin = %self.plugin_info.name, "plugin initialized");
+        Ok(())
+    }
+
+    async fn start(&mut self) -> Result<(), IronpostError> {
+        let result = <Self as Pipeline>::start(self).await;
+        if result.is_ok() {
+            self.plugin_state = PluginState::Running;
+        } else {
+            self.plugin_state = PluginState::Failed;
+        }
+        result
+    }
+
+    async fn stop(&mut self) -> Result<(), IronpostError> {
+        let result = <Self as Pipeline>::stop(self).await;
+        if result.is_ok() {
+            self.plugin_state = PluginState::Stopped;
+        } else {
+            self.plugin_state = PluginState::Failed;
+        }
+        result
+    }
+
+    async fn health_check(&self) -> HealthStatus {
+        <Self as Pipeline>::health_check(self).await
+    }
+}
+
 /// 컨테이너 가드 빌더
 ///
 /// 가드를 구성하고 필요한 채널을 생성합니다.
@@ -376,6 +427,10 @@ impl<D: DockerClient> ContainerGuardBuilder<D> {
     /// - `ContainerGuard`: 가드 인스턴스
     /// - `Option<mpsc::Receiver<ActionEvent>>`: 액션 수신 채널
     ///   (외부 action_sender를 설정한 경우 None)
+    ///
+    /// # Errors
+    ///
+    /// 설정 검증 실패 또는 필수 필드(docker) 누락 시 에러를 반환합니다.
     pub fn build(
         self,
     ) -> Result<(ContainerGuard<D>, Option<mpsc::Receiver<ActionEvent>>), ContainerGuardError> {
@@ -407,7 +462,16 @@ impl<D: DockerClient> ContainerGuardBuilder<D> {
             cache_ttl,
         )));
 
+        let plugin_info = PluginInfo {
+            name: MODULE_CONTAINER_GUARD.to_owned(),
+            version: env!("CARGO_PKG_VERSION").to_owned(),
+            description: "Container isolation and security policy enforcement".to_owned(),
+            plugin_type: PluginType::Enforcer,
+        };
+
         let guard = ContainerGuard {
+            plugin_info,
+            plugin_state: PluginState::Created,
             config: self.config,
             state: GuardState::Initialized,
             docker,
@@ -503,13 +567,13 @@ mod tests {
     async fn guard_lifecycle_health_check() {
         let (guard, _) = make_builder().build().unwrap();
         // Before start
-        assert!(guard.health_check().await.is_unhealthy());
+        assert!(Pipeline::health_check(&guard).await.is_unhealthy());
     }
 
     #[tokio::test]
     async fn guard_double_stop_fails() {
         let (mut guard, _) = make_builder().build().unwrap();
-        let err = guard.stop().await;
+        let err = Pipeline::stop(&mut guard).await;
         assert!(err.is_err());
     }
 
@@ -548,19 +612,19 @@ mod tests {
             .unwrap();
 
         // Start should succeed
-        guard.start().await.unwrap();
+        Pipeline::start(&mut guard).await.unwrap();
         assert_eq!(guard.state_name(), "running");
 
         // Double start should fail
-        let err = guard.start().await;
+        let err = Pipeline::start(&mut guard).await;
         assert!(err.is_err());
 
         // Stop
-        guard.stop().await.unwrap();
+        Pipeline::stop(&mut guard).await.unwrap();
         assert_eq!(guard.state_name(), "stopped");
 
         // Restart after stop should fail with InitFailed (alert_rx consumed)
-        let err = guard.start().await;
+        let err = Pipeline::start(&mut guard).await;
         assert!(err.is_err());
         let err_msg = format!("{err:?}");
         assert!(err_msg.contains("alert receiver not available"));
@@ -579,7 +643,7 @@ mod tests {
             .unwrap();
 
         // Start without alert_rx should fail with InitFailed
-        let err = guard.start().await;
+        let err = Pipeline::start(&mut guard).await;
         assert!(err.is_err());
         let err_msg = format!("{err:?}");
         assert!(err_msg.contains("alert receiver not available"));
@@ -654,11 +718,11 @@ mod tests {
             .unwrap();
 
         // Should start successfully in degraded mode
-        let result = guard.start().await;
+        let result = Pipeline::start(&mut guard).await;
         assert!(result.is_ok());
         assert_eq!(guard.state_name(), "running");
 
-        guard.stop().await.unwrap();
+        Pipeline::stop(&mut guard).await.unwrap();
     }
 
     /// Test Guard with multiple policies of different priorities
@@ -750,7 +814,7 @@ mod tests {
 
         assert_eq!(guard.isolation_failures(), 0);
 
-        guard.start().await.unwrap();
+        Pipeline::start(&mut guard).await.unwrap();
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         // Send alert that will trigger isolation (which will fail)
@@ -774,7 +838,7 @@ mod tests {
         // isolation_failures should be incremented
         assert!(guard.isolation_failures() >= 1);
 
-        guard.stop().await.unwrap();
+        Pipeline::stop(&mut guard).await.unwrap();
     }
 
     /// Test state transitions: Initialized -> Running -> Stopped
@@ -793,19 +857,19 @@ mod tests {
         assert_eq!(guard.state_name(), "initialized");
 
         // Start
-        guard.start().await.unwrap();
+        Pipeline::start(&mut guard).await.unwrap();
         assert_eq!(guard.state_name(), "running");
 
         // Cannot start again
-        assert!(guard.start().await.is_err());
+        assert!(Pipeline::start(&mut guard).await.is_err());
         assert_eq!(guard.state_name(), "running");
 
         // Stop
-        guard.stop().await.unwrap();
+        Pipeline::stop(&mut guard).await.unwrap();
         assert_eq!(guard.state_name(), "stopped");
 
         // Cannot stop again
-        assert!(guard.stop().await.is_err());
+        assert!(Pipeline::stop(&mut guard).await.is_err());
         assert_eq!(guard.state_name(), "stopped");
     }
 }

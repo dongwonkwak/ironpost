@@ -4,11 +4,6 @@
 
 use ironpost_core::config::IronpostConfig;
 use std::env;
-use std::sync::Mutex;
-
-// Mutex to serialize tests that modify environment variables
-// This prevents race conditions when tests run in parallel
-static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 #[test]
 fn test_parse_full_config() {
@@ -162,9 +157,8 @@ batch_size = "not_a_number"
 }
 
 #[test]
+#[serial_test::serial]
 fn test_env_override_general_log_level() {
-    let _guard = ENV_LOCK.lock().expect("lock poisoned");
-
     // Given: A base config and environment variable
     let toml_str = r#"
 [general]
@@ -198,9 +192,8 @@ log_level = "info"
 }
 
 #[test]
+#[serial_test::serial]
 fn test_env_override_ebpf_interface() {
-    let _guard = ENV_LOCK.lock().expect("lock poisoned");
-
     // Given: Config with eBPF interface
     let toml_str = r#"
 [ebpf]
@@ -234,9 +227,8 @@ interface = "eth0"
 }
 
 #[test]
+#[serial_test::serial]
 fn test_env_override_takes_precedence_over_empty_toml() {
-    let _guard = ENV_LOCK.lock().expect("lock poisoned");
-
     // Given: Empty config and environment variable
     let toml_str = "";
 
@@ -266,9 +258,8 @@ fn test_env_override_takes_precedence_over_empty_toml() {
 }
 
 #[test]
+#[serial_test::serial]
 fn test_env_override_no_env_var_keeps_toml() {
-    let _guard = ENV_LOCK.lock().expect("lock poisoned");
-
     // Given: Config without corresponding env var
     let toml_str = r#"
 [general]

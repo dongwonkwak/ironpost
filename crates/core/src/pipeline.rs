@@ -43,6 +43,9 @@ pub trait Pipeline: Send + Sync {
     /// 모듈을 시작합니다.
     ///
     /// 리소스 초기화, 워커 스폰, 채널 연결 등을 수행합니다.
+    ///
+    /// # Errors
+    ///
     /// 이미 실행 중인 경우 `PipelineError::AlreadyRunning`을 반환합니다.
     fn start(&mut self) -> impl std::future::Future<Output = Result<(), IronpostError>> + Send;
 
@@ -50,6 +53,10 @@ pub trait Pipeline: Send + Sync {
     ///
     /// Graceful shutdown을 수행합니다.
     /// 진행 중인 작업을 완료하고 리소스를 정리합니다.
+    ///
+    /// # Errors
+    ///
+    /// 정지 과정에서 문제가 발생하면 에러를 반환합니다.
     fn stop(&mut self) -> impl std::future::Future<Output = Result<(), IronpostError>> + Send;
 
     /// 모듈의 현재 상태를 확인합니다.

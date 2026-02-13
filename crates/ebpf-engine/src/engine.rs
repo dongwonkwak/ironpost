@@ -33,8 +33,9 @@ use tokio::sync::mpsc;
 use tracing::info;
 
 use ironpost_core::error::{DetectionError, IronpostError, PipelineError};
-use ironpost_core::event::PacketEvent;
+use ironpost_core::event::{MODULE_EBPF, PacketEvent};
 use ironpost_core::pipeline::{HealthStatus, Pipeline};
+use ironpost_core::plugin::{Plugin, PluginInfo, PluginState, PluginType};
 
 use crate::config::{EngineConfig, FilterRule};
 use crate::detector::PacketDetector;
@@ -53,6 +54,10 @@ use crate::stats::TrafficStats;
 /// `aya::Ebpf` 핸들은 Linux에서만 사용 가능합니다.
 /// macOS/Windows에서는 start() 시 에러를 반환합니다.
 pub struct EbpfEngine {
+    /// 플러그인 메타데이터
+    plugin_info: PluginInfo,
+    /// 플러그인 상태
+    plugin_state: PluginState,
     config: EngineConfig,
     /// Linux에서만 사용되는 필드 (spawn_event_reader에서 사용)
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
@@ -130,6 +135,10 @@ impl EbpfEngineBuilder {
     /// # 에러
     /// - `PipelineError::InitFailed`: 필수 설정이 누락된 경우
     ///
+    /// # Errors
+    ///
+    /// 설정 누락 또는 channel_capacity가 0일 때 에러를 반환합니다.
+    ///
     /// # 참고
     /// 외부 채널을 사용한 경우 (`event_sender()`로 지정),
     /// 이벤트는 외부 채널의 수신자로만 전달됩니다.
@@ -157,7 +166,16 @@ impl EbpfEngineBuilder {
 
         let detector = Arc::new(self.detector.unwrap_or_default());
 
+        let plugin_info = PluginInfo {
+            name: MODULE_EBPF.to_owned(),
+            version: env!("CARGO_PKG_VERSION").to_owned(),
+            description: "eBPF-based network packet capture and anomaly detection".to_owned(),
+            plugin_type: PluginType::Detector,
+        };
+
         let engine = EbpfEngine {
+            plugin_info,
+            plugin_state: PluginState::Created,
             config,
             event_tx,
             running: false,
@@ -726,6 +744,51 @@ impl Pipeline for EbpfEngine {
     }
 }
 
+/// Plugin trait 구현
+///
+/// EbpfEngine을 플러그인 시스템에 통합하여
+/// PluginRegistry를 통한 생명주기 관리를 지원합니다.
+impl Plugin for EbpfEngine {
+    fn info(&self) -> &PluginInfo {
+        &self.plugin_info
+    }
+
+    fn state(&self) -> PluginState {
+        self.plugin_state
+    }
+
+    async fn init(&mut self) -> Result<(), IronpostError> {
+        // 현재는 별도 초기화 로직 없음
+        self.plugin_state = PluginState::Initialized;
+        tracing::debug!(plugin = %self.plugin_info.name, "plugin initialized");
+        Ok(())
+    }
+
+    async fn start(&mut self) -> Result<(), IronpostError> {
+        let result = <Self as Pipeline>::start(self).await;
+        if result.is_ok() {
+            self.plugin_state = PluginState::Running;
+        } else {
+            self.plugin_state = PluginState::Failed;
+        }
+        result
+    }
+
+    async fn stop(&mut self) -> Result<(), IronpostError> {
+        let result = <Self as Pipeline>::stop(self).await;
+        if result.is_ok() {
+            self.plugin_state = PluginState::Stopped;
+        } else {
+            self.plugin_state = PluginState::Failed;
+        }
+        result
+    }
+
+    async fn health_check(&self) -> HealthStatus {
+        <Self as Pipeline>::health_check(self).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -919,7 +982,7 @@ mod tests {
         let config = EngineConfig::default();
         let (mut engine, _rx) = EbpfEngine::builder().config(config).build().unwrap();
 
-        let result = engine.start().await;
+        let result = Pipeline::start(&mut engine).await;
         assert!(result.is_err());
 
         let err = result.unwrap_err();
@@ -931,7 +994,7 @@ mod tests {
         let config = EngineConfig::default();
         let (mut engine, _rx) = EbpfEngine::builder().config(config).build().unwrap();
 
-        let result = engine.stop().await;
+        let result = Pipeline::stop(&mut engine).await;
         assert!(result.is_err());
 
         let err = result.unwrap_err();
@@ -943,7 +1006,7 @@ mod tests {
         let config = EngineConfig::default();
         let (engine, _rx) = EbpfEngine::builder().config(config).build().unwrap();
 
-        let status = engine.health_check().await;
+        let status = Pipeline::health_check(&engine).await;
         match status {
             HealthStatus::Unhealthy(msg) => {
                 assert!(msg.contains("not running"));
@@ -968,7 +1031,7 @@ mod tests {
 
             let (mut engine, _rx) = EbpfEngine::builder().config(config).build().unwrap();
 
-            let result = engine.start().await;
+            let result = ironpost_core::Pipeline::start(&mut engine).await;
             assert!(result.is_err());
 
             let err = result.unwrap_err();
@@ -987,7 +1050,7 @@ mod tests {
             let config = EngineConfig::default();
             let (mut engine, _rx) = EbpfEngine::builder().config(config).build().unwrap();
 
-            let result = engine.start().await;
+            let result = ironpost_core::Pipeline::start(&mut engine).await;
             assert!(result.is_err());
 
             let err = result.unwrap_err();
@@ -1012,7 +1075,7 @@ mod tests {
             let (mut engine, _rx) = EbpfEngine::builder().config(config).build().unwrap();
 
             // start
-            let start_result = engine.start().await;
+            let start_result = ironpost_core::Pipeline::start(&mut engine).await;
             if start_result.is_err() {
                 // eBPF 바이너리가 없거나 권한 부족 시 스킵
                 tracing::warn!(error = ?start_result.unwrap_err(), "skipping test due to error");
@@ -1022,11 +1085,11 @@ mod tests {
             assert!(engine.running);
 
             // health check
-            let status = engine.health_check().await;
+            let status = ironpost_core::Pipeline::health_check(&engine).await;
             assert!(matches!(status, HealthStatus::Healthy));
 
             // stop
-            let stop_result = engine.stop().await;
+            let stop_result = ironpost_core::Pipeline::stop(&mut engine).await;
             assert!(stop_result.is_ok());
             assert!(!engine.running);
         }

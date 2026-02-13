@@ -58,6 +58,28 @@ impl IronpostConfig {
     /// 설정 로딩 순서:
     /// 1. TOML 파일 파싱
     /// 2. 환경변수 오버라이드 적용
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example() -> Result<(), ironpost_core::error::IronpostError> {
+    /// use ironpost_core::config::IronpostConfig;
+    ///
+    /// // 기본 설정 파일 로드
+    /// let config = IronpostConfig::load("ironpost.toml").await?;
+    ///
+    /// // 환경변수로 오버라이드 가능
+    /// // IRONPOST_EBPF_INTERFACE=eth0 ./ironpost
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// 다음의 경우 에러를 반환합니다:
+    /// - 파일이 존재하지 않을 때 ([`ConfigError::FileNotFound`])
+    /// - TOML 파싱 실패 시 ([`ConfigError::ParseFailed`])
+    /// - 설정 검증 실패 시 ([`ConfigError::InvalidValue`])
     pub async fn load(path: impl AsRef<Path>) -> Result<Self, IronpostError> {
         let mut config = Self::from_file(path).await?;
         config.apply_env_overrides();
@@ -66,6 +88,10 @@ impl IronpostConfig {
     }
 
     /// TOML 파일에서 설정을 로드합니다 (환경변수 오버라이드 없음).
+    ///
+    /// # Errors
+    ///
+    /// 파일이 존재하지 않거나 TOML 파싱에 실패하면 에러를 반환합니다.
     pub async fn from_file(path: impl AsRef<Path>) -> Result<Self, IronpostError> {
         let path = path.as_ref();
         let content = tokio::fs::read_to_string(path).await.map_err(|e| {
@@ -83,6 +109,10 @@ impl IronpostConfig {
     }
 
     /// TOML 문자열에서 설정을 파싱합니다.
+    ///
+    /// # Errors
+    ///
+    /// TOML 문법이 잘못되었거나 필드 타입이 맞지 않으면 에러를 반환합니다.
     pub fn parse(toml_str: &str) -> Result<Self, IronpostError> {
         toml::from_str(toml_str).map_err(|e| {
             IronpostError::Config(ConfigError::ParseFailed {
@@ -187,6 +217,10 @@ impl IronpostConfig {
     }
 
     /// 설정값의 유효성을 검증합니다.
+    ///
+    /// # Errors
+    ///
+    /// 설정값이 유효하지 않을 때 [`ConfigError::InvalidValue`]를 반환합니다.
     pub fn validate(&self) -> Result<(), IronpostError> {
         // log_level 검증
         let valid_levels = ["trace", "debug", "info", "warn", "error"];
@@ -804,6 +838,7 @@ output_format = "spdx"
         unsafe { std::env::set_var("TEST_IRONPOST_STR", "overridden") };
         override_string(&mut val, "TEST_IRONPOST_STR");
         assert_eq!(val, "overridden");
+        // SAFETY: 테스트는 단일 스레드에서 실행되므로 환경변수 조작이 안전합니다.
         unsafe { std::env::remove_var("TEST_IRONPOST_STR") };
     }
 
@@ -814,6 +849,7 @@ output_format = "spdx"
         unsafe { std::env::set_var("TEST_IRONPOST_BOOL", "true") };
         override_bool(&mut val, "TEST_IRONPOST_BOOL");
         assert!(val);
+        // SAFETY: 테스트는 단일 스레드에서 실행되므로 환경변수 조작이 안전합니다.
         unsafe { std::env::remove_var("TEST_IRONPOST_BOOL") };
     }
 
@@ -824,6 +860,7 @@ output_format = "spdx"
         unsafe { std::env::set_var("TEST_IRONPOST_BOOL_BAD", "not-a-bool") };
         override_bool(&mut val, "TEST_IRONPOST_BOOL_BAD");
         assert!(!val); // 원래 값 유지
+        // SAFETY: 테스트는 단일 스레드에서 실행되므로 환경변수 조작이 안전합니다.
         unsafe { std::env::remove_var("TEST_IRONPOST_BOOL_BAD") };
     }
 
@@ -834,6 +871,7 @@ output_format = "spdx"
         unsafe { std::env::set_var("TEST_IRONPOST_CSV", "x, y, z") };
         override_csv(&mut val, "TEST_IRONPOST_CSV");
         assert_eq!(val, vec!["x", "y", "z"]);
+        // SAFETY: 테스트는 단일 스레드에서 실행되므로 환경변수 조작이 안전합니다.
         unsafe { std::env::remove_var("TEST_IRONPOST_CSV") };
     }
 

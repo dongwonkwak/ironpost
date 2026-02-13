@@ -191,7 +191,7 @@ inside create_temp_cargo_lock() at line 41. The inner import is redundant.
 
 ---
 
-### M2: Weak Assertion in test_e2e_batch_size_too_large
+### M2: Weak Assertion in test_e2e_batch_size_too_large ✅ ACCEPTABLE
 
 **Location**: ironpost-daemon/tests/e2e/scenarios/config_error.rs lines 180-199
 
@@ -212,6 +212,8 @@ behaviors. If no upper bound is intended, the test should explicitly assert is_o
 **Recommendation**: Pick one expected outcome and assert it. If there is no upper
 bound, assert is_ok() and document that explicitly.
 
+**✅ Status (T8.2)**: Re-reviewed the current code. The test at lines 180-197 DOES assert is_err() and checks the error message. This appears to be a review artifact from an earlier version. Current test is correctly validating that unreasonably large values are rejected. No change needed.
+
 ---
 
 ### M3: tokio::test Without Global Timeout
@@ -227,9 +229,11 @@ hang indefinitely.
 **Recommendation**: Consider adding a global timeout to async tests, especially
 for the lifecycle and shutdown scenarios that involve mock delays.
 
+**Status (T8.2)**: Acknowledged but not implemented. Individual test operations already have timeouts. Adding per-test timeouts would be defensive but is not critical given the existing timeout infrastructure. Can be addressed in future hardening if test hangs become an issue.
+
 ---
 
-### M4: security Job Uses continue-on-error: true
+### M4: security Job Uses continue-on-error: true ✅ FIXED
 
 **Location**: .github/workflows/ci.yml line 69
 
@@ -244,9 +248,11 @@ denyWarnings: false allowlist for known/accepted advisories, or at minimum add
 a comment explaining the rationale. Alternatively, use a separate required check
 for security that blocks merges.
 
+**✅ Fix Applied (T8.2)**: Added comprehensive WARNING comment explaining why continue-on-error is true, where security findings are visible (job output, annotations, Dependabot), and how to make the job required with an allowlist. Comment now provides clear guidance for production security posture.
+
 ---
 
-### M5: Hardcoded Database Credentials in Demo Config
+### M5: Hardcoded Database Credentials in Demo Config ✅ FIXED
 
 **Location**: docker/demo/ironpost-demo.toml line 46
 
@@ -264,6 +270,8 @@ credential is exposed.
 **Recommendation**: Add a prominent WARNING comment about changing credentials before
 production use, or switch the demo config to use environment variable expansion (if
 the config loader supports it).
+
+**✅ Fix Applied (T8.2)**: Changed password to "CHANGE_THIS_PASSWORD" with prominent WARNING comment explaining these are DEMO credentials only and should be overridden via environment variables (IRONPOST_LOG_PIPELINE_POSTGRES_URL, IRONPOST_LOG_PIPELINE_REDIS_URL) in production.
 
 ---
 
@@ -336,7 +344,7 @@ relative to the build context. The rule is not harmful but is misleading.
 
 ---
 
-### L6: Shell Scripts May Not Be Marked Executable
+### L6: Shell Scripts May Not Be Marked Executable ✅ VERIFIED
 
 **Location**: docker/demo/generate-logs.sh, docker/demo/simulate-attack.sh
 
@@ -345,6 +353,8 @@ demo runs them via sh -c inline commands rather than executing the scripts
 directly. If a user tries to run them standalone, they may need chmod +x first.
 
 **Recommendation**: Ensure scripts have executable permissions in git.
+
+**✅ Status (T8.2)**: Verified both scripts have executable permissions (755). No action needed.
 
 ---
 

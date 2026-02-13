@@ -3,6 +3,7 @@
 **Unified security monitoring platform built in Rust — eBPF network detection, log analysis, container isolation, and SBOM vulnerability scanning.**
 
 [![CI](https://github.com/dongwonkwak/ironpost/actions/workflows/ci.yml/badge.svg)](https://github.com/dongwonkwak/ironpost/actions/workflows/ci.yml)
+[![Documentation](https://img.shields.io/badge/docs-github.io-blue)](https://dongwonkwak.github.io/ironpost/)
 [![Rust Version](https://img.shields.io/badge/rust-1.93%2B-orange)](https://www.rust-lang.org)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Tests](https://img.shields.io/badge/tests-1063%20passing-success)](.)
@@ -632,7 +633,9 @@ cargo doc --workspace --no-deps
 
 ## Status
 
-**Current Phase:** Phase 6 (Integration & Stress Testing)
+**Current Phase:** Phase 8 (Final Release & Plugin Architecture)
+
+- Phase 8 code review: `.reviews/phase-8-codex-review.md`
 
 | Module | Status | Coverage | Notes |
 |--------|--------|----------|-------|
