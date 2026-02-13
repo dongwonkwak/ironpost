@@ -44,6 +44,11 @@ cargo doc --workspace --no-deps   # 문서 생성 검증
 Linux 전용 런타임 코드는 `#[cfg(target_os = "linux")]`로 조건부 컴파일됩니다.
 `--exclude` 플래그는 사용하지 않습니다.
 
+## CI/CD
+- **지침 문서**: CI/CD 관련 작업은 `.knowledge/ci-guidelines.md` 참조 (필수)
+- **플랫폼**: 모든 워크플로우는 ubuntu-latest에서만 실행 (macOS/Windows 금지)
+- **워크플로우**: `.github/workflows/ci.yml` — fmt, clippy, test, doc, security, ebpf-build
+
 ## 금지 사항
 - `unwrap()` — 테스트 코드 제외, 프로덕션 코드에서 사용 금지
 - `println!()` / `eprintln!()` — `tracing` 매크로 사용
