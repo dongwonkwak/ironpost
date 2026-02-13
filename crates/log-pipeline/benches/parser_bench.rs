@@ -2,7 +2,7 @@
 //!
 //! Syslog RFC5424, RFC3164, JSON 파서의 처리량을 측정합니다.
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use ironpost_core::pipeline::LogParser;
 use ironpost_log_pipeline::parser::{JsonLogParser, SyslogParser};
 
@@ -33,16 +33,12 @@ fn bench_syslog_rfc5424(c: &mut Criterion) {
     // 짧은 메시지
     group.throughput(Throughput::Elements(1));
     group.bench_function("short", |b| {
-        b.iter(|| {
-            parser.parse(black_box(SYSLOG_5424_SHORT)).unwrap()
-        })
+        b.iter(|| parser.parse(black_box(SYSLOG_5424_SHORT)).unwrap())
     });
 
     // 긴 메시지
     group.bench_function("long_with_structured_data", |b| {
-        b.iter(|| {
-            parser.parse(black_box(SYSLOG_5424_LONG)).unwrap()
-        })
+        b.iter(|| parser.parse(black_box(SYSLOG_5424_LONG)).unwrap())
     });
 
     // 1000건 반복 처리량
@@ -66,16 +62,12 @@ fn bench_syslog_rfc3164(c: &mut Criterion) {
     // 짧은 메시지
     group.throughput(Throughput::Elements(1));
     group.bench_function("short", |b| {
-        b.iter(|| {
-            parser.parse(black_box(SYSLOG_3164_SHORT)).unwrap()
-        })
+        b.iter(|| parser.parse(black_box(SYSLOG_3164_SHORT)).unwrap())
     });
 
     // 긴 메시지
     group.bench_function("long", |b| {
-        b.iter(|| {
-            parser.parse(black_box(SYSLOG_3164_LONG)).unwrap()
-        })
+        b.iter(|| parser.parse(black_box(SYSLOG_3164_LONG)).unwrap())
     });
 
     // 1000건 반복 처리량
@@ -99,16 +91,12 @@ fn bench_json_parser(c: &mut Criterion) {
     // 짧은 메시지
     group.throughput(Throughput::Elements(1));
     group.bench_function("short", |b| {
-        b.iter(|| {
-            parser.parse(black_box(JSON_SHORT)).unwrap()
-        })
+        b.iter(|| parser.parse(black_box(JSON_SHORT)).unwrap())
     });
 
     // 긴 메시지 (중첩 객체)
     group.bench_function("long_nested", |b| {
-        b.iter(|| {
-            parser.parse(black_box(JSON_LONG)).unwrap()
-        })
+        b.iter(|| parser.parse(black_box(JSON_LONG)).unwrap())
     });
 
     // 1000건 반복 처리량

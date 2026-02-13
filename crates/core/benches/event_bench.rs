@@ -2,10 +2,10 @@
 //!
 //! Event 생성, 직렬화, 채널 통신 성능을 측정합니다.
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
-use ironpost_core::event::{AlertEvent, LogEvent, PacketEvent, ActionEvent, EventMetadata};
-use ironpost_core::types::{Alert, LogEntry, PacketInfo, Severity};
 use bytes::Bytes;
+use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
+use ironpost_core::event::{ActionEvent, AlertEvent, EventMetadata, LogEvent, PacketEvent};
+use ironpost_core::types::{Alert, LogEntry, PacketInfo, Severity};
 use std::net::IpAddr;
 use std::time::SystemTime;
 
@@ -30,7 +30,10 @@ fn create_log_entry() -> LogEntry {
         message: "GET /api/v1/users HTTP/1.1 200 OK".to_owned(),
         severity: Severity::Info,
         fields: vec![
-            ("request_id".to_owned(), "550e8400-e29b-41d4-a716-446655440000".to_owned()),
+            (
+                "request_id".to_owned(),
+                "550e8400-e29b-41d4-a716-446655440000".to_owned(),
+            ),
             ("duration_ms".to_owned(), "125".to_owned()),
             ("status".to_owned(), "200".to_owned()),
         ],
@@ -60,9 +63,7 @@ fn bench_event_creation(c: &mut Criterion) {
     group.throughput(Throughput::Elements(1));
 
     group.bench_function("packet_event_new", |b| {
-        b.iter(|| {
-            PacketEvent::new(black_box(packet_info.clone()), black_box(raw_data.clone()))
-        })
+        b.iter(|| PacketEvent::new(black_box(packet_info.clone()), black_box(raw_data.clone())))
     });
 
     group.bench_function("packet_event_with_trace", |b| {
@@ -76,15 +77,11 @@ fn bench_event_creation(c: &mut Criterion) {
     });
 
     group.bench_function("log_event_new", |b| {
-        b.iter(|| {
-            LogEvent::new(black_box(log_entry.clone()))
-        })
+        b.iter(|| LogEvent::new(black_box(log_entry.clone())))
     });
 
     group.bench_function("alert_event_new", |b| {
-        b.iter(|| {
-            AlertEvent::new(black_box(alert.clone()), black_box(Severity::High))
-        })
+        b.iter(|| AlertEvent::new(black_box(alert.clone()), black_box(Severity::High)))
     });
 
     group.bench_function("action_event_new", |b| {
@@ -105,15 +102,11 @@ fn bench_event_metadata(c: &mut Criterion) {
     group.throughput(Throughput::Elements(1));
 
     group.bench_function("metadata_new", |b| {
-        b.iter(|| {
-            EventMetadata::new(black_box("test-module"), black_box("trace-12345"))
-        })
+        b.iter(|| EventMetadata::new(black_box("test-module"), black_box("trace-12345")))
     });
 
     group.bench_function("metadata_with_new_trace", |b| {
-        b.iter(|| {
-            EventMetadata::with_new_trace(black_box("test-module"))
-        })
+        b.iter(|| EventMetadata::with_new_trace(black_box("test-module")))
     });
 
     group.bench_function("metadata_display", |b| {
@@ -136,23 +129,17 @@ fn bench_event_serialization(c: &mut Criterion) {
 
     // LogEntry 직렬화 (serde를 통한)
     group.bench_function("log_entry_to_json", |b| {
-        b.iter(|| {
-            serde_json::to_string(black_box(&log_entry)).unwrap()
-        })
+        b.iter(|| serde_json::to_string(black_box(&log_entry)).unwrap())
     });
 
     // Alert 직렬화
     group.bench_function("alert_to_json", |b| {
-        b.iter(|| {
-            serde_json::to_string(black_box(&alert)).unwrap()
-        })
+        b.iter(|| serde_json::to_string(black_box(&alert)).unwrap())
     });
 
     // PacketInfo 직렬화
     group.bench_function("packet_info_to_json", |b| {
-        b.iter(|| {
-            serde_json::to_string(black_box(&packet_event.packet_info)).unwrap()
-        })
+        b.iter(|| serde_json::to_string(black_box(&packet_event.packet_info)).unwrap())
     });
 
     group.finish();
@@ -359,15 +346,11 @@ fn bench_log_entry_field_variations(c: &mut Criterion) {
     };
 
     group.bench_function("serialize_no_fields", |b| {
-        b.iter(|| {
-            serde_json::to_string(black_box(&no_fields)).unwrap()
-        })
+        b.iter(|| serde_json::to_string(black_box(&no_fields)).unwrap())
     });
 
     group.bench_function("serialize_10_fields", |b| {
-        b.iter(|| {
-            serde_json::to_string(black_box(&many_fields)).unwrap()
-        })
+        b.iter(|| serde_json::to_string(black_box(&many_fields)).unwrap())
     });
 
     group.bench_function("clone_no_fields", |b| {

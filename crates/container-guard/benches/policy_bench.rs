@@ -2,9 +2,9 @@
 //!
 //! 정책 평가, glob 매칭, 컨테이너 캐시 성능을 측정합니다.
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use ironpost_container_guard::policy::{PolicyEngine, SecurityPolicy, TargetFilter};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use ironpost_container_guard::isolation::IsolationAction;
+use ironpost_container_guard::policy::{PolicyEngine, SecurityPolicy, TargetFilter};
 use ironpost_core::event::AlertEvent;
 use ironpost_core::types::{Alert, ContainerInfo, Severity};
 use std::time::SystemTime;
@@ -78,9 +78,7 @@ fn bench_single_policy_evaluation(c: &mut Criterion) {
     group.throughput(Throughput::Elements(1));
 
     group.bench_function("evaluate", |b| {
-        b.iter(|| {
-            engine.evaluate(black_box(&alert), black_box(&container))
-        })
+        b.iter(|| engine.evaluate(black_box(&alert), black_box(&container)))
     });
 
     group.finish();
@@ -110,11 +108,7 @@ fn bench_policy_scaling(c: &mut Criterion) {
         group.bench_with_input(
             BenchmarkId::from_parameter(policy_count),
             policy_count,
-            |b, _| {
-                b.iter(|| {
-                    engine.evaluate(black_box(&alert), black_box(&container))
-                })
-            },
+            |b, _| b.iter(|| engine.evaluate(black_box(&alert), black_box(&container))),
         );
     }
 
@@ -134,9 +128,7 @@ fn bench_glob_matching(c: &mut Criterion) {
     let container = create_container("web-server-01", "nginx:latest");
 
     group.bench_function("simple_wildcard", |b| {
-        b.iter(|| {
-            filter_simple.matches(black_box(&container))
-        })
+        b.iter(|| filter_simple.matches(black_box(&container)))
     });
 
     // 복잡한 패턴
@@ -148,9 +140,7 @@ fn bench_glob_matching(c: &mut Criterion) {
     let container_complex = create_container("web-app-prod-01", "nginx:1.25-alpine");
 
     group.bench_function("complex_pattern", |b| {
-        b.iter(|| {
-            filter_complex.matches(black_box(&container_complex))
-        })
+        b.iter(|| filter_complex.matches(black_box(&container_complex)))
     });
 
     // 여러 패턴 OR
@@ -170,9 +160,7 @@ fn bench_glob_matching(c: &mut Criterion) {
     };
 
     group.bench_function("multiple_patterns", |b| {
-        b.iter(|| {
-            filter_multi.matches(black_box(&container))
-        })
+        b.iter(|| filter_multi.matches(black_box(&container)))
     });
 
     group.finish();
@@ -234,11 +222,7 @@ fn bench_severity_filtering(c: &mut Criterion) {
         group.bench_with_input(
             BenchmarkId::from_parameter(format!("{:?}", severity)),
             severity,
-            |b, _| {
-                b.iter(|| {
-                    engine.evaluate(black_box(&alert), black_box(&container))
-                })
-            },
+            |b, _| b.iter(|| engine.evaluate(black_box(&alert), black_box(&container))),
         );
     }
 
@@ -259,9 +243,7 @@ fn bench_container_name_variations(c: &mut Criterion) {
     // 짧은 이름
     let short = create_container("web-1", "nginx:latest");
     group.bench_function("short_name", |b| {
-        b.iter(|| {
-            engine.evaluate(black_box(&alert), black_box(&short))
-        })
+        b.iter(|| engine.evaluate(black_box(&alert), black_box(&short)))
     });
 
     // 긴 이름
@@ -270,17 +252,13 @@ fn bench_container_name_variations(c: &mut Criterion) {
         "nginx:latest",
     );
     group.bench_function("long_name", |b| {
-        b.iter(|| {
-            engine.evaluate(black_box(&alert), black_box(&long))
-        })
+        b.iter(|| engine.evaluate(black_box(&alert), black_box(&long)))
     });
 
     // 매칭 실패 (앞부분 불일치)
     let mismatch = create_container("api-server", "nginx:latest");
     group.bench_function("mismatch", |b| {
-        b.iter(|| {
-            engine.evaluate(black_box(&alert), black_box(&mismatch))
-        })
+        b.iter(|| engine.evaluate(black_box(&alert), black_box(&mismatch)))
     });
 
     group.finish();

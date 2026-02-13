@@ -2,7 +2,7 @@
 //!
 //! 단일/다중 룰 매칭 성능과 스케일링을 측정합니다.
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use ironpost_core::types::{LogEntry, Severity};
 use ironpost_log_pipeline::rule::matcher::RuleMatcher;
 use ironpost_log_pipeline::rule::types::{
@@ -130,7 +130,9 @@ fn bench_single_rule_match(c: &mut Criterion) {
 
     group.bench_function("exact_match", |b| {
         b.iter(|| {
-            matcher.matches(black_box(&rule), black_box(&entry)).unwrap()
+            matcher
+                .matches(black_box(&rule), black_box(&entry))
+                .unwrap()
         })
     });
 
@@ -149,7 +151,9 @@ fn bench_regex_rule_match(c: &mut Criterion) {
 
     group.bench_function("regex_match", |b| {
         b.iter(|| {
-            matcher.matches(black_box(&rule), black_box(&entry)).unwrap()
+            matcher
+                .matches(black_box(&rule), black_box(&entry))
+                .unwrap()
         })
     });
 
@@ -168,7 +172,9 @@ fn bench_complex_rule_match(c: &mut Criterion) {
 
     group.bench_function("multi_condition", |b| {
         b.iter(|| {
-            matcher.matches(black_box(&rule), black_box(&entry)).unwrap()
+            matcher
+                .matches(black_box(&rule), black_box(&entry))
+                .unwrap()
         })
     });
 
@@ -225,7 +231,9 @@ fn bench_threshold_rule(c: &mut Criterion) {
 
     group.bench_function("threshold_evaluation", |b| {
         b.iter(|| {
-            matcher.matches(black_box(&rule), black_box(&entry)).unwrap()
+            matcher
+                .matches(black_box(&rule), black_box(&entry))
+                .unwrap()
         })
     });
 
@@ -246,7 +254,10 @@ fn bench_rule_compilation(c: &mut Criterion) {
     group.bench_function("compile_regex", |b| {
         b.iter(|| {
             let mut matcher = RuleMatcher::new();
-            let rule = create_regex_rule("compile-test", r"Failed.*password.*from.*\d+\.\d+\.\d+\.\d+");
+            let rule = create_regex_rule(
+                "compile-test",
+                r"Failed.*password.*from.*\d+\.\d+\.\d+\.\d+",
+            );
             matcher.compile_rule(black_box(&rule)).unwrap();
         })
     });

@@ -2,12 +2,12 @@
 //!
 //! Cargo.lock 파싱, SBOM 생성, CVE 매칭 성능을 측정합니다.
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use ironpost_sbom_scanner::{CargoLockParser, LockfileParser};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use ironpost_core::types::Severity;
 use ironpost_sbom_scanner::sbom::cyclonedx;
 use ironpost_sbom_scanner::types::Ecosystem;
-use ironpost_sbom_scanner::vuln::db::{VulnDb, VulnDbEntry, VersionRange};
-use ironpost_core::types::Severity;
+use ironpost_sbom_scanner::vuln::db::{VersionRange, VulnDb, VulnDbEntry};
+use ironpost_sbom_scanner::{CargoLockParser, LockfileParser};
 
 /// 소규모 Cargo.lock (10개 패키지)
 const SMALL_CARGO_LOCK: &str = r#"
@@ -119,9 +119,7 @@ fn bench_cargo_lock_parsing(c: &mut Criterion) {
     let large_100 = generate_large_cargo_lock(100);
     group.throughput(Throughput::Elements(100));
     group.bench_function("large_100_packages", |b| {
-        b.iter(|| {
-            parser.parse(black_box(&large_100), "Cargo.lock").unwrap()
-        })
+        b.iter(|| parser.parse(black_box(&large_100), "Cargo.lock").unwrap())
     });
 
     group.finish();
@@ -139,17 +137,13 @@ fn bench_sbom_generation(c: &mut Criterion) {
     // CycloneDX 생성 - 소규모
     group.throughput(Throughput::Elements(10));
     group.bench_function("cyclonedx_small_10", |b| {
-        b.iter(|| {
-            cyclonedx::generate(black_box(&small_graph)).unwrap()
-        })
+        b.iter(|| cyclonedx::generate(black_box(&small_graph)).unwrap())
     });
 
     // CycloneDX 생성 - 대규모
     group.throughput(Throughput::Elements(100));
     group.bench_function("cyclonedx_large_100", |b| {
-        b.iter(|| {
-            cyclonedx::generate(black_box(&large_100_graph)).unwrap()
-        })
+        b.iter(|| cyclonedx::generate(black_box(&large_100_graph)).unwrap())
     });
 
     group.finish();
@@ -181,9 +175,7 @@ fn bench_vuln_db_lookup(c: &mut Criterion) {
     // 단일 패키지 조회 (10개 CVE 반환)
     group.throughput(Throughput::Elements(1));
     group.bench_function("single_package_lookup", |b| {
-        b.iter(|| {
-            db.lookup(black_box("package-0"), black_box(&Ecosystem::Cargo))
-        })
+        b.iter(|| db.lookup(black_box("package-0"), black_box(&Ecosystem::Cargo)))
     });
 
     // 100개 패키지 일괄 조회
@@ -202,9 +194,7 @@ fn bench_vuln_db_lookup(c: &mut Criterion) {
     // 존재하지 않는 패키지 조회 (miss)
     group.throughput(Throughput::Elements(1));
     group.bench_function("miss_lookup", |b| {
-        b.iter(|| {
-            db.lookup(black_box("nonexistent-pkg"), black_box(&Ecosystem::Cargo))
-        })
+        b.iter(|| db.lookup(black_box("nonexistent-pkg"), black_box(&Ecosystem::Cargo)))
     });
 
     group.finish();
@@ -238,9 +228,7 @@ fn bench_vuln_db_creation(c: &mut Criterion) {
     group.throughput(Throughput::Elements(1000));
 
     group.bench_function("from_json_1000_entries", |b| {
-        b.iter(|| {
-            VulnDb::from_json(black_box(&json)).unwrap()
-        })
+        b.iter(|| VulnDb::from_json(black_box(&json)).unwrap())
     });
 
     group.finish();
@@ -304,9 +292,7 @@ fn bench_package_graph_scaling(c: &mut Criterion) {
         let lockfile = generate_large_cargo_lock(*size);
         group.throughput(Throughput::Elements(*size as u64));
         group.bench_with_input(BenchmarkId::from_parameter(size), size, |b, _| {
-            b.iter(|| {
-                parser.parse(black_box(&lockfile), "Cargo.lock").unwrap()
-            })
+            b.iter(|| parser.parse(black_box(&lockfile), "Cargo.lock").unwrap())
         });
     }
 
