@@ -207,7 +207,7 @@ To enable all modules, update the configuration:
 log_level = "info"
 log_format = "json"
 data_dir = "/var/lib/ironpost"
-pid_file = "/var/run/ironpost.pid"
+pid_file = "/var/run/ironpost/ironpost.pid"
 
 [ebpf]
 enabled = true                # Requires Linux 5.7+, CAP_BPF or root

@@ -8,7 +8,7 @@ log_format = "json"
 # 데이터 디렉토리
 data_dir = "/var/lib/ironpost"
 # PID 파일
-pid_file = "/var/run/ironpost.pid"
+pid_file = "/var/run/ironpost/ironpost.pid"
 
 [ebpf]
 # 활성화 여부

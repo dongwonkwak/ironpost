@@ -647,7 +647,7 @@ mechanisms:
 | Mechanism | Subcommand | Description |
 |-----------|-----------|-------------|
 | Direct library call | `scan`, `rules`, `config` | Import crate, instantiate, call pub API |
-| PID file check | `status` | Read `/var/run/ironpost.pid`, check if process alive |
+| PID file check | `status` | Read `/var/run/ironpost/ironpost.pid`, check if process alive |
 | Process spawn | `start -d` | `std::process::Command::new("ironpost-daemon")` |
 | Foreground exec | `start` | Load config, build `Orchestrator`, call `run()` |
 

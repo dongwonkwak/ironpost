@@ -21,7 +21,7 @@ fn example_config_parses_successfully() {
     assert_eq!(config.general.log_level, "info");
     assert_eq!(config.general.log_format, "json");
     assert_eq!(config.general.data_dir, "/var/lib/ironpost");
-    assert_eq!(config.general.pid_file, "/var/run/ironpost.pid");
+    assert_eq!(config.general.pid_file, "/var/run/ironpost/ironpost.pid");
 }
 
 #[test]

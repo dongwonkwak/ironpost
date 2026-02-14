@@ -73,7 +73,7 @@ services:
       IRONPOST_GENERAL_LOG_LEVEL: ${IRONPOST_LOG_LEVEL:-info}
       IRONPOST_GENERAL_LOG_FORMAT: ${IRONPOST_LOG_FORMAT:-json}
       IRONPOST_GENERAL_DATA_DIR: /var/lib/ironpost
-      IRONPOST_GENERAL_PID_FILE: /var/run/ironpost.pid
+      IRONPOST_GENERAL_PID_FILE: /var/run/ironpost/ironpost.pid
 
       # eBPF engine (Linux only)
       IRONPOST_EBPF_ENABLED: ${IRONPOST_EBPF_ENABLED:-false}
@@ -119,7 +119,7 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "ironpost-cli", "status", "--output", "json"]
+      test: ["CMD", "ironpost-cli", "--config", "/etc/ironpost/ironpost.toml", "status", "--output", "json"]
       interval: 30s
       timeout: 10s
       retries: 3
