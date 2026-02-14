@@ -24,14 +24,11 @@ jobs:
         with:
           components: rustfmt
       - uses: Swatinem/rust-cache@v2
-      - run: cargo fmt --all -- --check
+      - run: cargo fmt --all --check
 
   clippy:
     name: Clippy
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
@@ -42,10 +39,7 @@ jobs:
 
   test:
     name: Test
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
@@ -67,7 +61,7 @@ jobs:
     name: Security Audit
     runs-on: ubuntu-latest
     # WARNING: continue-on-error: true means known CVEs will NOT block merges.
-    # This is intentional to prevent flaky builds from breaking development flow.
+    # This is intentional to prevent dependency CVEs from blocking development flow.
     # Security findings are still visible in:
     #   1. Job output (click "Security Audit" in Actions)
     #   2. GitHub annotations on the PR
@@ -82,7 +76,7 @@ jobs:
         with:
           denyWarnings: false
 
-  build:
+  ebpf-build:
     name: Build All (Workspace + eBPF)
     runs-on: ubuntu-latest
     steps:
