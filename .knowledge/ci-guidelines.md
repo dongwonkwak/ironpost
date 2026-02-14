@@ -40,6 +40,11 @@
 #### security
 - cargo audit를 통한 의존성 취약점 검사
 - `denyWarnings: false` — CVE만 검출, cargo 버전 경고 무시
+- **예외**: `continue-on-error: true` 설정
+  - 이유: 의존성 CVE는 즉시 수정이 불가능한 경우가 많아 개발 플로우를 차단하지 않기 위함
+  - 보안 결과는 여전히 가시적: Job 출력, PR 어노테이션, Dependabot 알림
+  - 프로덕션 배포 전 수동 검토 필수
+  - 필수 job으로 만들려면: `continue-on-error: false` + `.cargo/audit.toml`에 허용 목록 유지 관리
 
 #### ebpf-build
 - eBPF 커널 공간 바이너리 빌드
@@ -72,7 +77,7 @@ concurrency:
 
 - ❌ macOS/Windows 러너 추가 금지
 - ❌ 플랫폼별 matrix 사용 금지 (ubuntu-latest만 사용)
-- ❌ `continue-on-error: true` 사용 금지 (모든 job이 필수)
+- ❌ `continue-on-error: true` 사용 금지 (security job 제외 - 위 설명 참조)
 - ❌ 불필요한 중복 job 금지
 - ❌ 캐싱 없이 job 생성 금지
 
@@ -84,4 +89,4 @@ concurrency:
 - [ ] `RUSTFLAGS: "-D warnings"`가 workflow 레벨에서 설정되었는가?
 - [ ] concurrency 그룹이 설정되었는가?
 - [ ] 각 job이 올바른 toolchain을 사용하는가? (ebpf-build만 nightly)
-- [ ] 불필요한 continue-on-error가 없는가?
+- [ ] security job을 제외한 모든 job에서 continue-on-error가 없는가?
