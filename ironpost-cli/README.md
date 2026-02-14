@@ -433,7 +433,7 @@ Configuration (source: ironpost.toml)
 
 [general]
 log_level = "info"
-pid_file = "/var/run/ironpost.pid"
+pid_file = "/var/run/ironpost/ironpost.pid"
 
 [ebpf]
 enabled = true
@@ -562,7 +562,7 @@ fi
 ```toml
 [general]
 log_level = "info"              # Logging verbosity
-pid_file = "/var/run/ironpost.pid"  # Daemon PID file location
+pid_file = "/var/run/ironpost/ironpost.pid"  # Daemon PID file location
 
 [ebpf]
 enabled = true                  # Enable eBPF module

@@ -402,7 +402,7 @@ Configuration:
   Config file: /etc/ironpost/ironpost.toml
   Log level:   debug
   Data dir:    /var/lib/ironpost
-  PID file:    /var/run/ironpost.pid
+  PID file:    /var/run/ironpost/ironpost.pid
 
 Uptime: 2 minutes 15 seconds
 ```

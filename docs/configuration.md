@@ -47,7 +47,7 @@ IRONPOST_GENERAL_LOG_LEVEL=debug ironpost daemon start --log-level trace
 | `log_level` | `IRONPOST_GENERAL_LOG_LEVEL` | String | `"info"` | trace, debug, info, warn, error |
 | `log_format` | `IRONPOST_GENERAL_LOG_FORMAT` | String | `"json"` | json, pretty |
 | `data_dir` | `IRONPOST_GENERAL_DATA_DIR` | String | `"/var/lib/ironpost"` | 임의 경로 |
-| `pid_file` | `IRONPOST_GENERAL_PID_FILE` | String | `"/var/run/ironpost.pid"` | 임의 경로 |
+| `pid_file` | `IRONPOST_GENERAL_PID_FILE` | String | `"/var/run/ironpost/ironpost.pid"` | 임의 경로 |
 
 ### [ebpf]
 

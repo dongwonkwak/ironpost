@@ -326,7 +326,7 @@ impl Default for GeneralConfig {
             log_level: "info".to_owned(),
             log_format: "json".to_owned(),
             data_dir: "/var/lib/ironpost".to_owned(),
-            pid_file: "/var/run/ironpost.pid".to_owned(),
+            pid_file: "/var/run/ironpost/ironpost.pid".to_owned(),
         }
     }
 }

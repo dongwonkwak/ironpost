@@ -49,9 +49,9 @@ data_dir = "/var/lib/ironpost"
 
 # PID 파일 경로 (중복 실행 방지)
 # 타입: String
-# 기본값: "/var/run/ironpost.pid"
+# 기본값: "/var/run/ironpost/ironpost.pid"
 # 환경변수: IRONPOST_GENERAL_PID_FILE
-pid_file = "/var/run/ironpost.pid"
+pid_file = "/var/run/ironpost/ironpost.pid"
 
 
 # -----------------------------------------------------------------------------

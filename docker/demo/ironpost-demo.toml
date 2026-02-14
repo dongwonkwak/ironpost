@@ -11,7 +11,7 @@
 log_level = "debug"
 log_format = "json"
 data_dir = "/var/lib/ironpost"
-pid_file = "/var/run/ironpost.pid"
+pid_file = "/var/run/ironpost/ironpost.pid"
 
 # =============================================================================
 # [ebpf] -- eBPF XDP Network Engine (disabled in Docker demo)

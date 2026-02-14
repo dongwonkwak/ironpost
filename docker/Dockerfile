@@ -69,8 +69,8 @@ COPY --from=builder /app/target/release/ironpost-daemon /usr/local/bin/
 COPY --from=builder /app/target/release/ironpost-cli /usr/local/bin/
 
 # Create necessary directories with proper ownership
-RUN mkdir -p /var/lib/ironpost /var/log/ironpost /var/run \
-    && chown -R ironpost:ironpost /var/lib/ironpost /var/log/ironpost \
+RUN mkdir -p /var/lib/ironpost /var/log/ironpost /var/run/ironpost \
+    && chown -R ironpost:ironpost /var/lib/ironpost /var/log/ironpost /var/run/ironpost \
     && chmod 755 /usr/local/bin/ironpost-daemon /usr/local/bin/ironpost-cli
 
 # Switch to non-root user
@@ -83,7 +83,7 @@ EXPOSE 1514/udp 8080
 # Health check using CLI status command
 # Check if daemon process is running and responding
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD ironpost-cli status --output json > /dev/null || exit 1
+    CMD ironpost-cli --config /etc/ironpost/ironpost.toml status --output json > /dev/null || exit 1
 
 # Set entrypoint and default command
 ENTRYPOINT ["ironpost-daemon"]

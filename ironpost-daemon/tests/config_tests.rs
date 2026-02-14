@@ -12,7 +12,7 @@ fn test_parse_full_config() {
 [general]
 log_level = "debug"
 log_format = "json"
-pid_file = "/var/run/ironpost.pid"
+pid_file = "/var/run/ironpost/ironpost.pid"
 
 [ebpf]
 enabled = true
@@ -60,7 +60,7 @@ output_format = "cyclonedx"
     // Verify general section
     assert_eq!(config.general.log_level, "debug");
     assert_eq!(config.general.log_format, "json");
-    assert_eq!(config.general.pid_file, "/var/run/ironpost.pid");
+    assert_eq!(config.general.pid_file, "/var/run/ironpost/ironpost.pid");
 
     // Verify module sections
     assert!(config.ebpf.enabled);

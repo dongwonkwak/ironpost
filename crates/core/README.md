@@ -216,7 +216,7 @@ impl Pipeline for MyPipeline {
 log_level = "info"           # trace, debug, info, warn, error
 log_format = "json"          # json, text
 data_dir = "/var/lib/ironpost"
-pid_file = "/var/run/ironpost.pid"
+pid_file = "/var/run/ironpost/ironpost.pid"
 
 [ebpf]
 enabled = true
