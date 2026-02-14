@@ -61,7 +61,7 @@ jobs:
     name: Security Audit
     runs-on: ubuntu-latest
     # WARNING: continue-on-error: true means known CVEs will NOT block merges.
-    # This is intentional to prevent flaky builds from breaking development flow.
+    # This is intentional to prevent dependency CVEs from blocking development flow.
     # Security findings are still visible in:
     #   1. Job output (click "Security Audit" in Actions)
     #   2. GitHub annotations on the PR
