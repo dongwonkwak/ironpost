@@ -1076,9 +1076,9 @@ mod tests {
 
             // start
             let start_result = ironpost_core::Pipeline::start(&mut engine).await;
-            if start_result.is_err() {
+            if let Err(e) = start_result {
                 // eBPF 바이너리가 없거나 권한 부족 시 스킵
-                tracing::warn!(error = ?start_result.unwrap_err(), "skipping test due to error");
+                tracing::warn!(error = ?e, "skipping test due to error");
                 return;
             }
 
