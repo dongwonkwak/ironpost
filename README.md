@@ -11,7 +11,7 @@
 
 ## 데모
 
-<!-- 데모 GIF 추가 예정 -->
+![Ironpost Demo](docs/demo.gif)
 
 > Docker 환경에서 3분 만에 체험할 수 있습니다. → [데모 가이드](docs/demo.md)
 
