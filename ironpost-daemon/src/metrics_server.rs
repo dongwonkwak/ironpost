@@ -15,7 +15,8 @@ use std::net::SocketAddr;
 
 use anyhow::Result;
 use ironpost_core::config::MetricsConfig;
-use metrics_exporter_prometheus::PrometheusBuilder;
+use ironpost_core::metrics as m;
+use metrics_exporter_prometheus::{Matcher, PrometheusBuilder};
 
 /// Install the global metrics recorder and start the HTTP listener.
 ///
@@ -56,6 +57,16 @@ pub fn install_metrics_recorder(config: &MetricsConfig) -> Result<()> {
     );
 
     PrometheusBuilder::new()
+        .set_buckets_for_metric(
+            Matcher::Full(m::LOG_PIPELINE_PROCESSING_DURATION_SECONDS.into()),
+            &m::PROCESSING_DURATION_BUCKETS,
+        )
+        .map_err(|e| anyhow::anyhow!("failed to set processing duration buckets: {}", e))?
+        .set_buckets_for_metric(
+            Matcher::Full(m::SBOM_SCANNER_SCAN_DURATION_SECONDS.into()),
+            &m::SCAN_DURATION_BUCKETS,
+        )
+        .map_err(|e| anyhow::anyhow!("failed to set scan duration buckets: {}", e))?
         .with_http_listener(addr)
         .install()
         .map_err(|e| anyhow::anyhow!("failed to install metrics recorder: {}", e))?;
