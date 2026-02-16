@@ -17,6 +17,7 @@
 mod cli;
 mod health;
 mod logging;
+mod metrics_server;
 mod modules;
 mod orchestrator;
 

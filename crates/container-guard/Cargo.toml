@@ -14,6 +14,7 @@ tracing = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true }
 bollard = "0.18"
+metrics = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util", "macros"] }

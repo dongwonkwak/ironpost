@@ -15,6 +15,9 @@ fn minimal_test_config() -> IronpostConfig {
 log_level = "info"
 pid_file = ""
 
+[metrics]
+enabled = false
+
 [ebpf]
 enabled = false
 
@@ -36,6 +39,9 @@ fn log_pipeline_only_config() -> IronpostConfig {
 [general]
 log_level = "info"
 pid_file = ""
+
+[metrics]
+enabled = false
 
 [ebpf]
 enabled = false
@@ -63,6 +69,9 @@ fn container_guard_config() -> IronpostConfig {
 [general]
 log_level = "info"
 pid_file = ""
+
+[metrics]
+enabled = false
 
 [ebpf]
 enabled = false
@@ -283,6 +292,9 @@ async fn test_orchestrator_partial_config_sections() {
 [general]
 log_level = "debug"
 
+[metrics]
+enabled = false
+
 [log_pipeline]
 enabled = false
 "#;
@@ -300,8 +312,11 @@ enabled = false
 
 #[tokio::test]
 async fn test_orchestrator_empty_config_uses_defaults() {
-    // Given: An empty config string
-    let toml_str = "";
+    // Given: An empty config string (with metrics disabled to avoid test conflicts)
+    let toml_str = r#"
+[metrics]
+enabled = false
+"#;
     let config = IronpostConfig::parse(toml_str).expect("should parse empty config");
 
     // When: Building orchestrator

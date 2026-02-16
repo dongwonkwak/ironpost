@@ -3,6 +3,7 @@
 pub mod config;
 pub mod error;
 pub mod event;
+pub mod metrics;
 pub mod pipeline;
 pub mod plugin;
 pub mod types;
@@ -36,3 +37,6 @@ pub use plugin::{DynPlugin, Plugin, PluginInfo, PluginRegistry, PluginState, Plu
 
 // 도메인 타입
 pub use types::{Alert, ContainerInfo, LogEntry, PacketInfo, Severity, Vulnerability};
+
+// 메트릭 상수 (모듈 전체를 노출)
+pub use metrics as metric_names;

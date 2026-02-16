@@ -29,6 +29,7 @@ use ironpost_core::event::{ActionEvent, AlertEvent};
 use ironpost_core::plugin::PluginRegistry;
 
 use crate::health::{DaemonHealth, ModuleHealth, aggregate_status};
+use crate::metrics_server;
 
 /// Channel capacity constants.
 const PACKET_CHANNEL_CAPACITY: usize = 1024;
@@ -87,6 +88,12 @@ impl Orchestrator {
         config
             .validate()
             .map_err(|e| anyhow::anyhow!("config validation failed: {}", e))?;
+
+        // Install metrics recorder before plugin initialization
+        if config.metrics.enabled {
+            metrics_server::install_metrics_recorder(&config.metrics)?;
+            tracing::info!(port = config.metrics.port, "metrics endpoint enabled");
+        }
 
         tracing::debug!("creating inter-module channels");
 
@@ -182,6 +189,11 @@ impl Orchestrator {
 
         tracing::info!(total_plugins = plugins.count(), "orchestrator initialized");
 
+        // Record daemon metrics
+        if config.metrics.enabled {
+            record_daemon_metrics(plugins.count());
+        }
+
         Ok(Self {
             config,
             plugins,
@@ -246,6 +258,15 @@ impl Orchestrator {
             None
         };
 
+        // Spawn uptime updater task
+        let mut uptime_updater_task = if self.config.metrics.enabled {
+            let shutdown_rx = self.shutdown_tx.subscribe();
+            let start_time = self.start_time;
+            Some(spawn_uptime_updater(start_time, shutdown_rx))
+        } else {
+            None
+        };
+
         // Main event loop
         tracing::info!("entering main event loop");
         let signal = wait_for_shutdown_signal().await?;
@@ -257,6 +278,11 @@ impl Orchestrator {
 
         // Wait for action logger to finish
         if let Some(task) = action_logger_task.take() {
+            let _ = task.await;
+        }
+
+        // Wait for uptime updater to finish
+        if let Some(task) = uptime_updater_task.take() {
             let _ = task.await;
         }
 
@@ -296,6 +322,13 @@ impl Orchestrator {
 
         let overall_status = aggregate_status(&modules);
         let uptime_secs = self.start_time.elapsed().as_secs();
+
+        // Update uptime metric
+        if self.config.metrics.enabled {
+            use ironpost_core::metrics as m;
+            #[allow(clippy::cast_precision_loss)]
+            metrics::gauge!(m::DAEMON_UPTIME_SECONDS).set(uptime_secs as f64);
+        }
 
         DaemonHealth {
             status: overall_status,
@@ -487,6 +520,57 @@ fn spawn_action_logger(
                 }
                 _ = shutdown_rx.recv() => {
                     tracing::debug!("action logger shutting down");
+                    break;
+                }
+            }
+        }
+    })
+}
+
+/// Record daemon-level metrics (build info, plugins registered).
+///
+/// This should be called once during orchestrator initialization.
+fn record_daemon_metrics(plugin_count: usize) {
+    use ironpost_core::metrics as m;
+
+    // Build info (always 1, with version label)
+    // TODO: Extract version from Cargo.toml or build-time env var
+    #[allow(clippy::cast_precision_loss)]
+    metrics::gauge!(m::DAEMON_BUILD_INFO, "version" => env!("CARGO_PKG_VERSION")).set(1.0);
+
+    // Registered plugins count
+    #[allow(clippy::cast_precision_loss)]
+    metrics::gauge!(m::DAEMON_PLUGINS_REGISTERED).set(plugin_count as f64);
+
+    tracing::debug!(
+        plugin_count = plugin_count,
+        version = env!("CARGO_PKG_VERSION"),
+        "daemon metrics recorded"
+    );
+}
+
+/// Spawn a background task that periodically updates the uptime metric.
+///
+/// Updates every 10 seconds to keep the metric fresh for Prometheus scrapes.
+fn spawn_uptime_updater(
+    start_time: Instant,
+    mut shutdown_rx: broadcast::Receiver<()>,
+) -> tokio::task::JoinHandle<()> {
+    use ironpost_core::metrics as m;
+
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(10));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+        loop {
+            tokio::select! {
+                _ = interval.tick() => {
+                    let uptime_secs = start_time.elapsed().as_secs();
+                    #[allow(clippy::cast_precision_loss)]
+                    metrics::gauge!(m::DAEMON_UPTIME_SECONDS).set(uptime_secs as f64);
+                }
+                _ = shutdown_rx.recv() => {
+                    tracing::debug!("uptime updater shutting down");
                     break;
                 }
             }

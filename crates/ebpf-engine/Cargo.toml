@@ -14,6 +14,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true }
 toml = { workspace = true }
+metrics = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 ironpost-ebpf-common = { path = "ebpf-common", features = ["user"] }

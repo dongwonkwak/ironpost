@@ -17,6 +17,8 @@ clap = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true }
+metrics = { workspace = true }
+metrics-exporter-prometheus = { workspace = true }
 
 # eBPF engine is Linux-only
 [target.'cfg(target_os = "linux")'.dependencies]

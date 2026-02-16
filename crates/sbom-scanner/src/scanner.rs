@@ -29,6 +29,7 @@ use tracing::{debug, info, warn};
 
 use ironpost_core::error::IronpostError;
 use ironpost_core::event::{AlertEvent, MODULE_SBOM_SCANNER};
+use ironpost_core::metrics as m;
 use ironpost_core::pipeline::{HealthStatus, Pipeline};
 use ironpost_core::plugin::{Plugin, PluginInfo, PluginState, PluginType};
 use ironpost_core::types::Alert;
@@ -175,6 +176,9 @@ impl SbomScanner {
             }
         }
 
+        // Record CVE gauges from the full scan cycle (all scan_dirs combined).
+        record_cve_gauges_from_results(&all_results);
+
         Ok(all_results)
     }
 }
@@ -195,6 +199,9 @@ impl Pipeline for SbomScanner {
 
         info!("starting sbom scanner");
 
+        // Initialize VulnDB last-update metric as 0 ("unknown/not loaded yet").
+        metrics::gauge!(m::SBOM_SCANNER_VULNDB_LAST_UPDATE).set(0.0);
+
         // VulnDb 로드 (blocking I/O)
         // TOCTOU 방지: exists() 체크 없이 직접 로드 시도, 에러 핸들링으로 처리
         let vuln_db_path = self.config.vuln_db_path.clone();
@@ -211,6 +218,16 @@ impl Pipeline for SbomScanner {
 
         match db_result {
             Ok(db) => {
+                match SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+                    Ok(since_epoch) => {
+                        metrics::gauge!(m::SBOM_SCANNER_VULNDB_LAST_UPDATE)
+                            .set(since_epoch.as_secs_f64());
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "system clock is before UNIX epoch");
+                    }
+                }
+
                 let entry_count = db.entry_count();
                 if entry_count > 0 {
                     info!(entries = entry_count, "vulnerability database loaded");
@@ -262,6 +279,7 @@ impl Pipeline for SbomScanner {
                             }
 
                             info!("starting periodic scan");
+                            let mut cycle_results = Vec::new();
 
                             // 각 스캔 디렉토리 순회
                             for scan_dir in &scan_dirs {
@@ -291,7 +309,8 @@ impl Pipeline for SbomScanner {
                                 .await;
 
                                 match scan_result {
-                                    Ok(Ok(_)) => {
+                                    Ok(Ok(results)) => {
+                                        cycle_results.extend(results);
                                         info!(dir = %scan_dir, "periodic scan completed");
                                     }
                                     Ok(Err(e)) => {
@@ -302,6 +321,9 @@ impl Pipeline for SbomScanner {
                                     }
                                 }
                             }
+
+                            // Record CVE gauges from the full scan cycle (all scan_dirs combined).
+                            record_cve_gauges_from_results(&cycle_results);
                         }
                     }
                 }
@@ -507,12 +529,44 @@ struct ScanContext<'a> {
     vulns_found: &'a AtomicU64,
 }
 
+fn record_cve_gauges_from_results(results: &[ScanResult]) {
+    use ironpost_core::types::Severity;
+
+    let mut severity_counts = std::collections::HashMap::new();
+    for result in results {
+        for finding in &result.findings {
+            *severity_counts
+                .entry(finding.vulnerability.severity)
+                .or_insert(0usize) += 1;
+        }
+    }
+
+    #[allow(clippy::cast_precision_loss)]
+    {
+        let critical = severity_counts.get(&Severity::Critical).unwrap_or(&0);
+        let high = severity_counts.get(&Severity::High).unwrap_or(&0);
+        let medium = severity_counts.get(&Severity::Medium).unwrap_or(&0);
+        let low = severity_counts.get(&Severity::Low).unwrap_or(&0);
+        let info = severity_counts.get(&Severity::Info).unwrap_or(&0);
+
+        metrics::gauge!(m::SBOM_SCANNER_CVES_FOUND, m::LABEL_SEVERITY => "critical")
+            .set(*critical as f64);
+        metrics::gauge!(m::SBOM_SCANNER_CVES_FOUND, m::LABEL_SEVERITY => "high").set(*high as f64);
+        metrics::gauge!(m::SBOM_SCANNER_CVES_FOUND, m::LABEL_SEVERITY => "medium")
+            .set(*medium as f64);
+        metrics::gauge!(m::SBOM_SCANNER_CVES_FOUND, m::LABEL_SEVERITY => "low").set(*low as f64);
+        metrics::gauge!(m::SBOM_SCANNER_CVES_FOUND, m::LABEL_SEVERITY => "info").set(*info as f64);
+    }
+}
+
 /// 단일 디렉토리에서 스캔을 수행합니다 (공유 로직).
 ///
 /// scan_once와 periodic 태스크 모두에서 사용됩니다.
 fn scan_directory(scan_dir: &str, ctx: &ScanContext) -> Result<Vec<ScanResult>, SbomScannerError> {
     let mut results = Vec::new();
     let dir_path = std::path::Path::new(scan_dir);
+
+    let scan_start = std::time::Instant::now();
 
     // 디렉토리에서 lockfile 탐색
     let lockfiles = {
@@ -626,8 +680,19 @@ fn scan_directory(scan_dir: &str, ctx: &ScanContext) -> Result<Vec<ScanResult>, 
         }
 
         ctx.scans_completed.fetch_add(1, Ordering::Relaxed);
+        metrics::counter!(m::SBOM_SCANNER_SCANS_COMPLETED_TOTAL).increment(1);
+
         let vulns_u64 = u64::try_from(finding_count).unwrap_or(u64::MAX);
         ctx.vulns_found.fetch_add(vulns_u64, Ordering::Relaxed);
+
+        // Record packages scanned
+        let package_count = u64::try_from(graph.package_count()).unwrap_or(u64::MAX);
+        let ecosystem_str = format!("{:?}", graph.ecosystem).to_lowercase();
+        metrics::counter!(
+            m::SBOM_SCANNER_PACKAGES_SCANNED_TOTAL,
+            m::LABEL_ECOSYSTEM => ecosystem_str
+        )
+        .increment(package_count);
 
         info!(
             path = %path,
@@ -638,6 +703,10 @@ fn scan_directory(scan_dir: &str, ctx: &ScanContext) -> Result<Vec<ScanResult>, 
 
         results.push(result);
     }
+
+    // Record duration once per directory scan cycle.
+    let scan_duration = scan_start.elapsed().as_secs_f64();
+    metrics::histogram!(m::SBOM_SCANNER_SCAN_DURATION_SECONDS).record(scan_duration);
 
     Ok(results)
 }
