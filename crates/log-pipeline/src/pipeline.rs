@@ -196,13 +196,14 @@ impl LogPipeline {
     /// UDP syslog 수집기를 spawn합니다.
     fn spawn_syslog_udp(&mut self) {
         let tx = self.raw_log_tx.clone();
+        let cancel = self.cancel_token.clone();
         let config = SyslogUdpConfig {
             bind_addr: self.config.syslog_bind.clone(),
             ..SyslogUdpConfig::default()
         };
 
         let handle = tokio::spawn(async move {
-            let mut collector = SyslogUdpCollector::new(config, tx);
+            let mut collector = SyslogUdpCollector::new_with_cancel(config, tx, cancel);
             if let Err(e) = collector.run().await {
                 tracing::error!(
                     collector = "syslog_udp",
@@ -241,13 +242,14 @@ impl LogPipeline {
     /// 파일 수집기를 spawn합니다.
     fn spawn_file_collector(&mut self) {
         let tx = self.raw_log_tx.clone();
+        let cancel = self.cancel_token.clone();
         let config = FileCollectorConfig {
             watch_paths: self.config.watch_paths.iter().map(PathBuf::from).collect(),
             ..FileCollectorConfig::default()
         };
 
         let handle = tokio::spawn(async move {
-            let mut collector = FileCollector::new(config, tx);
+            let mut collector = FileCollector::new_with_cancel(config, tx, cancel);
             if let Err(e) = collector.run().await {
                 tracing::error!(
                     collector = "file",
@@ -557,7 +559,9 @@ impl Pipeline for LogPipeline {
                     tracing::warn!(error = %e, "event_receiver task join failed");
                 }
                 Err(_) => {
-                    tracing::warn!("event_receiver task did not respond to cancellation within timeout");
+                    tracing::warn!(
+                        "event_receiver task did not respond to cancellation within timeout"
+                    );
                 }
             }
         }
@@ -1010,9 +1014,9 @@ mod tests {
         let config = PipelineConfig {
             rule_dir: temp_dir.to_string_lossy().to_string(),
             sources: vec![
-                "syslog".to_owned(),      // expands to syslog_udp + syslog_tcp
-                "syslog_udp".to_owned(),  // duplicate UDP
-                "syslog_tcp".to_owned(),  // duplicate TCP
+                "syslog".to_owned(),     // expands to syslog_udp + syslog_tcp
+                "syslog_udp".to_owned(), // duplicate UDP
+                "syslog_tcp".to_owned(), // duplicate TCP
             ],
             syslog_bind: "127.0.0.1:0".to_owned(),
             syslog_tcp_bind: "127.0.0.1:0".to_owned(),
@@ -1048,7 +1052,10 @@ mod tests {
 
         // Pipeline start should succeed even if individual collectors fail
         let result = Pipeline::start(&mut pipeline).await;
-        assert!(result.is_ok(), "pipeline should start even if collectors fail to bind");
+        assert!(
+            result.is_ok(),
+            "pipeline should start even if collectors fail to bind"
+        );
         assert_eq!(pipeline.state_name(), "running");
 
         Pipeline::stop(&mut pipeline).await.unwrap();
@@ -1155,7 +1162,10 @@ mod tests {
 
         // 두 번째 start (재시작) - 이전에는 packet_rx가 None이어서 실패했음
         let result = Pipeline::start(&mut pipeline).await;
-        assert!(result.is_ok(), "pipeline should restart successfully (H1 fix)");
+        assert!(
+            result.is_ok(),
+            "pipeline should restart successfully (H1 fix)"
+        );
         assert!(
             pipeline
                 .collectors

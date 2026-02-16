@@ -6,6 +6,7 @@
 use bytes::Bytes;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info};
 
 use super::{CollectorStatus, RawLog};
@@ -44,6 +45,8 @@ pub struct SyslogUdpCollector {
     /// 수집된 로그 전송 채널
     #[allow(dead_code)]
     tx: mpsc::Sender<RawLog>,
+    /// graceful shutdown을 위한 취소 토큰
+    cancel_token: CancellationToken,
     /// 현재 상태
     status: CollectorStatus,
 }
@@ -51,9 +54,19 @@ pub struct SyslogUdpCollector {
 impl SyslogUdpCollector {
     /// 새 UDP syslog 수집기를 생성합니다.
     pub fn new(config: SyslogUdpConfig, tx: mpsc::Sender<RawLog>) -> Self {
+        Self::new_with_cancel(config, tx, CancellationToken::new())
+    }
+
+    /// 취소 토큰을 포함하여 새 UDP syslog 수집기를 생성합니다.
+    pub fn new_with_cancel(
+        config: SyslogUdpConfig,
+        tx: mpsc::Sender<RawLog>,
+        cancel_token: CancellationToken,
+    ) -> Self {
         Self {
             config,
             tx,
+            cancel_token,
             status: CollectorStatus::Idle,
         }
     }
@@ -82,37 +95,48 @@ impl SyslogUdpCollector {
         let mut buf = vec![0u8; self.config.max_message_size];
 
         loop {
-            match socket.recv_from(&mut buf).await {
-                Ok((len, addr)) => {
-                    debug!("Received {} bytes from {}", len, addr);
+            tokio::select! {
+                result = socket.recv_from(&mut buf) => {
+                    match result {
+                        Ok((len, addr)) => {
+                            debug!("Received {} bytes from {}", len, addr);
 
-                    if len == 0 {
-                        continue;
-                    }
+                            if len == 0 {
+                                continue;
+                            }
 
-                    // 수신된 데이터를 RawLog로 변환
-                    let data = Bytes::copy_from_slice(&buf[..len]);
-                    let raw_log =
-                        RawLog::new(data, format!("syslog_udp:{}", self.config.bind_addr))
-                            .with_format_hint("syslog");
+                            // 수신된 데이터를 RawLog로 변환
+                            let data = Bytes::copy_from_slice(&buf[..len]);
+                            let raw_log =
+                                RawLog::new(data, format!("syslog_udp:{}", self.config.bind_addr))
+                                    .with_format_hint("syslog");
 
-                    // 채널로 전송
-                    if let Err(e) = self.tx.send(raw_log).await {
-                        error!("Failed to send log to channel: {}", e);
-                        self.status = CollectorStatus::Error(e.to_string());
-                        return Err(LogPipelineError::Channel(e.to_string()));
+                            // 채널로 전송
+                            if let Err(e) = self.tx.send(raw_log).await {
+                                error!("Failed to send log to channel: {}", e);
+                                self.status = CollectorStatus::Error(e.to_string());
+                                return Err(LogPipelineError::Channel(e.to_string()));
+                            }
+                        }
+                        Err(e) => {
+                            error!("UDP recv error: {}", e);
+                            self.status = CollectorStatus::Error(e.to_string());
+                            return Err(LogPipelineError::Collector {
+                                source_type: "syslog_udp".to_owned(),
+                                reason: format!("recv error: {}", e),
+                            });
+                        }
                     }
                 }
-                Err(e) => {
-                    error!("UDP recv error: {}", e);
-                    self.status = CollectorStatus::Error(e.to_string());
-                    return Err(LogPipelineError::Collector {
-                        source_type: "syslog_udp".to_owned(),
-                        reason: format!("recv error: {}", e),
-                    });
+                _ = self.cancel_token.cancelled() => {
+                    info!("UDP syslog collector received shutdown signal");
+                    self.status = CollectorStatus::Stopped;
+                    break;
                 }
             }
         }
+
+        Ok(())
     }
 
     /// 바인드 주소를 반환합니다.
