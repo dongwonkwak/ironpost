@@ -236,7 +236,8 @@ mod tests {
         let cancel = CancellationToken::new();
 
         // 송신 측 채널이 이미 닫혔으므로 즉시 종료되어야 함
-        let result = tokio::time::timeout(std::time::Duration::from_secs(1), receiver.run(cancel)).await;
+        let result =
+            tokio::time::timeout(std::time::Duration::from_secs(1), receiver.run(cancel)).await;
 
         assert!(result.is_ok(), "Test timed out");
         let returned_rx = result.unwrap();

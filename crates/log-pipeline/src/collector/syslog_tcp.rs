@@ -182,14 +182,12 @@ impl SyslogTcpCollector {
 
         match config.framing {
             TcpFraming::NewlineDelimited => {
-                Self::handle_newline_framing(stream, tx, config, bind_addr, peer_addr, cancel)
-                    .await
+                Self::handle_newline_framing(stream, tx, config, bind_addr, peer_addr, cancel).await
             }
             TcpFraming::OctetCounting => {
                 // Octet-counting 프레이밍 (향후 구현)
                 warn!("Octet-counting framing not yet implemented, using newline framing");
-                Self::handle_newline_framing(stream, tx, config, bind_addr, peer_addr, cancel)
-                    .await
+                Self::handle_newline_framing(stream, tx, config, bind_addr, peer_addr, cancel).await
             }
         }
     }
