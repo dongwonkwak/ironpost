@@ -8,12 +8,15 @@
 //! Collectors -> mpsc -> Buffer -> Parser -> RuleEngine -> AlertGenerator -> mpsc -> downstream
 //! ```
 
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{Mutex, RwLock, mpsc};
 use tokio::time::{Instant, interval};
+use tokio_util::sync::CancellationToken;
 
 use ironpost_core::error::IronpostError;
 use ironpost_core::event::{AlertEvent, MODULE_LOG_PIPELINE, PacketEvent};
@@ -22,7 +25,13 @@ use ironpost_core::plugin::{Plugin, PluginInfo, PluginState, PluginType};
 
 use crate::alert::AlertGenerator;
 use crate::buffer::LogBuffer;
-use crate::collector::{CollectorSet, RawLog};
+use crate::collector::file::FileCollectorConfig;
+use crate::collector::syslog_tcp::SyslogTcpConfig;
+use crate::collector::syslog_udp::SyslogUdpConfig;
+use crate::collector::{
+    CollectorSet, CollectorStatus, EventReceiver, FileCollector, RawLog, SyslogTcpCollector,
+    SyslogUdpCollector,
+};
 use crate::config::PipelineConfig;
 use crate::error::LogPipelineError;
 use crate::parser::ParserRouter;
@@ -74,8 +83,9 @@ pub struct LogPipeline {
     /// 로그 버퍼
     buffer: Arc<Mutex<LogBuffer>>,
     /// 수집기 세트
-    #[allow(dead_code)]
     collectors: CollectorSet,
+    /// 수집기 런타임 상태 (health/observability 용도)
+    collector_statuses: Arc<RwLock<HashMap<String, CollectorStatus>>>,
     /// 내부 RawLog 채널 (수집기 -> 파이프라인)
     raw_log_rx: Option<mpsc::Receiver<RawLog>>,
     /// 내부 RawLog 채널 송신측 (수집기에 전달)
@@ -83,10 +93,13 @@ pub struct LogPipeline {
     /// 알림 전송 채널 (파이프라인 -> downstream)
     alert_tx: mpsc::Sender<AlertEvent>,
     /// PacketEvent 수신 채널 (ebpf-engine -> 파이프라인, daemon에서 연결)
-    #[allow(dead_code)]
     packet_rx: Option<mpsc::Receiver<PacketEvent>>,
     /// 백그라운드 태스크 핸들
     tasks: Vec<tokio::task::JoinHandle<()>>,
+    /// EventReceiver task handle (returns packet_rx on shutdown)
+    event_receiver_task: Option<tokio::task::JoinHandle<Option<mpsc::Receiver<PacketEvent>>>>,
+    /// Cancellation token for graceful shutdown
+    cancel_token: CancellationToken,
     /// 파싱 에러 카운터 (공유)
     parse_error_count: Arc<AtomicU64>,
     /// 처리된 로그 카운터 (공유)
@@ -94,6 +107,14 @@ pub struct LogPipeline {
 }
 
 impl LogPipeline {
+    async fn set_collector_status(
+        statuses: &Arc<RwLock<HashMap<String, CollectorStatus>>>,
+        name: &str,
+        status: CollectorStatus,
+    ) {
+        statuses.write().await.insert(name.to_owned(), status);
+    }
+
     /// 현재 상태를 반환합니다.
     pub fn state_name(&self) -> &str {
         match self.state {
@@ -182,6 +203,148 @@ impl LogPipeline {
             }
         }
     }
+
+    /// UDP syslog 수집기를 spawn합니다.
+    fn spawn_syslog_udp(&mut self) {
+        let tx = self.raw_log_tx.clone();
+        let cancel = self.cancel_token.clone();
+        let statuses = Arc::clone(&self.collector_statuses);
+        let config = SyslogUdpConfig {
+            bind_addr: self.config.syslog_bind.clone(),
+            ..SyslogUdpConfig::default()
+        };
+
+        let handle = tokio::spawn(async move {
+            Self::set_collector_status(&statuses, "syslog_udp", CollectorStatus::Running).await;
+            let mut collector = SyslogUdpCollector::new_with_cancel(config, tx, cancel);
+            if let Err(e) = collector.run().await {
+                tracing::error!(
+                    collector = "syslog_udp",
+                    error = %e,
+                    "syslog UDP collector terminated with error"
+                );
+                Self::set_collector_status(
+                    &statuses,
+                    "syslog_udp",
+                    CollectorStatus::Error(e.to_string()),
+                )
+                .await;
+            } else {
+                Self::set_collector_status(&statuses, "syslog_udp", CollectorStatus::Stopped).await;
+            }
+        });
+        self.collectors.register("syslog_udp");
+        self.tasks.push(handle);
+    }
+
+    /// TCP syslog 수집기를 spawn합니다.
+    fn spawn_syslog_tcp(&mut self) {
+        let tx = self.raw_log_tx.clone();
+        let statuses = Arc::clone(&self.collector_statuses);
+        let config = SyslogTcpConfig {
+            bind_addr: self.config.syslog_tcp_bind.clone(),
+            ..SyslogTcpConfig::default()
+        };
+        let cancel = self.cancel_token.clone();
+
+        let handle = tokio::spawn(async move {
+            Self::set_collector_status(&statuses, "syslog_tcp", CollectorStatus::Running).await;
+            let mut collector = SyslogTcpCollector::new(config, tx, cancel);
+            if let Err(e) = collector.run().await {
+                tracing::error!(
+                    collector = "syslog_tcp",
+                    error = %e,
+                    "syslog TCP collector terminated with error"
+                );
+                Self::set_collector_status(
+                    &statuses,
+                    "syslog_tcp",
+                    CollectorStatus::Error(e.to_string()),
+                )
+                .await;
+            } else {
+                Self::set_collector_status(&statuses, "syslog_tcp", CollectorStatus::Stopped).await;
+            }
+        });
+        self.collectors.register("syslog_tcp");
+        self.tasks.push(handle);
+    }
+
+    /// 파일 수집기를 spawn합니다.
+    fn spawn_file_collector(&mut self) {
+        let tx = self.raw_log_tx.clone();
+        let cancel = self.cancel_token.clone();
+        let statuses = Arc::clone(&self.collector_statuses);
+        let config = FileCollectorConfig {
+            watch_paths: self.config.watch_paths.iter().map(PathBuf::from).collect(),
+            ..FileCollectorConfig::default()
+        };
+
+        let handle = tokio::spawn(async move {
+            Self::set_collector_status(&statuses, "file", CollectorStatus::Running).await;
+            let mut collector = FileCollector::new_with_cancel(config, tx, cancel);
+            if let Err(e) = collector.run().await {
+                tracing::error!(
+                    collector = "file",
+                    error = %e,
+                    "file collector terminated with error"
+                );
+                Self::set_collector_status(
+                    &statuses,
+                    "file",
+                    CollectorStatus::Error(e.to_string()),
+                )
+                .await;
+            } else {
+                Self::set_collector_status(&statuses, "file", CollectorStatus::Stopped).await;
+            }
+        });
+        self.collectors.register("file");
+        self.tasks.push(handle);
+    }
+
+    /// eBPF EventReceiver를 spawn합니다.
+    ///
+    /// EventReceiver는 graceful shutdown 시 packet_rx를 반환하여
+    /// 재시작을 지원합니다.
+    fn spawn_event_receiver(&mut self, packet_rx: mpsc::Receiver<PacketEvent>) {
+        let tx = self.raw_log_tx.clone();
+        let cancel = self.cancel_token.clone();
+        let statuses = Arc::clone(&self.collector_statuses);
+
+        let handle = tokio::spawn(async move {
+            Self::set_collector_status(&statuses, "event_receiver", CollectorStatus::Running).await;
+            let receiver = EventReceiver::new(packet_rx, tx);
+            match receiver.run(cancel).await {
+                Ok(returned_rx) => {
+                    tracing::info!("event receiver stopped gracefully");
+                    Self::set_collector_status(
+                        &statuses,
+                        "event_receiver",
+                        CollectorStatus::Stopped,
+                    )
+                    .await;
+                    Some(returned_rx)
+                }
+                Err(e) => {
+                    tracing::error!(
+                        collector = "event_receiver",
+                        error = %e,
+                        "event receiver terminated with error"
+                    );
+                    Self::set_collector_status(
+                        &statuses,
+                        "event_receiver",
+                        CollectorStatus::Error(e.to_string()),
+                    )
+                    .await;
+                    None
+                }
+            }
+        });
+        self.collectors.register("event_receiver");
+        self.event_receiver_task = Some(handle);
+    }
 }
 
 impl Pipeline for LogPipeline {
@@ -191,6 +354,8 @@ impl Pipeline for LogPipeline {
         }
 
         tracing::info!("starting log pipeline");
+
+        self.collector_statuses.write().await.clear();
 
         // 1. 규칙 로드
         let rule_count = self
@@ -203,9 +368,52 @@ impl Pipeline for LogPipeline {
         tracing::info!(rules = rule_count, "loaded detection rules");
 
         // 2. 수집기 태스크 스폰
-        // TODO: spawn collector tasks based on config.sources
-        // Each collector gets a clone of raw_log_tx
-        // This will be implemented when integrating with actual data sources
+        let mut spawned_collectors = HashSet::new();
+        let sources = self.config.sources.clone();
+
+        for source in &sources {
+            match source.as_str() {
+                "syslog" => {
+                    // syslog = syslog_udp + syslog_tcp 동시 활성화
+                    if spawned_collectors.insert("syslog_udp") {
+                        self.spawn_syslog_udp();
+                    }
+                    if spawned_collectors.insert("syslog_tcp") {
+                        self.spawn_syslog_tcp();
+                    }
+                }
+                "syslog_udp" => {
+                    if spawned_collectors.insert("syslog_udp") {
+                        self.spawn_syslog_udp();
+                    }
+                }
+                "syslog_tcp" => {
+                    if spawned_collectors.insert("syslog_tcp") {
+                        self.spawn_syslog_tcp();
+                    }
+                }
+                "file" => {
+                    if spawned_collectors.insert("file") {
+                        self.spawn_file_collector();
+                    }
+                }
+                unknown => {
+                    tracing::warn!(source = unknown, "unknown collector source, skipping");
+                }
+            }
+        }
+
+        // EventReceiver spawn (packet_rx가 있을 때만)
+        if let Some(packet_rx) = self.packet_rx.take() {
+            self.spawn_event_receiver(packet_rx);
+            spawned_collectors.insert("event_receiver");
+        }
+
+        tracing::info!(
+            collectors = ?spawned_collectors,
+            count = spawned_collectors.len(),
+            "spawned collector tasks"
+        );
 
         // 3. 메인 처리 루프 스폰
         let mut raw_log_rx = self.raw_log_rx.take().ok_or(IronpostError::Pipeline(
@@ -230,6 +438,7 @@ impl Pipeline for LogPipeline {
         let alert_tx = self.alert_tx.clone();
         let parse_error_count = Arc::clone(&self.parse_error_count);
         let processed_count = Arc::clone(&self.processed_count);
+        let cancel = self.cancel_token.clone();
 
         let processing_task = tokio::spawn(async move {
             let mut flush_timer = interval(Duration::from_millis(flush_interval_ms));
@@ -358,6 +567,12 @@ impl Pipeline for LogPipeline {
                             last_cleanup = Instant::now();
                         }
                     }
+
+                    // Cancellation signal
+                    _ = cancel.cancelled() => {
+                        tracing::info!("processing task received shutdown signal");
+                        break;
+                    }
                 }
             }
         });
@@ -379,14 +594,46 @@ impl Pipeline for LogPipeline {
         // 1. 먼저 버퍼 드레인 (태스크가 아직 실행 중일 때)
         let remaining = self.buffer.lock().await.drain_all();
 
-        // 2. 그 다음 태스크 중단 및 대기
+        // 2. Graceful shutdown signal 전송
+        self.cancel_token.cancel();
+        tracing::debug!("sent cancellation signal to all collectors");
+
+        // 3. Give collectors a moment to shutdown gracefully
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // 4. EventReceiver task 처리 (packet_rx 복원)
+        if let Some(task) = self.event_receiver_task.take() {
+            // Use timeout to avoid hanging if task doesn't respond to cancellation
+            match tokio::time::timeout(Duration::from_secs(2), task).await {
+                Ok(Ok(Some(packet_rx))) => {
+                    tracing::info!("restoring packet_rx for restart support");
+                    self.packet_rx = Some(packet_rx);
+                }
+                Ok(Ok(None)) => {
+                    tracing::warn!("event_receiver task returned None, packet_rx not restored");
+                }
+                Ok(Err(e)) => {
+                    tracing::warn!(error = %e, "event_receiver task join failed");
+                }
+                Err(_) => {
+                    tracing::warn!(
+                        "event_receiver task did not respond to cancellation within timeout"
+                    );
+                }
+            }
+        }
+
+        // 5. 나머지 collector tasks 정리
         for task in self.tasks.drain(..) {
-            task.abort();
-            // JoinHandle이 abort된 후에도 안전하게 await 가능
             let _ = task.await;
         }
 
-        // 3. 드레인된 로그 처리
+        // 6. 수집기 상태 정리
+        self.collectors.stop_all();
+        self.collectors.clear();
+        self.collector_statuses.write().await.clear();
+
+        // 7. 드레인된 로그 처리
         if !remaining.is_empty() {
             tracing::info!(
                 count = remaining.len(),
@@ -395,10 +642,13 @@ impl Pipeline for LogPipeline {
             self.process_batch(remaining).await;
         }
 
-        // 4. 채널 재생성 (재시작 지원)
+        // 8. 채널 재생성 (재시작 지원)
         let (tx, rx) = mpsc::channel(self.config.buffer_capacity);
         self.raw_log_tx = tx;
         self.raw_log_rx = Some(rx);
+
+        // 9. Reset cancellation token for next start
+        self.cancel_token = CancellationToken::new();
 
         self.state = PipelineState::Stopped;
         tracing::info!("log pipeline stopped");
@@ -408,6 +658,37 @@ impl Pipeline for LogPipeline {
     async fn health_check(&self) -> HealthStatus {
         match self.state {
             PipelineState::Running => {
+                let collector_statuses = self.collector_statuses.read().await;
+                let collector_errors: Vec<String> = collector_statuses
+                    .iter()
+                    .filter_map(|(name, status)| match status {
+                        CollectorStatus::Error(reason) => Some(format!("{name}: {reason}")),
+                        _ => None,
+                    })
+                    .collect();
+
+                if !collector_errors.is_empty() {
+                    return HealthStatus::Unhealthy(format!(
+                        "collector errors: {}",
+                        collector_errors.join(", ")
+                    ));
+                }
+
+                let stopped_collectors: Vec<String> = collector_statuses
+                    .iter()
+                    .filter_map(|(name, status)| match status {
+                        CollectorStatus::Stopped => Some(name.clone()),
+                        _ => None,
+                    })
+                    .collect();
+
+                if !stopped_collectors.is_empty() {
+                    return HealthStatus::Degraded(format!(
+                        "collectors stopped unexpectedly: {}",
+                        stopped_collectors.join(", ")
+                    ));
+                }
+
                 let utilization = self.buffer.lock().await.utilization();
                 if utilization > 0.9 {
                     HealthStatus::Degraded(format!(
@@ -584,11 +865,14 @@ impl LogPipelineBuilder {
             alert_generator,
             buffer,
             collectors: CollectorSet::default(),
+            collector_statuses: Arc::new(RwLock::new(HashMap::new())),
             raw_log_rx: Some(raw_log_rx),
             raw_log_tx,
             alert_tx,
             packet_rx: self.packet_rx,
             tasks: Vec::new(),
+            event_receiver_task: None,
+            cancel_token: CancellationToken::new(),
             parse_error_count: Arc::new(AtomicU64::new(0)),
             processed_count: Arc::new(AtomicU64::new(0)),
         };
@@ -697,5 +981,335 @@ mod tests {
 
         // Clean up
         Pipeline::stop(&mut pipeline).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn collector_spawns_syslog_udp_from_syslog_source() {
+        let temp_dir = std::env::temp_dir().join("ironpost_test_syslog_udp");
+        std::fs::create_dir_all(&temp_dir).ok();
+
+        let config = PipelineConfig {
+            rule_dir: temp_dir.to_string_lossy().to_string(),
+            sources: vec!["syslog".to_owned()],
+            syslog_bind: "127.0.0.1:0".to_owned(), // auto port
+            syslog_tcp_bind: "127.0.0.1:0".to_owned(),
+            ..Default::default()
+        };
+
+        let (mut pipeline, _) = LogPipelineBuilder::new().config(config).build().unwrap();
+        Pipeline::start(&mut pipeline).await.unwrap();
+
+        // "syslog" should spawn both UDP and TCP collectors
+        assert_eq!(pipeline.collectors.len(), 2);
+        let statuses = pipeline.collectors.statuses();
+        assert!(statuses.iter().any(|(name, _)| name == "syslog_udp"));
+        assert!(statuses.iter().any(|(name, _)| name == "syslog_tcp"));
+
+        Pipeline::stop(&mut pipeline).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn collector_spawns_syslog_udp_only() {
+        let temp_dir = std::env::temp_dir().join("ironpost_test_syslog_udp_only");
+        std::fs::create_dir_all(&temp_dir).ok();
+
+        let config = PipelineConfig {
+            rule_dir: temp_dir.to_string_lossy().to_string(),
+            sources: vec!["syslog_udp".to_owned()],
+            syslog_bind: "127.0.0.1:0".to_owned(),
+            ..Default::default()
+        };
+
+        let (mut pipeline, _) = LogPipelineBuilder::new().config(config).build().unwrap();
+        Pipeline::start(&mut pipeline).await.unwrap();
+
+        assert_eq!(pipeline.collectors.len(), 1);
+        let statuses = pipeline.collectors.statuses();
+        assert_eq!(statuses[0].0, "syslog_udp");
+
+        Pipeline::stop(&mut pipeline).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn collector_spawns_file_collector() {
+        let temp_dir = std::env::temp_dir().join("ironpost_test_file");
+        std::fs::create_dir_all(&temp_dir).ok();
+
+        let config = PipelineConfig {
+            rule_dir: temp_dir.to_string_lossy().to_string(),
+            sources: vec!["file".to_owned()],
+            watch_paths: vec![temp_dir.join("test.log").to_string_lossy().to_string()],
+            ..Default::default()
+        };
+
+        let (mut pipeline, _) = LogPipelineBuilder::new().config(config).build().unwrap();
+        Pipeline::start(&mut pipeline).await.unwrap();
+
+        assert_eq!(pipeline.collectors.len(), 1);
+        let statuses = pipeline.collectors.statuses();
+        assert_eq!(statuses[0].0, "file");
+
+        Pipeline::stop(&mut pipeline).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn empty_sources_spawns_no_collectors() {
+        let temp_dir = std::env::temp_dir().join("ironpost_test_empty");
+        std::fs::create_dir_all(&temp_dir).ok();
+
+        let config = PipelineConfig {
+            rule_dir: temp_dir.to_string_lossy().to_string(),
+            sources: vec![],
+            enabled: false, // sources empty requires enabled: false
+            ..Default::default()
+        };
+
+        let (mut pipeline, _) = LogPipelineBuilder::new().config(config).build().unwrap();
+        Pipeline::start(&mut pipeline).await.unwrap();
+
+        assert_eq!(pipeline.collectors.len(), 0);
+
+        Pipeline::stop(&mut pipeline).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn unknown_source_skipped_with_warning() {
+        let temp_dir = std::env::temp_dir().join("ironpost_test_unknown");
+        std::fs::create_dir_all(&temp_dir).ok();
+
+        let config = PipelineConfig {
+            rule_dir: temp_dir.to_string_lossy().to_string(),
+            sources: vec!["unknown_source".to_owned(), "syslog_udp".to_owned()],
+            syslog_bind: "127.0.0.1:0".to_owned(),
+            ..Default::default()
+        };
+
+        let (mut pipeline, _) = LogPipelineBuilder::new().config(config).build().unwrap();
+        // Should not fail even with unknown source
+        Pipeline::start(&mut pipeline).await.unwrap();
+
+        // Only syslog_udp should be registered
+        assert_eq!(pipeline.collectors.len(), 1);
+        let statuses = pipeline.collectors.statuses();
+        assert_eq!(statuses[0].0, "syslog_udp");
+
+        Pipeline::stop(&mut pipeline).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn duplicate_collectors_prevented() {
+        let temp_dir = std::env::temp_dir().join("ironpost_test_dedup");
+        std::fs::create_dir_all(&temp_dir).ok();
+
+        let config = PipelineConfig {
+            rule_dir: temp_dir.to_string_lossy().to_string(),
+            sources: vec![
+                "syslog".to_owned(),     // expands to syslog_udp + syslog_tcp
+                "syslog_udp".to_owned(), // duplicate UDP
+                "syslog_tcp".to_owned(), // duplicate TCP
+            ],
+            syslog_bind: "127.0.0.1:0".to_owned(),
+            syslog_tcp_bind: "127.0.0.1:0".to_owned(),
+            ..Default::default()
+        };
+
+        let (mut pipeline, _) = LogPipelineBuilder::new().config(config).build().unwrap();
+        Pipeline::start(&mut pipeline).await.unwrap();
+
+        // Should only have 2 collectors (UDP and TCP), not 4
+        assert_eq!(pipeline.collectors.len(), 2);
+        let statuses = pipeline.collectors.statuses();
+        assert!(statuses.iter().any(|(name, _)| name == "syslog_udp"));
+        assert!(statuses.iter().any(|(name, _)| name == "syslog_tcp"));
+
+        Pipeline::stop(&mut pipeline).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn collector_spawn_failure_does_not_prevent_pipeline_start() {
+        let temp_dir = std::env::temp_dir().join("ironpost_test_spawn_fail");
+        std::fs::create_dir_all(&temp_dir).ok();
+
+        // 파싱 불가능한 주소로 의도적으로 bind 실패를 유도
+        let config = PipelineConfig {
+            rule_dir: temp_dir.to_string_lossy().to_string(),
+            sources: vec!["syslog_udp".to_owned()],
+            syslog_bind: "invalid-bind-address".to_owned(),
+            ..Default::default()
+        };
+
+        let (mut pipeline, _) = LogPipelineBuilder::new().config(config).build().unwrap();
+
+        // Pipeline start should succeed even if individual collectors fail
+        let result = Pipeline::start(&mut pipeline).await;
+        assert!(
+            result.is_ok(),
+            "pipeline should start even if collectors fail to bind"
+        );
+        assert_eq!(pipeline.state_name(), "running");
+
+        // collector runtime 에러가 health에 반영되는지 확인
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let health = Pipeline::health_check(&pipeline).await;
+        assert!(
+            matches!(health, HealthStatus::Unhealthy(_)),
+            "collector bind failure should be visible in health status"
+        );
+
+        Pipeline::stop(&mut pipeline).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn event_receiver_spawned_when_packet_rx_present() {
+        let temp_dir = std::env::temp_dir().join("ironpost_test_event_rx");
+        std::fs::create_dir_all(&temp_dir).ok();
+
+        let (packet_tx, packet_rx) = mpsc::channel(10);
+
+        let config = PipelineConfig {
+            rule_dir: temp_dir.to_string_lossy().to_string(),
+            sources: vec![],
+            enabled: false, // sources empty
+            ..Default::default()
+        };
+
+        let (mut pipeline, _) = LogPipelineBuilder::new()
+            .config(config)
+            .packet_receiver(packet_rx)
+            .build()
+            .unwrap();
+
+        Pipeline::start(&mut pipeline).await.unwrap();
+
+        // event_receiver should be registered
+        let has_event_receiver = pipeline
+            .collectors
+            .statuses()
+            .iter()
+            .any(|(name, _)| name == "event_receiver");
+        assert!(has_event_receiver);
+
+        drop(packet_tx);
+        Pipeline::stop(&mut pipeline).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn multiple_collectors_spawn_simultaneously() {
+        let temp_dir = std::env::temp_dir().join("ironpost_test_multi");
+        std::fs::create_dir_all(&temp_dir).ok();
+
+        let config = PipelineConfig {
+            rule_dir: temp_dir.to_string_lossy().to_string(),
+            sources: vec![
+                "syslog_udp".to_owned(),
+                "syslog_tcp".to_owned(),
+                "file".to_owned(),
+            ],
+            syslog_bind: "127.0.0.1:0".to_owned(),
+            syslog_tcp_bind: "127.0.0.1:0".to_owned(),
+            watch_paths: vec![temp_dir.join("test.log").to_string_lossy().to_string()],
+            ..Default::default()
+        };
+
+        let (mut pipeline, _) = LogPipelineBuilder::new().config(config).build().unwrap();
+        Pipeline::start(&mut pipeline).await.unwrap();
+
+        assert_eq!(pipeline.collectors.len(), 3);
+        let statuses = pipeline.collectors.statuses();
+        assert!(statuses.iter().any(|(name, _)| name == "syslog_udp"));
+        assert!(statuses.iter().any(|(name, _)| name == "syslog_tcp"));
+        assert!(statuses.iter().any(|(name, _)| name == "file"));
+
+        Pipeline::stop(&mut pipeline).await.unwrap();
+    }
+
+    /// H1 회귀 테스트: packet_rx가 재시작 후에도 정상 동작하는지 확인
+    #[tokio::test]
+    async fn packet_rx_survives_restart() {
+        let temp_dir = std::env::temp_dir().join("ironpost_test_packet_rx_restart");
+        std::fs::create_dir_all(&temp_dir).ok();
+
+        // packet_rx를 포함한 파이프라인 생성
+        let (packet_tx, packet_rx) = mpsc::channel(10);
+        let config = PipelineConfig {
+            rule_dir: temp_dir.to_string_lossy().to_string(),
+            sources: vec![], // no other collectors
+            enabled: false,
+            ..Default::default()
+        };
+
+        let (mut pipeline, _alert_rx) = LogPipelineBuilder::new()
+            .config(config)
+            .packet_receiver(packet_rx)
+            .build()
+            .unwrap();
+
+        // 첫 번째 start
+        Pipeline::start(&mut pipeline).await.unwrap();
+        assert!(
+            pipeline
+                .collectors
+                .statuses()
+                .iter()
+                .any(|(name, _)| name == "event_receiver"),
+            "event_receiver should be spawned on first start"
+        );
+
+        // Stop
+        Pipeline::stop(&mut pipeline).await.unwrap();
+
+        // 두 번째 start (재시작) - 이전에는 packet_rx가 None이어서 실패했음
+        let result = Pipeline::start(&mut pipeline).await;
+        assert!(
+            result.is_ok(),
+            "pipeline should restart successfully (H1 fix)"
+        );
+        assert!(
+            pipeline
+                .collectors
+                .statuses()
+                .iter()
+                .any(|(name, _)| name == "event_receiver"),
+            "event_receiver should be re-spawned on restart (H1 fix)"
+        );
+
+        // Clean up
+        drop(packet_tx);
+        Pipeline::stop(&mut pipeline).await.unwrap();
+    }
+
+    /// H2 회귀 테스트: TCP collector의 connection handler가 stop() 시 정리되는지 확인
+    #[tokio::test]
+    async fn tcp_connection_handlers_cleanup_on_stop() {
+        let temp_dir = std::env::temp_dir().join("ironpost_test_tcp_cleanup");
+        std::fs::create_dir_all(&temp_dir).ok();
+
+        let config = PipelineConfig {
+            rule_dir: temp_dir.to_string_lossy().to_string(),
+            sources: vec!["syslog_tcp".to_owned()],
+            syslog_tcp_bind: "127.0.0.1:0".to_owned(),
+            ..Default::default()
+        };
+
+        let (mut pipeline, _alert_rx) = LogPipelineBuilder::new().config(config).build().unwrap();
+
+        // Start pipeline
+        Pipeline::start(&mut pipeline).await.unwrap();
+
+        // 실제 바인드된 주소를 얻기 위해 잠시 대기
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Stop pipeline (H2 fix: connection handlers should be cleaned up)
+        let stop_result =
+            tokio::time::timeout(Duration::from_secs(2), Pipeline::stop(&mut pipeline)).await;
+        assert!(
+            stop_result.is_ok() && stop_result.unwrap().is_ok(),
+            "stop should succeed even with active connections"
+        );
+
+        // restart 가능 여부도 함께 확인 (socket/task 누수 방지)
+        Pipeline::start(&mut pipeline).await.unwrap();
+        Pipeline::stop(&mut pipeline).await.unwrap();
+        assert_eq!(pipeline.state_name(), "stopped");
     }
 }

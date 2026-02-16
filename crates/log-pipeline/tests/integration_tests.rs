@@ -317,6 +317,8 @@ tags:
     // 3. 파이프라인 설정
     let config = PipelineConfig {
         rule_dir: rules_dir.to_str().unwrap().to_owned(),
+        enabled: false,
+        sources: vec![],
         batch_size: 10,
         buffer_capacity: 100,
         flush_interval_secs: 1,
@@ -367,14 +369,28 @@ tags:
     );
     assert_eq!(alert.alert.severity, ironpost_core::types::Severity::High);
 
-    // 10. 통계 확인
+    // 10. 처리 완료 확인 (폴링, 타임아웃 3초)
+    let timeout = Duration::from_secs(3);
+    let start = std::time::Instant::now();
+    loop {
+        let processed = pipeline.processed_count().await;
+        if processed >= 1 {
+            break;
+        }
+        if start.elapsed() > timeout {
+            panic!("timeout waiting for log to be processed");
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    // 11. 통계 확인
     let processed = pipeline.processed_count().await;
     assert_eq!(processed, 1, "expected 1 log to be processed");
 
     let parse_errors = pipeline.parse_error_count().await;
     assert_eq!(parse_errors, 0, "expected no parse errors");
 
-    // 11. 파이프라인 정지
+    // 12. 파이프라인 정지
     pipeline.stop().await.expect("failed to stop pipeline");
 }
 
@@ -417,6 +433,8 @@ tags:
     // 3. 파이프라인 빌드
     let config = PipelineConfig {
         rule_dir: rules_dir.to_str().unwrap().to_owned(),
+        enabled: false,
+        sources: vec![],
         batch_size: 10,
         buffer_capacity: 100,
         flush_interval_secs: 1,
@@ -475,6 +493,8 @@ async fn test_pipeline_restart_scenario() {
     // 2. 파이프라인 빌드
     let config = PipelineConfig {
         rule_dir: rules_dir.to_str().unwrap().to_owned(),
+        enabled: false,
+        sources: vec![],
         batch_size: 10,
         buffer_capacity: 100,
         flush_interval_secs: 1,
@@ -589,6 +609,8 @@ async fn test_multiple_log_injection() {
 
     let config = PipelineConfig {
         rule_dir: rules_dir.to_str().unwrap().to_owned(),
+        enabled: false,
+        sources: vec![],
         batch_size: 5, // 작은 배치 크기로 테스트
         buffer_capacity: 100,
         flush_interval_secs: 1,
@@ -623,8 +645,22 @@ async fn test_multiple_log_injection() {
         sender.send(raw_log).await.expect("failed to send log");
     }
 
-    // 4. 모든 로그가 처리될 때까지 대기
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    // 4. 모든 로그가 처리될 때까지 폴링 대기 (타임아웃 5초)
+    let timeout = Duration::from_secs(5);
+    let start = std::time::Instant::now();
+    loop {
+        let processed = pipeline.processed_count().await;
+        if processed >= log_count {
+            break;
+        }
+        if start.elapsed() > timeout {
+            panic!(
+                "timeout waiting for logs to be processed: {} / {}",
+                processed, log_count
+            );
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
 
     // 5. 통계 확인
     let processed = pipeline.processed_count().await;
@@ -684,6 +720,8 @@ tags:
     // 3. 파이프라인 빌드 (빠른 플러시로 테스트 속도 향상)
     let config = PipelineConfig {
         rule_dir: rules_dir.to_str().unwrap().to_owned(),
+        enabled: false,
+        sources: vec![],
         batch_size: 1, // 단일 로그로 즉시 플러시
         buffer_capacity: 100,
         flush_interval_secs: 1,
@@ -744,10 +782,14 @@ async fn test_pipeline_health_check_states() {
     // 1. 파이프라인 빌드
     let temp_dir = tempfile::tempdir().expect("failed to create temp dir");
     let rules_dir = temp_dir.path().join("rules");
+    let log_file = temp_dir.path().join("health.log");
     std::fs::create_dir(&rules_dir).expect("failed to create rules dir");
+    std::fs::write(&log_file, "").expect("failed to create log file");
 
     let config = PipelineConfig {
         rule_dir: rules_dir.to_str().unwrap().to_owned(),
+        sources: vec!["file".to_owned()],
+        watch_paths: vec![log_file.to_str().unwrap().to_owned()],
         ..Default::default()
     };
 

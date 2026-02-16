@@ -16,6 +16,7 @@ use tokio::fs::{File, metadata};
 use tokio::io::{AsyncBufReadExt, AsyncSeekExt, BufReader};
 use tokio::sync::mpsc;
 use tokio::time::sleep;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 use super::{CollectorStatus, RawLog};
@@ -73,6 +74,8 @@ pub struct FileCollector {
     /// 수집된 로그 전송 채널
     #[allow(dead_code)]
     tx: mpsc::Sender<RawLog>,
+    /// graceful shutdown을 위한 취소 토큰
+    cancel_token: CancellationToken,
     /// 파일별 추적 상태
     #[allow(dead_code)]
     file_states: Vec<FileState>,
@@ -84,6 +87,15 @@ pub struct FileCollector {
 impl FileCollector {
     /// 새 파일 수집기를 생성합니다.
     pub fn new(config: FileCollectorConfig, tx: mpsc::Sender<RawLog>) -> Self {
+        Self::new_with_cancel(config, tx, CancellationToken::new())
+    }
+
+    /// 취소 토큰을 포함하여 새 파일 수집기를 생성합니다.
+    pub fn new_with_cancel(
+        config: FileCollectorConfig,
+        tx: mpsc::Sender<RawLog>,
+        cancel_token: CancellationToken,
+    ) -> Self {
         let file_states = config
             .watch_paths
             .iter()
@@ -98,6 +110,7 @@ impl FileCollector {
         Self {
             config,
             tx,
+            cancel_token,
             file_states,
             status: CollectorStatus::Idle,
         }
@@ -117,7 +130,19 @@ impl FileCollector {
         let poll_interval = Duration::from_millis(self.config.poll_interval_ms);
 
         loop {
+            if self.cancel_token.is_cancelled() {
+                info!("File collector received shutdown signal");
+                self.status = CollectorStatus::Stopped;
+                break;
+            }
+
             for i in 0..self.file_states.len() {
+                if self.cancel_token.is_cancelled() {
+                    info!("File collector received shutdown signal");
+                    self.status = CollectorStatus::Stopped;
+                    return Ok(());
+                }
+
                 let path = self.file_states[i].path.clone();
                 let mut offset = self.file_states[i].offset;
                 #[cfg(unix)]
@@ -173,14 +198,30 @@ impl FileCollector {
                     Err(e) => {
                         error!("Failed to read file {:?}: {}", path, e);
                         // 에러 발생 시 백오프 후 계속 진행
-                        sleep(Duration::from_secs(1)).await;
+                        tokio::select! {
+                            _ = sleep(Duration::from_secs(1)) => {}
+                            _ = self.cancel_token.cancelled() => {
+                                info!("File collector received shutdown signal");
+                                self.status = CollectorStatus::Stopped;
+                                return Ok(());
+                            }
+                        }
                     }
                 }
             }
 
             // 폴링 간격 대기
-            sleep(poll_interval).await;
+            tokio::select! {
+                _ = sleep(poll_interval) => {}
+                _ = self.cancel_token.cancelled() => {
+                    info!("File collector received shutdown signal");
+                    self.status = CollectorStatus::Stopped;
+                    break;
+                }
+            }
         }
+
+        Ok(())
     }
 
     /// 단일 파일에서 새로운 라인을 읽습니다.

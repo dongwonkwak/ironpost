@@ -37,8 +37,10 @@ pub struct PipelineConfig {
     pub enabled: bool,
     /// 수집 소스 목록 (syslog, file 등)
     pub sources: Vec<String>,
-    /// Syslog 수신 바인드 주소
+    /// Syslog UDP 수신 바인드 주소
     pub syslog_bind: String,
+    /// Syslog TCP 수신 바인드 주소
+    pub syslog_tcp_bind: String,
     /// 파일 감시 경로 목록
     pub watch_paths: Vec<String>,
     /// 배치 크기 (이 개수만큼 모이면 플러시)
@@ -67,6 +69,7 @@ impl Default for PipelineConfig {
             enabled: true,
             sources: vec!["syslog".to_owned(), "file".to_owned()],
             syslog_bind: "0.0.0.0:514".to_owned(),
+            syslog_tcp_bind: "0.0.0.0:601".to_owned(),
             watch_paths: vec!["/var/log/syslog".to_owned()],
             batch_size: 100,
             flush_interval_secs: 5,
@@ -89,6 +92,7 @@ impl PipelineConfig {
             enabled: core.enabled,
             sources: core.sources.clone(),
             syslog_bind: core.syslog_bind.clone(),
+            syslog_tcp_bind: core.syslog_tcp_bind.clone(),
             watch_paths: core.watch_paths.clone(),
             batch_size: core.batch_size,
             flush_interval_secs: core.flush_interval_secs,
@@ -247,9 +251,15 @@ impl PipelineConfigBuilder {
         self
     }
 
-    /// Syslog 바인드 주소를 설정합니다.
+    /// Syslog UDP 바인드 주소를 설정합니다.
     pub fn syslog_bind(mut self, bind: impl Into<String>) -> Self {
         self.config.syslog_bind = bind.into();
+        self
+    }
+
+    /// Syslog TCP 바인드 주소를 설정합니다.
+    pub fn syslog_tcp_bind(mut self, bind: impl Into<String>) -> Self {
+        self.config.syslog_tcp_bind = bind.into();
         self
     }
 
