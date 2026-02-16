@@ -624,7 +624,8 @@ async fn test_multiple_log_injection() {
     }
 
     // 4. 모든 로그가 처리될 때까지 대기
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    // flush_interval_secs=1초이므로 충분한 시간 대기 (GitHub workflow 느린 환경 고려)
+    tokio::time::sleep(Duration::from_secs(2)).await;
 
     // 5. 통계 확인
     let processed = pipeline.processed_count().await;
