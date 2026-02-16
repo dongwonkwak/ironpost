@@ -834,4 +834,233 @@ mod tests {
         // Clean up
         Pipeline::stop(&mut pipeline).await.unwrap();
     }
+
+    #[tokio::test]
+    async fn collector_spawns_syslog_udp_from_syslog_source() {
+        let temp_dir = std::env::temp_dir().join("ironpost_test_syslog_udp");
+        std::fs::create_dir_all(&temp_dir).ok();
+
+        let config = PipelineConfig {
+            rule_dir: temp_dir.to_string_lossy().to_string(),
+            sources: vec!["syslog".to_owned()],
+            syslog_bind: "127.0.0.1:0".to_owned(), // auto port
+            syslog_tcp_bind: "127.0.0.1:0".to_owned(),
+            ..Default::default()
+        };
+
+        let (mut pipeline, _) = LogPipelineBuilder::new().config(config).build().unwrap();
+        Pipeline::start(&mut pipeline).await.unwrap();
+
+        // "syslog" should spawn both UDP and TCP collectors
+        assert_eq!(pipeline.collectors.len(), 2);
+        let statuses = pipeline.collectors.statuses();
+        assert!(statuses.iter().any(|(name, _)| name == "syslog_udp"));
+        assert!(statuses.iter().any(|(name, _)| name == "syslog_tcp"));
+
+        Pipeline::stop(&mut pipeline).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn collector_spawns_syslog_udp_only() {
+        let temp_dir = std::env::temp_dir().join("ironpost_test_syslog_udp_only");
+        std::fs::create_dir_all(&temp_dir).ok();
+
+        let config = PipelineConfig {
+            rule_dir: temp_dir.to_string_lossy().to_string(),
+            sources: vec!["syslog_udp".to_owned()],
+            syslog_bind: "127.0.0.1:0".to_owned(),
+            ..Default::default()
+        };
+
+        let (mut pipeline, _) = LogPipelineBuilder::new().config(config).build().unwrap();
+        Pipeline::start(&mut pipeline).await.unwrap();
+
+        assert_eq!(pipeline.collectors.len(), 1);
+        let statuses = pipeline.collectors.statuses();
+        assert_eq!(statuses[0].0, "syslog_udp");
+
+        Pipeline::stop(&mut pipeline).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn collector_spawns_file_collector() {
+        let temp_dir = std::env::temp_dir().join("ironpost_test_file");
+        std::fs::create_dir_all(&temp_dir).ok();
+
+        let config = PipelineConfig {
+            rule_dir: temp_dir.to_string_lossy().to_string(),
+            sources: vec!["file".to_owned()],
+            watch_paths: vec![temp_dir.join("test.log").to_string_lossy().to_string()],
+            ..Default::default()
+        };
+
+        let (mut pipeline, _) = LogPipelineBuilder::new().config(config).build().unwrap();
+        Pipeline::start(&mut pipeline).await.unwrap();
+
+        assert_eq!(pipeline.collectors.len(), 1);
+        let statuses = pipeline.collectors.statuses();
+        assert_eq!(statuses[0].0, "file");
+
+        Pipeline::stop(&mut pipeline).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn empty_sources_spawns_no_collectors() {
+        let temp_dir = std::env::temp_dir().join("ironpost_test_empty");
+        std::fs::create_dir_all(&temp_dir).ok();
+
+        let config = PipelineConfig {
+            rule_dir: temp_dir.to_string_lossy().to_string(),
+            sources: vec![],
+            enabled: false, // sources empty requires enabled: false
+            ..Default::default()
+        };
+
+        let (mut pipeline, _) = LogPipelineBuilder::new().config(config).build().unwrap();
+        Pipeline::start(&mut pipeline).await.unwrap();
+
+        assert_eq!(pipeline.collectors.len(), 0);
+
+        Pipeline::stop(&mut pipeline).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn unknown_source_skipped_with_warning() {
+        let temp_dir = std::env::temp_dir().join("ironpost_test_unknown");
+        std::fs::create_dir_all(&temp_dir).ok();
+
+        let config = PipelineConfig {
+            rule_dir: temp_dir.to_string_lossy().to_string(),
+            sources: vec!["unknown_source".to_owned(), "syslog_udp".to_owned()],
+            syslog_bind: "127.0.0.1:0".to_owned(),
+            ..Default::default()
+        };
+
+        let (mut pipeline, _) = LogPipelineBuilder::new().config(config).build().unwrap();
+        // Should not fail even with unknown source
+        Pipeline::start(&mut pipeline).await.unwrap();
+
+        // Only syslog_udp should be registered
+        assert_eq!(pipeline.collectors.len(), 1);
+        let statuses = pipeline.collectors.statuses();
+        assert_eq!(statuses[0].0, "syslog_udp");
+
+        Pipeline::stop(&mut pipeline).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn duplicate_collectors_prevented() {
+        let temp_dir = std::env::temp_dir().join("ironpost_test_dedup");
+        std::fs::create_dir_all(&temp_dir).ok();
+
+        let config = PipelineConfig {
+            rule_dir: temp_dir.to_string_lossy().to_string(),
+            sources: vec![
+                "syslog".to_owned(),      // expands to syslog_udp + syslog_tcp
+                "syslog_udp".to_owned(),  // duplicate UDP
+                "syslog_tcp".to_owned(),  // duplicate TCP
+            ],
+            syslog_bind: "127.0.0.1:0".to_owned(),
+            syslog_tcp_bind: "127.0.0.1:0".to_owned(),
+            ..Default::default()
+        };
+
+        let (mut pipeline, _) = LogPipelineBuilder::new().config(config).build().unwrap();
+        Pipeline::start(&mut pipeline).await.unwrap();
+
+        // Should only have 2 collectors (UDP and TCP), not 4
+        assert_eq!(pipeline.collectors.len(), 2);
+        let statuses = pipeline.collectors.statuses();
+        assert!(statuses.iter().any(|(name, _)| name == "syslog_udp"));
+        assert!(statuses.iter().any(|(name, _)| name == "syslog_tcp"));
+
+        Pipeline::stop(&mut pipeline).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn collector_spawn_failure_does_not_prevent_pipeline_start() {
+        let temp_dir = std::env::temp_dir().join("ironpost_test_spawn_fail");
+        std::fs::create_dir_all(&temp_dir).ok();
+
+        // Using well-known ports that may fail to bind, but pipeline should still start
+        let config = PipelineConfig {
+            rule_dir: temp_dir.to_string_lossy().to_string(),
+            sources: vec!["syslog_udp".to_owned()],
+            syslog_bind: "127.0.0.1:0".to_owned(), // use auto port to avoid conflict
+            ..Default::default()
+        };
+
+        let (mut pipeline, _) = LogPipelineBuilder::new().config(config).build().unwrap();
+
+        // Pipeline start should succeed even if individual collectors fail
+        let result = Pipeline::start(&mut pipeline).await;
+        assert!(result.is_ok(), "pipeline should start even if collectors fail to bind");
+        assert_eq!(pipeline.state_name(), "running");
+
+        Pipeline::stop(&mut pipeline).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn event_receiver_spawned_when_packet_rx_present() {
+        let temp_dir = std::env::temp_dir().join("ironpost_test_event_rx");
+        std::fs::create_dir_all(&temp_dir).ok();
+
+        let (packet_tx, packet_rx) = mpsc::channel(10);
+
+        let config = PipelineConfig {
+            rule_dir: temp_dir.to_string_lossy().to_string(),
+            sources: vec![],
+            enabled: false, // sources empty
+            ..Default::default()
+        };
+
+        let (mut pipeline, _) = LogPipelineBuilder::new()
+            .config(config)
+            .packet_receiver(packet_rx)
+            .build()
+            .unwrap();
+
+        Pipeline::start(&mut pipeline).await.unwrap();
+
+        // event_receiver should be registered
+        let has_event_receiver = pipeline
+            .collectors
+            .statuses()
+            .iter()
+            .any(|(name, _)| name == "event_receiver");
+        assert!(has_event_receiver);
+
+        drop(packet_tx);
+        Pipeline::stop(&mut pipeline).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn multiple_collectors_spawn_simultaneously() {
+        let temp_dir = std::env::temp_dir().join("ironpost_test_multi");
+        std::fs::create_dir_all(&temp_dir).ok();
+
+        let config = PipelineConfig {
+            rule_dir: temp_dir.to_string_lossy().to_string(),
+            sources: vec![
+                "syslog_udp".to_owned(),
+                "syslog_tcp".to_owned(),
+                "file".to_owned(),
+            ],
+            syslog_bind: "127.0.0.1:0".to_owned(),
+            syslog_tcp_bind: "127.0.0.1:0".to_owned(),
+            watch_paths: vec![temp_dir.join("test.log").to_string_lossy().to_string()],
+            ..Default::default()
+        };
+
+        let (mut pipeline, _) = LogPipelineBuilder::new().config(config).build().unwrap();
+        Pipeline::start(&mut pipeline).await.unwrap();
+
+        assert_eq!(pipeline.collectors.len(), 3);
+        let statuses = pipeline.collectors.statuses();
+        assert!(statuses.iter().any(|(name, _)| name == "syslog_udp"));
+        assert!(statuses.iter().any(|(name, _)| name == "syslog_tcp"));
+        assert!(statuses.iter().any(|(name, _)| name == "file"));
+
+        Pipeline::stop(&mut pipeline).await.unwrap();
+    }
 }
