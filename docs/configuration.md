@@ -276,3 +276,123 @@ postgresql://***REDACTED***@host:5432/db
 | `scan_interval_secs` | `86400` | 주기적 스캔 간격 (0=수동, 60~604,800) |
 | `max_file_size` | `10,485,760` | lockfile 최대 크기 (10MB) |
 | `max_packages` | `50,000` | 최대 허용 패키지 수 |
+
+## Metrics 설정 (선택사항)
+
+Ironpost는 29개의 Prometheus 메트릭을 노출하여 Grafana 대시보드에서 모니터링할 수 있습니다.
+
+### 메트릭 활성화
+
+```toml
+[metrics]
+enabled = true
+listen_addr = "127.0.0.1"  # Docker에서는 "0.0.0.0" 사용
+port = 9100
+endpoint = "/metrics"
+```
+
+### 메트릭 환경변수
+
+| 필드 | 환경변수 | 타입 | 기본값 | 허용값/범위 |
+|------|---------|------|--------|------------|
+| `enabled` | `IRONPOST_METRICS_ENABLED` | bool | `false` | true, false |
+| `listen_addr` | `IRONPOST_METRICS_LISTEN_ADDR` | String | `"127.0.0.1"` | 임의 IP 주소 |
+| `port` | `IRONPOST_METRICS_PORT` | u16 | `9100` | 1024 ~ 65535 |
+| `endpoint` | `IRONPOST_METRICS_ENDPOINT` | String | `"/metrics"` | URL 경로 |
+
+### 메트릭 카테고리 (29개)
+
+**eBPF 엔진 (7개)**:
+- `ebpf_packets_received_total`: 수신한 패킷 수
+- `ebpf_packets_processed_total`: 처리된 패킷 수
+- `ebpf_packets_dropped_total`: 드롭된 패킷 수
+- `ebpf_syn_floods_detected_total`: 감지된 SYN flood 공격 수
+- `ebpf_port_scans_detected_total`: 감지된 포트 스캔 수
+- `ebpf_bytes_processed_total`: 처리된 바이트 수
+- `ebpf_processing_latency_us`: 패킷 처리 지연시간 (µs)
+
+**로그 파이프라인 (8개)**:
+- `log_pipeline_messages_received_total`: 수신한 로그 메시지 수
+- `log_pipeline_messages_parsed_total`: 파싱된 메시지 수
+- `log_pipeline_parse_errors_total`: 파싱 오류 수
+- `log_pipeline_rules_matched_total`: 매칭된 규칙 수
+- `log_pipeline_alerts_generated_total`: 생성된 알림 수
+- `log_pipeline_batches_processed_total`: 처리된 배치 수
+- `log_pipeline_buffer_size`: 현재 버퍼 크기
+- `log_pipeline_processing_time_ms`: 메시지 처리 시간 (ms)
+
+**컨테이너 격리 (6개)**:
+- `container_guard_alerts_received_total`: 수신한 알림 수
+- `container_guard_actions_executed_total`: 실행된 격리 액션 수
+- `container_guard_actions_failed_total`: 실패한 액션 수
+- `container_guard_containers_isolated`: 현재 격리된 컨테이너 수
+- `container_guard_action_duration_ms`: 액션 실행 시간 (ms)
+- `container_guard_docker_api_calls_total`: Docker API 호출 수
+
+**SBOM 스캐너 (5개)**:
+- `sbom_scans_started_total`: 시작된 스캔 수
+- `sbom_scans_completed_total`: 완료된 스캔 수
+- `sbom_vulnerabilities_found_total`: 발견된 취약점 수
+- `sbom_packages_scanned_total`: 스캔된 패키지 수
+- `sbom_scan_duration_seconds`: 스캔 실행 시간 (초)
+
+**데몬 상태 (3개)**:
+- `ironpost_uptime_seconds`: 데몬 가동시간 (초)
+- `ironpost_modules_health`: 모듈 건강 상태 (1=healthy, 0=degraded/unhealthy)
+- `ironpost_version`: 데몬 버전 (label)
+
+### Grafana 대시보드
+
+Docker Compose로 실행 시 Grafana 대시보드를 사용할 수 있습니다:
+
+```bash
+# 모니터링 스택 시작 (Prometheus + Grafana)
+docker compose --profile monitoring up -d
+
+# Grafana 접속
+# URL: http://localhost:3000
+# ID: admin / Password: changeme
+```
+
+**포함된 대시보드:**
+1. **Overview**: 전체 시스템 상태, 각 모듈 메트릭 요약
+2. **Log Pipeline**: 로그 수신율, 파싱 성공률, 알림 발생 추이
+3. **Security**: 컨테이너 격리 현황, 취약점 발견 현황, 공격 감지 추이
+
+### localhost vs Docker 환경
+
+**로컬 개발 (localhost):**
+```toml
+[metrics]
+enabled = true
+listen_addr = "127.0.0.1"
+port = 9100
+endpoint = "/metrics"
+```
+
+```bash
+# 메트릭 확인
+curl http://127.0.0.1:9100/metrics
+```
+
+**Docker 환경:**
+```toml
+[metrics]
+enabled = true
+listen_addr = "0.0.0.0"  # 컨테이너 외부에서 접근 가능
+port = 9100
+endpoint = "/metrics"
+```
+
+```bash
+# 호스트에서 메트릭 확인
+curl http://localhost:9100/metrics
+
+# 또는 Docker 컨테이너 내부에서
+docker compose exec ironpost curl http://localhost:9100/metrics
+```
+
+**보안 주의사항:**
+- 프로덕션 환경에서 `listen_addr = "0.0.0.0"`은 위험할 수 있습니다
+- 방화벽으로 메트릭 포트(9100)를 제한하거나, 리버스 프록시(nginx 등)를 사용하세요
+- 메트릭 엔드포인트는 인증을 지원하지 않으므로, 신뢰할 수 있는 네트워크에서만 노출하세요

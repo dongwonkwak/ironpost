@@ -13,6 +13,7 @@ tracing = { workspace = true }
 bytes = { workspace = true }
 toml = { workspace = true }
 uuid = { workspace = true }
+metrics = { workspace = true }
 
 [dev-dependencies]
 serial_test = { workspace = true }

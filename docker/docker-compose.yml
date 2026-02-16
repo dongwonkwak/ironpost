@@ -68,6 +68,7 @@ services:
     ports:
       - "${IRONPOST_SYSLOG_PORT:-514}:1514/udp"
       - "${IRONPOST_API_PORT:-8080}:8080"
+      - "${IRONPOST_METRICS_BIND_HOST:-127.0.0.1}:${IRONPOST_METRICS_PORT:-9100}:${IRONPOST_METRICS_PORT:-9100}"
     environment:
       # General settings
       IRONPOST_GENERAL_LOG_LEVEL: ${IRONPOST_LOG_LEVEL:-info}
@@ -101,6 +102,11 @@ services:
       IRONPOST_SBOM_ENABLED: ${IRONPOST_SBOM_ENABLED:-false}
       IRONPOST_SBOM_MIN_SEVERITY: ${IRONPOST_SBOM_MIN_SEVERITY:-medium}
       IRONPOST_SBOM_OUTPUT_FORMAT: ${IRONPOST_SBOM_OUTPUT_FORMAT:-cyclonedx}
+
+      # Metrics
+      IRONPOST_METRICS_ENABLED: ${IRONPOST_METRICS_ENABLED:-true}
+      IRONPOST_METRICS_PORT: ${IRONPOST_METRICS_PORT:-9100}
+      IRONPOST_METRICS_LISTEN_ADDR: "0.0.0.0"
     volumes:
       # Data persistence
       - ironpost-data:/var/lib/ironpost
@@ -146,7 +152,7 @@ services:
       - "${PROMETHEUS_PORT:-9090}:9090"
     volumes:
       - prometheus-data:/prometheus
-      # - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
     networks:
       - ironpost-net
     profiles:
@@ -178,6 +184,8 @@ services:
       GF_INSTALL_PLUGINS: ''
     volumes:
       - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
     networks:
       - ironpost-net
     depends_on:

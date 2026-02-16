@@ -23,6 +23,7 @@ use tracing::{debug, error, info, warn};
 
 use ironpost_core::error::IronpostError;
 use ironpost_core::event::{ActionEvent, AlertEvent, MODULE_CONTAINER_GUARD};
+use ironpost_core::metrics as m;
 use ironpost_core::pipeline::{HealthStatus, Pipeline};
 use ironpost_core::plugin::{Plugin, PluginInfo, PluginState, PluginType};
 
@@ -196,6 +197,7 @@ impl<D: DockerClient> Pipeline for ContainerGuard<D> {
                 tokio::select! {
                     Some(alert) = alert_rx.recv() => {
                         alerts_processed.fetch_add(1, Ordering::Relaxed);
+                        metrics::counter!(m::CONTAINER_GUARD_ALERTS_PROCESSED_TOTAL).increment(1);
                         debug!(
                             alert_id = %alert.alert.id,
                             severity = %alert.severity,
@@ -213,7 +215,10 @@ impl<D: DockerClient> Pipeline for ContainerGuard<D> {
                             if let Err(e) = mon.refresh_if_needed().await {
                                 warn!(error = %e, "failed to refresh container list");
                             }
-                            mon.all_containers().into_iter().cloned().collect()
+                            let all_containers = mon.all_containers().into_iter().cloned().collect::<Vec<_>>();
+                            #[allow(clippy::cast_precision_loss)]
+                            metrics::gauge!(m::CONTAINER_GUARD_MONITORED_CONTAINERS).set(all_containers.len() as f64);
+                            all_containers
                         };
 
                         // Sort containers by ID for deterministic matching
@@ -223,9 +228,13 @@ impl<D: DockerClient> Pipeline for ContainerGuard<D> {
 
                         // Evaluate policies for all containers using a single snapshot/lock
                         let engine = policy_engine.lock().await;
+                        let policy_count = engine.policy_count();
+                        #[allow(clippy::cast_precision_loss)]
+                        metrics::gauge!(m::CONTAINER_GUARD_POLICIES_LOADED).set(policy_count as f64);
 
                         for container in &containers {
                             if let Some(policy_match) = engine.evaluate(&alert, container) {
+                                metrics::counter!(m::CONTAINER_GUARD_POLICY_VIOLATIONS_TOTAL).increment(1);
                                 info!(
                                     container_id = %container.id,
                                     container_name = %container.name,
@@ -234,6 +243,7 @@ impl<D: DockerClient> Pipeline for ContainerGuard<D> {
                                     "policy matched, executing isolation"
                                 );
 
+                                let action_name = format!("{}", policy_match.action);
                                 let trace_id = alert.metadata.trace_id.clone();
                                 match executor
                                     .execute(
@@ -245,9 +255,20 @@ impl<D: DockerClient> Pipeline for ContainerGuard<D> {
                                 {
                                     Ok(()) => {
                                         isolations_executed.fetch_add(1, Ordering::Relaxed);
+                                        metrics::counter!(
+                                            m::CONTAINER_GUARD_ISOLATIONS_TOTAL,
+                                            m::LABEL_ACTION => action_name.to_lowercase(),
+                                            m::LABEL_RESULT => "success"
+                                        ).increment(1);
                                     }
                                     Err(e) => {
                                         isolation_failures.fetch_add(1, Ordering::Relaxed);
+                                        metrics::counter!(
+                                            m::CONTAINER_GUARD_ISOLATIONS_TOTAL,
+                                            m::LABEL_ACTION => action_name.to_lowercase(),
+                                            m::LABEL_RESULT => "failure"
+                                        ).increment(1);
+                                        metrics::counter!(m::CONTAINER_GUARD_ISOLATION_FAILURES_TOTAL).increment(1);
                                         error!(
                                             container_id = %container.id,
                                             error = %e,

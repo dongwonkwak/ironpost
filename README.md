@@ -25,6 +25,7 @@
 | **로그 파이프라인** | Syslog/JSON 파싱(50k msg/s), YAML 룰 엔진으로 위협 탐지 |
 | **컨테이너 격리** | 알림 기반 Docker 컨테이너 자동 격리(pause/stop/network disconnect) |
 | **SBOM & CVE 스캐닝** | Cargo.lock/package-lock.json 파싱, CycloneDX/SPDX 생성, 로컬 CVE 스캔 |
+| **Prometheus 메트릭 + Grafana** | 29개 메트릭 노출, 3개 대시보드 (Overview, Log Pipeline, Security) |
 | **통합 CLI & 데몬** | 단일 ironpost.toml 설정, 핫리로드, 구조화 JSON 로깅 |
 
 ---
@@ -182,10 +183,10 @@ eBPF 빌드, 상세 설정, Docker 데모 등은 [시작 가이드](docs/getting
 ## Roadmap
 
 향후 계획:
-- Prometheus 메트릭 + Grafana 대시보드
 - 파서 fuzzing (cargo-fuzz)
 - 플러그인 아키텍처 확장 (외부 플러그인, WASM)
 - GitHub Release 자동화 (cargo-dist)
+- Kubernetes 배포 (Helm chart)
 
 ---
 

@@ -1,0 +1,20 @@
+# Ironpost Prometheus Configuration
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  scrape_timeout: 10s
+
+scrape_configs:
+  # Ironpost daemon metrics
+  - job_name: 'ironpost'
+    static_configs:
+      - targets: ['ironpost:9100']
+        labels:
+          instance: 'ironpost-daemon'
+    metrics_path: '/metrics'
+    scheme: 'http'
+
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']

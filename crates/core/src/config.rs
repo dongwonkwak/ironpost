@@ -38,6 +38,9 @@ pub struct IronpostConfig {
     /// 일반 설정
     #[serde(default)]
     pub general: GeneralConfig,
+    /// 메트릭 수집 및 Prometheus 노출 설정
+    #[serde(default)]
+    pub metrics: MetricsConfig,
     /// eBPF 엔진 설정
     #[serde(default)]
     pub ebpf: EbpfConfig,
@@ -131,6 +134,15 @@ impl IronpostConfig {
         override_string(&mut self.general.log_format, "IRONPOST_GENERAL_LOG_FORMAT");
         override_string(&mut self.general.data_dir, "IRONPOST_GENERAL_DATA_DIR");
         override_string(&mut self.general.pid_file, "IRONPOST_GENERAL_PID_FILE");
+
+        // Metrics
+        override_bool(&mut self.metrics.enabled, "IRONPOST_METRICS_ENABLED");
+        override_string(
+            &mut self.metrics.listen_addr,
+            "IRONPOST_METRICS_LISTEN_ADDR",
+        );
+        override_u16(&mut self.metrics.port, "IRONPOST_METRICS_PORT");
+        override_string(&mut self.metrics.endpoint, "IRONPOST_METRICS_ENDPOINT");
 
         // eBPF
         override_bool(&mut self.ebpf.enabled, "IRONPOST_EBPF_ENABLED");
@@ -290,6 +302,11 @@ impl IronpostConfig {
             }
         }
 
+        // Metrics validation (if enabled)
+        if self.metrics.enabled {
+            self.metrics.validate()?;
+        }
+
         // Module-specific validation (only for enabled modules)
         if self.ebpf.enabled {
             self.ebpf.validate()?;
@@ -332,6 +349,66 @@ impl Default for GeneralConfig {
             data_dir: "/var/lib/ironpost".to_owned(),
             pid_file: "/var/run/ironpost/ironpost.pid".to_owned(),
         }
+    }
+}
+
+/// 메트릭 수집 및 Prometheus 노출 설정
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MetricsConfig {
+    /// 메트릭 엔드포인트 활성화 여부
+    pub enabled: bool,
+    /// HTTP 리스너 바인드 주소
+    pub listen_addr: String,
+    /// HTTP 리스너 포트
+    pub port: u16,
+    /// 메트릭 엔드포인트 경로 (현재는 `/metrics`만 지원)
+    pub endpoint: String,
+}
+
+impl Default for MetricsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            listen_addr: "127.0.0.1".to_owned(),
+            port: 9100,
+            endpoint: "/metrics".to_owned(),
+        }
+    }
+}
+
+impl MetricsConfig {
+    /// Validate metrics configuration values.
+    pub fn validate(&self) -> Result<(), IronpostError> {
+        if self.port == 0 {
+            return Err(ConfigError::InvalidValue {
+                field: "metrics.port".to_owned(),
+                reason: "must be greater than 0".to_owned(),
+            }
+            .into());
+        }
+        if self.listen_addr.is_empty() {
+            return Err(ConfigError::InvalidValue {
+                field: "metrics.listen_addr".to_owned(),
+                reason: "must not be empty".to_owned(),
+            }
+            .into());
+        }
+        if !self.endpoint.starts_with('/') {
+            return Err(ConfigError::InvalidValue {
+                field: "metrics.endpoint".to_owned(),
+                reason: "must start with '/'".to_owned(),
+            }
+            .into());
+        }
+        if self.endpoint != "/metrics" {
+            return Err(ConfigError::InvalidValue {
+                field: "metrics.endpoint".to_owned(),
+                reason: "only '/metrics' is currently supported".to_owned(),
+            }
+            .into());
+        }
+        Ok(())
     }
 }
 
@@ -669,6 +746,19 @@ fn override_u64(target: &mut u64, env_key: &str) {
     }
 }
 
+fn override_u16(target: &mut u16, env_key: &str) {
+    if let Ok(val) = std::env::var(env_key) {
+        match val.parse::<u16>() {
+            Ok(parsed) => *target = parsed,
+            Err(_) => warn!(
+                env_key,
+                value = val.as_str(),
+                "failed to parse u16 from env var, ignoring"
+            ),
+        }
+    }
+}
+
 fn override_csv(target: &mut Vec<String>, env_key: &str) {
     if let Ok(val) = std::env::var(env_key) {
         *target = val.split(',').map(|s| s.trim().to_owned()).collect();
@@ -678,6 +768,7 @@ fn override_csv(target: &mut Vec<String>, env_key: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     #[test]
     fn default_config_has_sane_values() {
@@ -839,6 +930,7 @@ output_format = "spdx"
     }
 
     #[test]
+    #[serial]
     fn env_override_string() {
         let mut val = "original".to_owned();
         // SAFETY: 테스트는 단일 스레드에서 실행되므로 환경변수 조작이 안전합니다.
@@ -850,6 +942,7 @@ output_format = "spdx"
     }
 
     #[test]
+    #[serial]
     fn env_override_bool_valid() {
         let mut val = false;
         // SAFETY: 테스트는 단일 스레드에서 실행되므로 환경변수 조작이 안전합니다.
@@ -861,6 +954,7 @@ output_format = "spdx"
     }
 
     #[test]
+    #[serial]
     fn env_override_bool_invalid_keeps_original() {
         let mut val = false;
         // SAFETY: 테스트는 단일 스레드에서 실행되므로 환경변수 조작이 안전합니다.
@@ -872,6 +966,7 @@ output_format = "spdx"
     }
 
     #[test]
+    #[serial]
     fn env_override_csv() {
         let mut val = vec!["a".to_owned()];
         // SAFETY: 테스트는 단일 스레드에서 실행되므로 환경변수 조작이 안전합니다.
@@ -911,5 +1006,181 @@ output_format = "spdx"
             err,
             IronpostError::Config(ConfigError::FileNotFound { .. })
         ));
+    }
+
+    // ─── MetricsConfig tests ───────────────────────────────────────────
+
+    #[test]
+    fn metrics_config_default() {
+        let config = MetricsConfig::default();
+        assert!(config.enabled);
+        assert_eq!(config.listen_addr, "127.0.0.1");
+        assert_eq!(config.port, 9100);
+        assert_eq!(config.endpoint, "/metrics");
+    }
+
+    #[test]
+    fn metrics_config_default_passes_validation() {
+        let config = MetricsConfig::default();
+        config.validate().unwrap();
+    }
+
+    #[test]
+    fn config_without_metrics_section_uses_defaults() {
+        let toml = r#"
+[general]
+log_level = "info"
+"#;
+        let config = IronpostConfig::parse(toml).unwrap();
+        assert!(config.metrics.enabled);
+        assert_eq!(config.metrics.port, 9100);
+        assert_eq!(config.metrics.endpoint, "/metrics");
+    }
+
+    #[test]
+    fn config_with_metrics_section() {
+        let toml = r#"
+[metrics]
+enabled = false
+listen_addr = "127.0.0.1"
+port = 9101
+endpoint = "/prometheus"
+"#;
+        let config = IronpostConfig::parse(toml).unwrap();
+        assert!(!config.metrics.enabled);
+        assert_eq!(config.metrics.listen_addr, "127.0.0.1");
+        assert_eq!(config.metrics.port, 9101);
+        assert_eq!(config.metrics.endpoint, "/prometheus");
+    }
+
+    #[test]
+    fn metrics_config_validate_rejects_zero_port() {
+        let config = MetricsConfig {
+            port: 0,
+            ..MetricsConfig::default()
+        };
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("metrics.port"));
+    }
+
+    #[test]
+    fn metrics_config_validate_rejects_empty_listen_addr() {
+        let config = MetricsConfig {
+            listen_addr: String::new(),
+            ..MetricsConfig::default()
+        };
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("metrics.listen_addr"));
+    }
+
+    #[test]
+    fn metrics_config_validate_rejects_endpoint_without_slash() {
+        let config = MetricsConfig {
+            endpoint: "metrics".to_owned(),
+            ..MetricsConfig::default()
+        };
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("metrics.endpoint"));
+        assert!(err.to_string().contains("start with '/'"));
+    }
+
+    #[test]
+    fn metrics_config_validate_rejects_non_default_endpoint() {
+        let config = MetricsConfig {
+            endpoint: "/prometheus/metrics".to_owned(),
+            ..MetricsConfig::default()
+        };
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("metrics.endpoint"));
+        assert!(err.to_string().contains("only '/metrics'"));
+    }
+
+    #[test]
+    fn ironpost_config_rejects_non_default_metrics_endpoint_when_enabled() {
+        let mut config = IronpostConfig::default();
+        config.metrics.enabled = true;
+        config.metrics.endpoint = "/custom".to_owned();
+
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("metrics.endpoint"));
+        assert!(err.to_string().contains("only '/metrics'"));
+    }
+
+    #[test]
+    #[serial]
+    fn metrics_env_override_enabled() {
+        let mut config = IronpostConfig::default();
+        // SAFETY: テスト用の環境変数設定
+        unsafe { std::env::set_var("IRONPOST_METRICS_ENABLED", "false") };
+        config.apply_env_overrides();
+        assert!(!config.metrics.enabled);
+        // SAFETY: クリーンアップ
+        unsafe { std::env::remove_var("IRONPOST_METRICS_ENABLED") };
+    }
+
+    #[test]
+    #[serial]
+    fn metrics_env_override_listen_addr() {
+        let mut config = IronpostConfig::default();
+        // SAFETY: テスト用の環境変数設定
+        unsafe { std::env::set_var("IRONPOST_METRICS_LISTEN_ADDR", "127.0.0.1") };
+        config.apply_env_overrides();
+        assert_eq!(config.metrics.listen_addr, "127.0.0.1");
+        // SAFETY: クリーンアップ
+        unsafe { std::env::remove_var("IRONPOST_METRICS_LISTEN_ADDR") };
+    }
+
+    #[test]
+    #[serial]
+    fn metrics_env_override_port() {
+        let mut config = IronpostConfig::default();
+        // SAFETY: テスト用の環境変数設定
+        unsafe { std::env::set_var("IRONPOST_METRICS_PORT", "9999") };
+        config.apply_env_overrides();
+        assert_eq!(config.metrics.port, 9999);
+        // SAFETY: クリーンアップ
+        unsafe { std::env::remove_var("IRONPOST_METRICS_PORT") };
+    }
+
+    #[test]
+    #[serial]
+    fn metrics_env_override_endpoint() {
+        let mut config = IronpostConfig::default();
+        // SAFETY: テスト用の環境変数設定
+        unsafe { std::env::set_var("IRONPOST_METRICS_ENDPOINT", "/custom") };
+        config.apply_env_overrides();
+        assert_eq!(config.metrics.endpoint, "/custom");
+        // SAFETY: クリーンアップ
+        unsafe { std::env::remove_var("IRONPOST_METRICS_ENDPOINT") };
+    }
+
+    #[test]
+    #[serial]
+    fn metrics_env_override_port_invalid_keeps_original() {
+        let mut config = IronpostConfig::default();
+        let original_port = config.metrics.port;
+        // SAFETY: テスト用の環境変数設定
+        unsafe { std::env::set_var("IRONPOST_METRICS_PORT", "not-a-number") };
+        config.apply_env_overrides();
+        assert_eq!(config.metrics.port, original_port);
+        // SAFETY: クリーンアップ
+        unsafe { std::env::remove_var("IRONPOST_METRICS_PORT") };
+    }
+
+    #[test]
+    fn ironpost_config_validates_metrics_when_enabled() {
+        let mut config = IronpostConfig::default();
+        config.metrics.enabled = true;
+        config.metrics.port = 0; // Invalid
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("metrics.port"));
+    }
+
+    #[test]
+    fn ironpost_config_skips_metrics_validation_when_disabled() {
+        let mut config = IronpostConfig::default();
+        config.metrics.enabled = false;
+        config.metrics.port = 0; // Invalid, but should be ignored
+        config.validate().unwrap(); // Should pass
     }
 }

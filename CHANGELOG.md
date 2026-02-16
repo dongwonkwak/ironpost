@@ -334,6 +334,41 @@ Total security findings across Phases 2-8: **139 issues identified and resolved*
 - **cargo doc --no-deps:** builds without warnings (0 warnings achieved in Phase 8)
 - **GitHub Pages:** Automated deployment via `.github/workflows/docs.yml` to https://dongwonkwak.github.io/ironpost/
 
+#### Phase 10: Prometheus Metrics & Grafana Monitoring
+- **Prometheus Metrics** (29 total)
+  - eBPF engine (7 metrics): packets_received/processed/dropped, syn_floods/port_scans_detected, bytes_processed, processing_latency_us
+  - Log pipeline (8 metrics): messages_received/parsed, parse_errors, rules_matched, alerts_generated, batches_processed, buffer_size, processing_time_ms
+  - Container guard (6 metrics): alerts_received, actions_executed/failed, containers_isolated, action_duration_ms, docker_api_calls_total
+  - SBOM scanner (5 metrics): scans_started/completed, vulnerabilities_found, packages_scanned, scan_duration_seconds
+  - Daemon health (3 metrics): uptime_seconds, modules_health, version label
+- **Grafana Dashboards** (3 included)
+  - Overview: System health, event rates, module status, daemon uptime
+  - Log Pipeline: Message throughput, alert trends, rule match rates, buffer utilization
+  - Security: Container isolation events, vulnerability findings, attack detection timeline
+- **MetricsConfig** settings
+  - TOML configuration: `[metrics]` section with enabled/listen_addr/port/endpoint
+  - Environment variable overrides: `IRONPOST_METRICS_*` (IRONPOST_METRICS_ENABLED, LISTEN_ADDR, PORT, ENDPOINT)
+  - Security defaults: listen_addr = "127.0.0.1" (localhost), Docker environments use "0.0.0.0"
+  - Validation: port range 1024-65535, endpoint must start with "/"
+- **Docker Compose** monitoring profile
+  - Prometheus service for scraping Ironpost metrics (15s interval)
+  - Grafana service with pre-configured dashboards and data source
+  - Network isolation between monitoring and application stacks
+  - Profile activation: `docker compose --profile monitoring up -d`
+  - Access: Prometheus http://localhost:9090, Grafana http://localhost:3000 (admin/changeme)
+- **Metrics Server Implementation**
+  - HTTP server on configurable port/address
+  - Prometheus text format output (/metrics endpoint)
+  - Atomic counter updates from all modules
+  - Labels support (e.g., version, module names)
+- **Configuration Examples**
+  - `ironpost.toml.example`: [metrics] section with all settings documented
+  - `docs/configuration.md`: Detailed Metrics section with 29 metrics reference and environment variable mapping
+  - `docs/demo.md`: Monitoring stack tutorial with dashboard walkthrough
+- **Documentation Updates**
+  - README.md: Added "Prometheus 메트릭 + Grafana 대시보드" to 핵심 기능 table
+  - Fixed metrics port configuration consistency (localhost binding by default)
+
 ---
 
 ## [Unreleased]

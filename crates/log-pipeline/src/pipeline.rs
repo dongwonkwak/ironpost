@@ -20,6 +20,7 @@ use tokio_util::sync::CancellationToken;
 
 use ironpost_core::error::IronpostError;
 use ironpost_core::event::{AlertEvent, MODULE_LOG_PIPELINE, PacketEvent};
+use ironpost_core::metrics as m;
 use ironpost_core::pipeline::{HealthStatus, Pipeline};
 use ironpost_core::plugin::{Plugin, PluginInfo, PluginState, PluginType};
 
@@ -455,23 +456,34 @@ impl Pipeline for LogPipeline {
                         match result {
                             Some(raw_log) => {
                                 let mut buf = buffer.lock().await;
-                                buf.push(raw_log);
+                                if buf.push(raw_log) {
+                                    metrics::counter!(m::LOG_PIPELINE_LOGS_DROPPED_TOTAL).increment(1);
+                                }
 
                                 // 배치 크기 도달 시 즉시 플러시
                                 if buf.should_flush(batch_size) {
                                     let batch = buf.drain_batch(batch_size);
+                                    let buffer_size_snapshot = buf.len();
                                     drop(buf); // unlock buffer before processing
 
                                     tracing::debug!(batch_size = batch.len(), "flushing batch (size trigger)");
 
+                                    let start_time = Instant::now();
+
                                     // 공유 process_batch 로직 호출
                                     for raw_log in batch {
+                                        metrics::counter!(m::LOG_PIPELINE_LOGS_COLLECTED_TOTAL).increment(1);
+
                                         match parser.parse(&raw_log.data) {
                                             Ok(log_entry) => {
                                                 processed_count.fetch_add(1, Ordering::Relaxed);
+                                                metrics::counter!(m::LOG_PIPELINE_LOGS_PROCESSED_TOTAL).increment(1);
 
                                                 match rule_engine.lock().await.evaluate(&log_entry) {
                                                     Ok(matches) => {
+                                                        if !matches.is_empty() {
+                                                            metrics::counter!(m::LOG_PIPELINE_RULE_MATCHES_TOTAL).increment(matches.len() as u64);
+                                                        }
                                                         for rule_match in matches {
                                                             let mut alert_gen = alert_generator.lock().await;
                                                             if let Some(alert_event) = alert_gen.generate(
@@ -479,8 +491,13 @@ impl Pipeline for LogPipeline {
                                                                 None,
                                                             ) {
                                                                 drop(alert_gen);
-                                                                if let Err(e) = alert_tx.send(alert_event).await {
-                                                                    tracing::error!(error = %e, "failed to send alert event");
+                                                                match alert_tx.send(alert_event).await {
+                                                                    Ok(()) => {
+                                                                        metrics::counter!(m::LOG_PIPELINE_ALERTS_SENT_TOTAL).increment(1);
+                                                                    }
+                                                                    Err(e) => {
+                                                                        tracing::error!(error = %e, "failed to send alert event");
+                                                                    }
                                                                 }
                                                             }
                                                         }
@@ -492,6 +509,7 @@ impl Pipeline for LogPipeline {
                                             }
                                             Err(e) => {
                                                 parse_error_count.fetch_add(1, Ordering::Relaxed);
+                                                metrics::counter!(m::LOG_PIPELINE_PARSE_ERRORS_TOTAL).increment(1);
                                                 tracing::debug!(
                                                     source = %raw_log.source,
                                                     error = %e,
@@ -500,6 +518,12 @@ impl Pipeline for LogPipeline {
                                             }
                                         }
                                     }
+
+                                    let elapsed = start_time.elapsed().as_secs_f64();
+                                    metrics::histogram!(m::LOG_PIPELINE_PROCESSING_DURATION_SECONDS).record(elapsed);
+
+                                    #[allow(clippy::cast_precision_loss)]
+                                    metrics::gauge!(m::LOG_PIPELINE_BUFFER_SIZE).set(buffer_size_snapshot as f64);
 
                                     last_flush = Instant::now();
                                 }
@@ -516,18 +540,27 @@ impl Pipeline for LogPipeline {
                         let mut buf = buffer.lock().await;
                         if !buf.is_empty() && last_flush.elapsed() >= Duration::from_millis(flush_interval_ms) {
                             let batch = buf.drain_all();
+                            let buffer_size_snapshot = buf.len();
                             drop(buf);
 
                             tracing::debug!(batch_size = batch.len(), "flushing batch (timer trigger)");
 
+                            let start_time = Instant::now();
+
                             // 공유 process_batch 로직 호출
                             for raw_log in batch {
+                                metrics::counter!(m::LOG_PIPELINE_LOGS_COLLECTED_TOTAL).increment(1);
+
                                 match parser.parse(&raw_log.data) {
                                     Ok(log_entry) => {
                                         processed_count.fetch_add(1, Ordering::Relaxed);
+                                        metrics::counter!(m::LOG_PIPELINE_LOGS_PROCESSED_TOTAL).increment(1);
 
                                         match rule_engine.lock().await.evaluate(&log_entry) {
                                             Ok(matches) => {
+                                                if !matches.is_empty() {
+                                                    metrics::counter!(m::LOG_PIPELINE_RULE_MATCHES_TOTAL).increment(matches.len() as u64);
+                                                }
                                                 for rule_match in matches {
                                                     let mut alert_gen = alert_generator.lock().await;
                                                     if let Some(alert_event) = alert_gen.generate(
@@ -535,8 +568,13 @@ impl Pipeline for LogPipeline {
                                                         None,
                                                     ) {
                                                         drop(alert_gen);
-                                                        if let Err(e) = alert_tx.send(alert_event).await {
-                                                            tracing::error!(error = %e, "failed to send alert event");
+                                                        match alert_tx.send(alert_event).await {
+                                                            Ok(()) => {
+                                                                metrics::counter!(m::LOG_PIPELINE_ALERTS_SENT_TOTAL).increment(1);
+                                                            }
+                                                            Err(e) => {
+                                                                tracing::error!(error = %e, "failed to send alert event");
+                                                            }
                                                         }
                                                     }
                                                 }
@@ -548,6 +586,7 @@ impl Pipeline for LogPipeline {
                                     }
                                     Err(e) => {
                                         parse_error_count.fetch_add(1, Ordering::Relaxed);
+                                        metrics::counter!(m::LOG_PIPELINE_PARSE_ERRORS_TOTAL).increment(1);
                                         tracing::debug!(
                                             source = %raw_log.source,
                                             error = %e,
@@ -556,6 +595,12 @@ impl Pipeline for LogPipeline {
                                     }
                                 }
                             }
+
+                            let elapsed = start_time.elapsed().as_secs_f64();
+                            metrics::histogram!(m::LOG_PIPELINE_PROCESSING_DURATION_SECONDS).record(elapsed);
+
+                            #[allow(clippy::cast_precision_loss)]
+                            metrics::gauge!(m::LOG_PIPELINE_BUFFER_SIZE).set(buffer_size_snapshot as f64);
 
                             last_flush = Instant::now();
                         }

@@ -265,3 +265,40 @@ min_severity = "medium"
 # 기본값: "cyclonedx"
 # 환경변수: IRONPOST_SBOM_OUTPUT_FORMAT
 output_format = "cyclonedx"
+
+
+# -----------------------------------------------------------------------------
+# [metrics] — Prometheus 메트릭 노출 (선택사항)
+# -----------------------------------------------------------------------------
+# Prometheus 메트릭 엔드포인트를 노출하여 Grafana 대시보드에서 모니터링합니다.
+# 29개 메트릭: eBPF, 로그 파이프라인, 컨테이너 격리, SBOM 스캐너, 데몬 상태
+#
+# 요구사항: enabled=true일 때 유효한 listen_addr와 port 필수
+# Docker 환경: listen_addr을 "0.0.0.0"으로 설정하여 컨테이너 외부에서 접근 가능하게 함
+[metrics]
+
+# 메트릭 노출 활성화 여부
+# 타입: bool
+# 기본값: false
+# 환경변수: IRONPOST_METRICS_ENABLED
+enabled = false
+
+# 메트릭 엔드포인트 바인드 주소 (localhost 권장)
+# 타입: String
+# 기본값: "127.0.0.1"
+# 환경변수: IRONPOST_METRICS_LISTEN_ADDR
+# 주의: Docker 환경에서 호스트에서 접근하려면 "0.0.0.0" 사용
+listen_addr = "127.0.0.1"
+
+# 메트릭 엔드포인트 포트
+# 타입: u16
+# 기본값: 9100
+# 환경변수: IRONPOST_METRICS_PORT
+# 범위: 1024 ~ 65535 (1024 미만은 root 권한 필요)
+port = 9100
+
+# 메트릭 엔드포인트 경로
+# 타입: String
+# 기본값: "/metrics"
+# 환경변수: IRONPOST_METRICS_ENDPOINT
+endpoint = "/metrics"

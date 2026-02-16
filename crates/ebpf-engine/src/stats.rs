@@ -11,6 +11,7 @@
 
 use std::time::Instant;
 
+use ironpost_core::metrics as m;
 use serde::Serialize;
 
 /// CPU별 합산된 원시 통계 (단일 프로토콜)
@@ -129,6 +130,37 @@ impl TrafficStats {
 
         self.prev_raw = Some(raw);
         self.last_poll = Some(now);
+
+        // Update Prometheus metrics
+        metrics::counter!(m::EBPF_PACKETS_TOTAL).absolute(self.total.packets);
+        metrics::counter!(m::EBPF_BYTES_TOTAL).absolute(self.total.bytes);
+        metrics::counter!(m::EBPF_PACKETS_BLOCKED_TOTAL).absolute(self.total.drops);
+
+        // Protocol-specific counters
+        for (proto, stats) in [
+            ("tcp", &self.tcp),
+            ("udp", &self.udp),
+            ("icmp", &self.icmp),
+            ("other", &self.other),
+        ] {
+            metrics::counter!(
+                m::EBPF_PROTOCOL_PACKETS_TOTAL,
+                m::LABEL_PROTOCOL => proto
+            )
+            .absolute(stats.packets);
+        }
+
+        // Rate metrics (gauges)
+        for (proto, stats) in [
+            ("tcp", &self.tcp),
+            ("udp", &self.udp),
+            ("icmp", &self.icmp),
+            ("other", &self.other),
+            ("total", &self.total),
+        ] {
+            metrics::gauge!(m::EBPF_PACKETS_PER_SECOND, m::LABEL_PROTOCOL => proto).set(stats.pps);
+            metrics::gauge!(m::EBPF_BITS_PER_SECOND, m::LABEL_PROTOCOL => proto).set(stats.bps);
+        }
     }
 
     /// 통계를 초기화합니다.
@@ -145,6 +177,15 @@ impl TrafficStats {
     /// ironpost_pps{proto="tcp"} 1234.5
     /// ironpost_bps{proto="tcp"} 5678000.0
     /// ```
+    ///
+    /// # Deprecated
+    ///
+    /// This method is deprecated in favor of the global `metrics` crate integration.
+    /// Metrics are now automatically exported via the Prometheus exporter in `ironpost-daemon`.
+    #[deprecated(
+        since = "0.1.0",
+        note = "Use the global metrics exporter in ironpost-daemon instead"
+    )]
     pub fn to_prometheus(&self) -> String {
         let mut output = String::new();
 
@@ -222,6 +263,13 @@ impl Default for TrafficStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn render_prometheus(stats: &TrafficStats) -> String {
+        #[allow(deprecated)]
+        {
+            stats.to_prometheus()
+        }
+    }
 
     // =============================================================================
     // RawProtoStats 테스트
@@ -500,7 +548,7 @@ mod tests {
         stats.udp.pps = 500.0;
         stats.udp.bps = 2000000.0;
 
-        let output = stats.to_prometheus();
+        let output = render_prometheus(&stats);
 
         // TCP 메트릭 확인
         assert!(output.contains(r#"ironpost_packets_total{proto="tcp"} 12345"#));
@@ -524,7 +572,7 @@ mod tests {
     #[test]
     fn test_to_prometheus_zero_values() {
         let stats = TrafficStats::new();
-        let output = stats.to_prometheus();
+        let output = render_prometheus(&stats);
 
         // 제로 값도 출력되어야 함
         assert!(output.contains(r#"ironpost_packets_total{proto="tcp"} 0"#));
@@ -541,7 +589,7 @@ mod tests {
         stats.other.packets = 400;
         stats.total.packets = 1000;
 
-        let output = stats.to_prometheus();
+        let output = render_prometheus(&stats);
 
         // 각 프로토콜별 메트릭 존재 확인
         assert!(output.contains(r#"proto="tcp""#));

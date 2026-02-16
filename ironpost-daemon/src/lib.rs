@@ -4,5 +4,6 @@
 //! In production, `ironpost-daemon` is used as a binary (main.rs).
 
 pub mod health;
+pub mod metrics_server;
 pub mod modules;
 pub mod orchestrator;
