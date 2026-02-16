@@ -7,6 +7,7 @@ description = "Ironpost 로그 수집/파싱/룰 매칭/알림 파이프라인"
 [dependencies]
 ironpost-core = { path = "../core" }
 tokio = { workspace = true }
+tokio-util = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }

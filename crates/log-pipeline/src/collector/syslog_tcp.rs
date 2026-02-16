@@ -11,6 +11,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{Semaphore, mpsc};
 use tokio::time::timeout;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 use super::{CollectorStatus, RawLog};
@@ -68,6 +69,9 @@ pub struct SyslogTcpCollector {
     /// 수집된 로그 전송 채널
     #[allow(dead_code)]
     tx: mpsc::Sender<RawLog>,
+    /// Cancellation token for graceful shutdown
+    #[allow(dead_code)]
+    cancel_token: CancellationToken,
     /// 현재 상태
     status: CollectorStatus,
     /// 현재 활성 연결 수
@@ -76,10 +80,15 @@ pub struct SyslogTcpCollector {
 
 impl SyslogTcpCollector {
     /// 새 TCP syslog 수집기를 생성합니다.
-    pub fn new(config: SyslogTcpConfig, tx: mpsc::Sender<RawLog>) -> Self {
+    pub fn new(
+        config: SyslogTcpConfig,
+        tx: mpsc::Sender<RawLog>,
+        cancel_token: CancellationToken,
+    ) -> Self {
         Self {
             config,
             tx,
+            cancel_token,
             status: CollectorStatus::Idle,
             active_connections: 0,
         }
@@ -89,6 +98,7 @@ impl SyslogTcpCollector {
     ///
     /// TCP 소켓에 바인드하고 연결 수락 루프를 실행합니다.
     /// 각 연결은 별도 태스크에서 처리됩니다.
+    /// CancellationToken을 통해 graceful shutdown을 지원합니다.
     pub async fn run(&mut self) -> Result<(), LogPipelineError> {
         self.status = CollectorStatus::Running;
         info!("Starting TCP syslog collector on {}", self.config.bind_addr);
@@ -110,44 +120,51 @@ impl SyslogTcpCollector {
         let connection_semaphore = Arc::new(Semaphore::new(self.config.max_connections));
 
         loop {
-            // 연결 수락
-            let (stream, addr) =
-                listener
-                    .accept()
-                    .await
-                    .map_err(|e| LogPipelineError::Collector {
+            tokio::select! {
+                result = listener.accept() => {
+                    let (stream, addr) = result.map_err(|e| LogPipelineError::Collector {
                         source_type: "syslog_tcp".to_owned(),
                         reason: format!("accept error: {}", e),
                     })?;
 
-            debug!("Accepted connection from {}", addr);
+                    debug!("Accepted connection from {}", addr);
 
-            // 연결 수 제한 확인
-            let permit = match connection_semaphore.clone().try_acquire_owned() {
-                Ok(p) => p,
-                Err(_) => {
-                    warn!(
-                        "Max connections reached, rejecting connection from {}",
-                        addr
-                    );
-                    continue;
+                    // 연결 수 제한 확인
+                    let permit = match connection_semaphore.clone().try_acquire_owned() {
+                        Ok(p) => p,
+                        Err(_) => {
+                            warn!(
+                                "Max connections reached, rejecting connection from {}",
+                                addr
+                            );
+                            continue;
+                        }
+                    };
+
+                    self.active_connections += 1;
+
+                    let tx = self.tx.clone();
+                    let config = self.config.clone();
+                    let bind_addr = self.config.bind_addr.clone();
+                    let cancel = self.cancel_token.clone();
+
+                    // 각 연결을 별도 태스크에서 처리
+                    tokio::spawn(async move {
+                        if let Err(e) = Self::handle_connection(stream, tx, config, bind_addr, cancel).await {
+                            error!("Connection handler error: {}", e);
+                        }
+                        drop(permit); // 연결 종료 시 세마포어 반환
+                    });
                 }
-            };
-
-            self.active_connections += 1;
-
-            let tx = self.tx.clone();
-            let config = self.config.clone();
-            let bind_addr = self.config.bind_addr.clone();
-
-            // 각 연결을 별도 태스크에서 처리
-            tokio::spawn(async move {
-                if let Err(e) = Self::handle_connection(stream, tx, config, bind_addr).await {
-                    error!("Connection handler error: {}", e);
+                _ = self.cancel_token.cancelled() => {
+                    info!("TCP syslog collector received shutdown signal");
+                    self.status = CollectorStatus::Stopped;
+                    break;
                 }
-                drop(permit); // 연결 종료 시 세마포어 반환
-            });
+            }
         }
+
+        Ok(())
     }
 
     /// 단일 TCP 연결을 처리합니다.
@@ -156,6 +173,7 @@ impl SyslogTcpCollector {
         tx: mpsc::Sender<RawLog>,
         config: SyslogTcpConfig,
         bind_addr: String,
+        cancel: CancellationToken,
     ) -> Result<(), LogPipelineError> {
         let peer_addr = stream
             .peer_addr()
@@ -164,12 +182,14 @@ impl SyslogTcpCollector {
 
         match config.framing {
             TcpFraming::NewlineDelimited => {
-                Self::handle_newline_framing(stream, tx, config, bind_addr, peer_addr).await
+                Self::handle_newline_framing(stream, tx, config, bind_addr, peer_addr, cancel)
+                    .await
             }
             TcpFraming::OctetCounting => {
                 // Octet-counting 프레이밍 (향후 구현)
                 warn!("Octet-counting framing not yet implemented, using newline framing");
-                Self::handle_newline_framing(stream, tx, config, bind_addr, peer_addr).await
+                Self::handle_newline_framing(stream, tx, config, bind_addr, peer_addr, cancel)
+                    .await
             }
         }
     }
@@ -181,6 +201,7 @@ impl SyslogTcpCollector {
         config: SyslogTcpConfig,
         bind_addr: String,
         peer_addr: String,
+        cancel: CancellationToken,
     ) -> Result<(), LogPipelineError> {
         let mut reader = BufReader::new(stream);
         let mut line_buffer = String::new();
@@ -189,54 +210,62 @@ impl SyslogTcpCollector {
         loop {
             line_buffer.clear();
 
-            // 타임아웃과 함께 라인 읽기
-            match timeout(connection_timeout, reader.read_line(&mut line_buffer)).await {
-                Ok(Ok(0)) => {
-                    // EOF - 연결 종료
-                    debug!("Connection closed by peer: {}", peer_addr);
+            // 타임아웃과 함께 라인 읽기, cancellation token도 체크
+            tokio::select! {
+                result = timeout(connection_timeout, reader.read_line(&mut line_buffer)) => {
+                    match result {
+                        Ok(Ok(0)) => {
+                            // EOF - 연결 종료
+                            debug!("Connection closed by peer: {}", peer_addr);
+                            break;
+                        }
+                        Ok(Ok(_bytes_read)) => {
+                            // 메시지가 최대 크기를 초과하는지 확인
+                            if line_buffer.len() > config.max_message_size {
+                                warn!(
+                                    "Message exceeds max size from {} ({} bytes, max: {}), closing connection",
+                                    peer_addr,
+                                    line_buffer.len(),
+                                    config.max_message_size
+                                );
+                                break;
+                            }
+
+                            // 빈 라인 스킵
+                            if line_buffer.trim().is_empty() {
+                                continue;
+                            }
+
+                            // RawLog 생성 및 전송
+                            let data = Bytes::from(line_buffer.trim_end().to_owned());
+                            let raw_log =
+                                RawLog::new(data, format!("syslog_tcp:{}[{}]", bind_addr, peer_addr))
+                                    .with_format_hint("syslog");
+
+                            if let Err(e) = tx.send(raw_log).await {
+                                error!("Failed to send log to channel: {}", e);
+                                return Err(LogPipelineError::Channel(e.to_string()));
+                            }
+                        }
+                        Ok(Err(e)) => {
+                            error!("Read error from {}: {}", peer_addr, e);
+                            return Err(LogPipelineError::Collector {
+                                source_type: "syslog_tcp".to_owned(),
+                                reason: format!("read error: {}", e),
+                            });
+                        }
+                        Err(_) => {
+                            warn!("Connection timeout from {}", peer_addr);
+                            return Err(LogPipelineError::Collector {
+                                source_type: "syslog_tcp".to_owned(),
+                                reason: "connection timeout".to_owned(),
+                            });
+                        }
+                    }
+                }
+                _ = cancel.cancelled() => {
+                    debug!("Connection handler for {} received shutdown signal", peer_addr);
                     break;
-                }
-                Ok(Ok(_bytes_read)) => {
-                    // 메시지가 최대 크기를 초과하는지 확인
-                    if line_buffer.len() > config.max_message_size {
-                        warn!(
-                            "Message exceeds max size from {} ({} bytes, max: {}), closing connection",
-                            peer_addr,
-                            line_buffer.len(),
-                            config.max_message_size
-                        );
-                        break;
-                    }
-
-                    // 빈 라인 스킵
-                    if line_buffer.trim().is_empty() {
-                        continue;
-                    }
-
-                    // RawLog 생성 및 전송
-                    let data = Bytes::from(line_buffer.trim_end().to_owned());
-                    let raw_log =
-                        RawLog::new(data, format!("syslog_tcp:{}[{}]", bind_addr, peer_addr))
-                            .with_format_hint("syslog");
-
-                    if let Err(e) = tx.send(raw_log).await {
-                        error!("Failed to send log to channel: {}", e);
-                        return Err(LogPipelineError::Channel(e.to_string()));
-                    }
-                }
-                Ok(Err(e)) => {
-                    error!("Read error from {}: {}", peer_addr, e);
-                    return Err(LogPipelineError::Collector {
-                        source_type: "syslog_tcp".to_owned(),
-                        reason: format!("read error: {}", e),
-                    });
-                }
-                Err(_) => {
-                    warn!("Connection timeout from {}", peer_addr);
-                    return Err(LogPipelineError::Collector {
-                        source_type: "syslog_tcp".to_owned(),
-                        reason: "connection timeout".to_owned(),
-                    });
                 }
             }
         }
@@ -280,7 +309,8 @@ mod tests {
     #[test]
     fn collector_starts_idle() {
         let (tx, _rx) = mpsc::channel(10);
-        let collector = SyslogTcpCollector::new(SyslogTcpConfig::default(), tx);
+        let cancel = CancellationToken::new();
+        let collector = SyslogTcpCollector::new(SyslogTcpConfig::default(), tx, cancel);
         assert_eq!(*collector.status(), CollectorStatus::Idle);
         assert_eq!(collector.active_connections(), 0);
     }
@@ -292,7 +322,8 @@ mod tests {
             bind_addr: "127.0.0.1:0".to_owned(),
             ..Default::default()
         };
-        let collector = SyslogTcpCollector::new(config, tx);
+        let cancel = CancellationToken::new();
+        let collector = SyslogTcpCollector::new(config, tx, cancel);
         assert_eq!(collector.bind_addr(), "127.0.0.1:0");
     }
 
@@ -300,7 +331,8 @@ mod tests {
     async fn tcp_collector_creation() {
         let (tx, _rx) = mpsc::channel(10);
         let config = SyslogTcpConfig::default();
-        let _collector = SyslogTcpCollector::new(config, tx);
+        let cancel = CancellationToken::new();
+        let _collector = SyslogTcpCollector::new(config, tx, cancel);
         // 생성만 테스트
     }
 }
