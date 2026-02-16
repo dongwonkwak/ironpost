@@ -334,6 +334,31 @@ Total security findings across Phases 2-8: **139 issues identified and resolved*
 - **cargo doc --no-deps:** builds without warnings (0 warnings achieved in Phase 8)
 - **GitHub Pages:** Automated deployment via `.github/workflows/docs.yml` to https://dongwonkwak.github.io/ironpost/
 
+#### Phase 10: Prometheus Metrics & Grafana Monitoring
+- **Prometheus Metrics** (29 total)
+  - eBPF engine: 7 metrics (packets, floods, port scans, latency)
+  - Log pipeline: 8 metrics (throughput, parsing, alerts, buffer)
+  - Container guard: 6 metrics (actions, Docker API calls, isolation count)
+  - SBOM scanner: 5 metrics (scan count, vulnerabilities, packages)
+  - Daemon health: 3 metrics (uptime, module health, version)
+- **Grafana Dashboards** (3 included)
+  - Overview: System health, event rates, module status
+  - Log Pipeline: Message throughput, alert trends, rule matches
+  - Security: Container isolation, vulnerability findings, attack detection
+- **MetricsConfig** settings
+  - TOML configuration: `[metrics]` section with enabled/listen_addr/port/endpoint
+  - Environment variable overrides: `IRONPOST_METRICS_*`
+  - Security: Default localhost binding, Docker environment support
+- **Docker Compose** monitoring profile
+  - Prometheus service for scraping metrics (15s interval)
+  - Grafana service with pre-configured dashboards
+  - Network isolation between monitoring and application stacks
+  - Profile activation: `docker compose --profile monitoring up -d`
+- **Documentation**
+  - Updated `docs/configuration.md` with Metrics section (29 metrics, 3 dashboards)
+  - Updated `docs/demo.md` with monitoring stack instructions
+  - Updated `ironpost.toml.example` with `[metrics]` section
+
 ---
 
 ## [Unreleased]

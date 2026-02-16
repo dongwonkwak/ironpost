@@ -101,14 +101,19 @@ cp docker/.env.example docker/.env
 # 3. Start the demo stack (all services)
 docker compose -f docker/docker-compose.yml -f docker/docker-compose.demo.yml up -d
 
-# 4. Move into docker/ directory (subsequent commands assume this)
+# 4. (Optional) Start monitoring stack (Prometheus + Grafana)
+# This exposes Ironpost metrics on http://localhost:9100/metrics
+# and Grafana dashboards on http://localhost:3000
+docker compose --profile monitoring up -d
+
+# 5. Move into docker/ directory (subsequent commands assume this)
 cd docker
 
-# 5. Wait for services to be ready (~30 seconds)
+# 6. Wait for services to be ready (~30 seconds)
 echo "Waiting for Ironpost to start..."
 sleep 30
 
-# 6. Follow Ironpost logs (press Ctrl+C to exit)
+# 7. Follow Ironpost logs (press Ctrl+C to exit)
 docker compose logs -f ironpost
 ```
 
@@ -848,9 +853,11 @@ docker compose restart ironpost
   - Set up log rotation for JSON logs
 
 - [ ] **Monitoring**:
-  - Enable Prometheus exporter (add `--profile monitoring`)
-  - Set up Grafana dashboards (import from `docs/grafana/`)
-  - Configure alerting (Prometheus Alertmanager or webhook to PagerDuty/Slack)
+  - Enable Prometheus metrics: `[metrics] enabled = true` in config
+  - Start monitoring stack: `docker compose --profile monitoring up -d`
+  - Access Grafana: http://localhost:3000 (admin/changeme)
+  - Import dashboards from `docker/grafana/dashboards/`
+  - Configure Prometheus alerting (Alertmanager or webhook to PagerDuty/Slack)
 
 - [ ] **High Availability**:
   - Run multiple Ironpost instances behind a load balancer
@@ -886,7 +893,82 @@ auto_isolate = false  # Require manual approval in production
 
 ---
 
-### 4. Reading Architecture Docs
+### 4. Monitoring Stack (Prometheus + Grafana)
+
+Enable Ironpost metrics and visualize them with Grafana dashboards:
+
+**Start monitoring stack:**
+
+```bash
+# Enable metrics in your config
+[metrics]
+enabled = true
+listen_addr = "0.0.0.0"  # Docker environment
+port = 9100
+endpoint = "/metrics"
+
+# Start Prometheus and Grafana
+docker compose --profile monitoring up -d
+
+# Wait for services to start
+sleep 10
+```
+
+**Access Dashboards:**
+
+```bash
+# Grafana UI
+# URL: http://localhost:3000
+# Username: admin
+# Password: changeme
+
+# Prometheus UI (metrics explorer)
+# URL: http://localhost:9090
+```
+
+**View Raw Metrics:**
+
+```bash
+# Check metrics endpoint directly
+curl http://localhost:9100/metrics
+
+# Filter specific metrics (example: log pipeline)
+curl http://localhost:9100/metrics | grep log_pipeline
+
+# Count total metrics
+curl -s http://localhost:9100/metrics | grep "^ironpost\|^ebpf\|^log_pipeline\|^container_guard\|^sbom" | wc -l
+# Expected: 29 metrics
+```
+
+**Included Dashboards:**
+
+1. **Overview Dashboard**: System health, module status, event rates
+2. **Log Pipeline Dashboard**: Message throughput, alert trends, rule matches
+3. **Security Dashboard**: Container isolation events, vulnerability findings, attack detection
+
+**Prometheus Alerting (Optional):**
+
+Configure alert rules in `docker/prometheus/alerts.yml`:
+
+```yaml
+groups:
+  - name: ironpost
+    rules:
+      - alert: HighAlertRate
+        expr: rate(log_pipeline_alerts_generated_total[5m]) > 10
+        for: 1m
+        annotations:
+          summary: "High alert generation rate: {{ $value }} alerts/sec"
+
+      - alert: ContainerIsolationFailure
+        expr: increase(container_guard_actions_failed_total[5m]) > 0
+        annotations:
+          summary: "Container isolation failed"
+```
+
+---
+
+### 5. Reading Architecture Docs
 
 Dive deeper into Ironpost's design:
 
