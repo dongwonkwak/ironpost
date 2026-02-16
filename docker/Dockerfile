@@ -76,9 +76,9 @@ RUN mkdir -p /var/lib/ironpost /var/log/ironpost /var/run/ironpost \
 # Switch to non-root user
 USER ironpost
 
-# Expose ports (UDP syslog on unprivileged port 1514, HTTP API on 8080)
+# Expose ports (UDP syslog on unprivileged port 1514, HTTP API on 8080, Prometheus metrics on 9100)
 # External port 514 is mapped to internal 1514 via docker-compose port mapping
-EXPOSE 1514/udp 8080
+EXPOSE 1514/udp 8080 9100
 
 # Health check using CLI status command
 # Check if daemon process is running and responding
