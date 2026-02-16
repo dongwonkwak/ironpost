@@ -317,6 +317,8 @@ tags:
     // 3. 파이프라인 설정
     let config = PipelineConfig {
         rule_dir: rules_dir.to_str().unwrap().to_owned(),
+        enabled: false,
+        sources: vec![],
         batch_size: 10,
         buffer_capacity: 100,
         flush_interval_secs: 1,
@@ -431,6 +433,8 @@ tags:
     // 3. 파이프라인 빌드
     let config = PipelineConfig {
         rule_dir: rules_dir.to_str().unwrap().to_owned(),
+        enabled: false,
+        sources: vec![],
         batch_size: 10,
         buffer_capacity: 100,
         flush_interval_secs: 1,
@@ -489,6 +493,8 @@ async fn test_pipeline_restart_scenario() {
     // 2. 파이프라인 빌드
     let config = PipelineConfig {
         rule_dir: rules_dir.to_str().unwrap().to_owned(),
+        enabled: false,
+        sources: vec![],
         batch_size: 10,
         buffer_capacity: 100,
         flush_interval_secs: 1,
@@ -603,6 +609,8 @@ async fn test_multiple_log_injection() {
 
     let config = PipelineConfig {
         rule_dir: rules_dir.to_str().unwrap().to_owned(),
+        enabled: false,
+        sources: vec![],
         batch_size: 5, // 작은 배치 크기로 테스트
         buffer_capacity: 100,
         flush_interval_secs: 1,
@@ -712,6 +720,8 @@ tags:
     // 3. 파이프라인 빌드 (빠른 플러시로 테스트 속도 향상)
     let config = PipelineConfig {
         rule_dir: rules_dir.to_str().unwrap().to_owned(),
+        enabled: false,
+        sources: vec![],
         batch_size: 1, // 단일 로그로 즉시 플러시
         buffer_capacity: 100,
         flush_interval_secs: 1,
