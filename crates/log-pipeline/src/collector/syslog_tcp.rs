@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::Bytes;
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{Semaphore, mpsc};
 use tokio::time::timeout;
@@ -201,7 +201,22 @@ impl SyslogTcpCollector {
         peer_addr: String,
         cancel: CancellationToken,
     ) -> Result<(), LogPipelineError> {
-        let mut reader = BufReader::new(stream);
+        let reader = BufReader::new(stream);
+        Self::handle_newline_reader(reader, tx, config, bind_addr, peer_addr, cancel).await
+    }
+
+    /// Newline-delimited 데이터 스트림 처리 (테스트 가능하도록 reader를 일반화)
+    async fn handle_newline_reader<R>(
+        mut reader: BufReader<R>,
+        tx: mpsc::Sender<RawLog>,
+        config: SyslogTcpConfig,
+        bind_addr: String,
+        peer_addr: String,
+        cancel: CancellationToken,
+    ) -> Result<(), LogPipelineError>
+    where
+        R: AsyncRead + Unpin,
+    {
         let mut line_buffer = String::new();
         let connection_timeout = Duration::from_secs(config.connection_timeout_secs);
 
@@ -290,6 +305,7 @@ impl SyslogTcpCollector {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::duplex;
 
     #[test]
     fn default_config() {
@@ -332,5 +348,43 @@ mod tests {
         let cancel = CancellationToken::new();
         let _collector = SyslogTcpCollector::new(config, tx, cancel);
         // 생성만 테스트
+    }
+
+    #[tokio::test]
+    async fn connection_handler_exits_on_cancellation_without_socket_io() {
+        let (tx, _rx) = mpsc::channel(10);
+        let config = SyslogTcpConfig {
+            connection_timeout_secs: 60, // timeout보다 cancellation이 우선해야 함
+            ..Default::default()
+        };
+        let cancel = CancellationToken::new();
+        let cancel_for_task = cancel.clone();
+
+        let (stream, _peer) = duplex(64);
+        let reader = BufReader::new(stream);
+
+        let task = tokio::spawn(async move {
+            SyslogTcpCollector::handle_newline_reader(
+                reader,
+                tx,
+                config,
+                "127.0.0.1:601".to_owned(),
+                "test-peer".to_owned(),
+                cancel_for_task,
+            )
+            .await
+        });
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(30)).await;
+        cancel.cancel();
+
+        let result = tokio::time::timeout(tokio::time::Duration::from_secs(1), task)
+            .await
+            .expect("handler should exit promptly after cancellation")
+            .expect("join should succeed");
+        assert!(
+            result.is_ok(),
+            "handler should exit cleanly on cancellation"
+        );
     }
 }

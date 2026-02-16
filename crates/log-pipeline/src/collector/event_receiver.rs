@@ -75,10 +75,21 @@ impl EventReceiver {
                             let raw_log = Self::packet_event_to_raw_log(&event)?;
 
                             // 파이프라인으로 전송
-                            if let Err(e) = self.tx.send(raw_log).await {
-                                error!("Failed to send RawLog to pipeline: {}", e);
-                                self.status = CollectorStatus::Error(e.to_string());
-                                return Err(LogPipelineError::Channel(e.to_string()));
+                            // shutdown 중 채널 backpressure로 영구 대기하지 않도록
+                            // cancellation signal도 함께 대기합니다.
+                            tokio::select! {
+                                send_result = self.tx.send(raw_log) => {
+                                    if let Err(e) = send_result {
+                                        error!("Failed to send RawLog to pipeline: {}", e);
+                                        self.status = CollectorStatus::Error(e.to_string());
+                                        return Err(LogPipelineError::Channel(e.to_string()));
+                                    }
+                                }
+                                _ = cancel.cancelled() => {
+                                    info!("Event receiver interrupted during send by shutdown signal");
+                                    self.status = CollectorStatus::Stopped;
+                                    break;
+                                }
                             }
 
                             self.received_count += 1;
@@ -242,6 +253,50 @@ mod tests {
         assert!(result.is_ok(), "Test timed out");
         let returned_rx = result.unwrap();
         assert!(returned_rx.is_ok());
+    }
+
+    #[tokio::test]
+    async fn receiver_cancels_while_send_is_blocked_and_returns_packet_rx() {
+        // raw log 채널을 미리 채워 send를 블록시키는 시나리오를 만듭니다.
+        let (raw_tx, mut raw_rx) = mpsc::channel(1);
+        raw_tx
+            .send(RawLog::new(
+                bytes::Bytes::from_static(b"prefill"),
+                "test-source",
+            ))
+            .await
+            .unwrap();
+
+        let (packet_tx, packet_rx) = mpsc::channel(2);
+        let receiver = EventReceiver::new(packet_rx, raw_tx);
+        let cancel = CancellationToken::new();
+        let cancel_for_task = cancel.clone();
+
+        // 첫 이벤트를 보내면 receiver는 변환 후 send에서 블록될 수 있습니다.
+        packet_tx.send(sample_packet_event()).await.unwrap();
+
+        let handle = tokio::spawn(async move { receiver.run(cancel_for_task).await });
+
+        // 블록 진입 시간을 잠시 준 뒤 취소합니다.
+        tokio::time::sleep(tokio::time::Duration::from_millis(30)).await;
+        cancel.cancel();
+
+        let mut returned_rx = tokio::time::timeout(std::time::Duration::from_secs(1), handle)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+
+        // 반환된 packet_rx가 여전히 정상 동작하는지 확인합니다.
+        packet_tx.send(sample_packet_event()).await.unwrap();
+        let maybe_event =
+            tokio::time::timeout(std::time::Duration::from_millis(100), returned_rx.recv())
+                .await
+                .unwrap();
+        assert!(maybe_event.is_some());
+
+        // prefill 항목 정리
+        let _ = raw_rx.recv().await;
     }
 
     #[test]

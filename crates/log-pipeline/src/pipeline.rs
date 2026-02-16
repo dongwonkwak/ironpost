@@ -8,13 +8,13 @@
 //! Collectors -> mpsc -> Buffer -> Parser -> RuleEngine -> AlertGenerator -> mpsc -> downstream
 //! ```
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{Mutex, RwLock, mpsc};
 use tokio::time::{Instant, interval};
 use tokio_util::sync::CancellationToken;
 
@@ -29,7 +29,8 @@ use crate::collector::file::FileCollectorConfig;
 use crate::collector::syslog_tcp::SyslogTcpConfig;
 use crate::collector::syslog_udp::SyslogUdpConfig;
 use crate::collector::{
-    CollectorSet, EventReceiver, FileCollector, RawLog, SyslogTcpCollector, SyslogUdpCollector,
+    CollectorSet, CollectorStatus, EventReceiver, FileCollector, RawLog, SyslogTcpCollector,
+    SyslogUdpCollector,
 };
 use crate::config::PipelineConfig;
 use crate::error::LogPipelineError;
@@ -83,6 +84,8 @@ pub struct LogPipeline {
     buffer: Arc<Mutex<LogBuffer>>,
     /// 수집기 세트
     collectors: CollectorSet,
+    /// 수집기 런타임 상태 (health/observability 용도)
+    collector_statuses: Arc<RwLock<HashMap<String, CollectorStatus>>>,
     /// 내부 RawLog 채널 (수집기 -> 파이프라인)
     raw_log_rx: Option<mpsc::Receiver<RawLog>>,
     /// 내부 RawLog 채널 송신측 (수집기에 전달)
@@ -104,6 +107,14 @@ pub struct LogPipeline {
 }
 
 impl LogPipeline {
+    async fn set_collector_status(
+        statuses: &Arc<RwLock<HashMap<String, CollectorStatus>>>,
+        name: &str,
+        status: CollectorStatus,
+    ) {
+        statuses.write().await.insert(name.to_owned(), status);
+    }
+
     /// 현재 상태를 반환합니다.
     pub fn state_name(&self) -> &str {
         match self.state {
@@ -197,12 +208,14 @@ impl LogPipeline {
     fn spawn_syslog_udp(&mut self) {
         let tx = self.raw_log_tx.clone();
         let cancel = self.cancel_token.clone();
+        let statuses = Arc::clone(&self.collector_statuses);
         let config = SyslogUdpConfig {
             bind_addr: self.config.syslog_bind.clone(),
             ..SyslogUdpConfig::default()
         };
 
         let handle = tokio::spawn(async move {
+            Self::set_collector_status(&statuses, "syslog_udp", CollectorStatus::Running).await;
             let mut collector = SyslogUdpCollector::new_with_cancel(config, tx, cancel);
             if let Err(e) = collector.run().await {
                 tracing::error!(
@@ -210,6 +223,14 @@ impl LogPipeline {
                     error = %e,
                     "syslog UDP collector terminated with error"
                 );
+                Self::set_collector_status(
+                    &statuses,
+                    "syslog_udp",
+                    CollectorStatus::Error(e.to_string()),
+                )
+                .await;
+            } else {
+                Self::set_collector_status(&statuses, "syslog_udp", CollectorStatus::Stopped).await;
             }
         });
         self.collectors.register("syslog_udp");
@@ -219,6 +240,7 @@ impl LogPipeline {
     /// TCP syslog 수집기를 spawn합니다.
     fn spawn_syslog_tcp(&mut self) {
         let tx = self.raw_log_tx.clone();
+        let statuses = Arc::clone(&self.collector_statuses);
         let config = SyslogTcpConfig {
             bind_addr: self.config.syslog_tcp_bind.clone(),
             ..SyslogTcpConfig::default()
@@ -226,6 +248,7 @@ impl LogPipeline {
         let cancel = self.cancel_token.clone();
 
         let handle = tokio::spawn(async move {
+            Self::set_collector_status(&statuses, "syslog_tcp", CollectorStatus::Running).await;
             let mut collector = SyslogTcpCollector::new(config, tx, cancel);
             if let Err(e) = collector.run().await {
                 tracing::error!(
@@ -233,6 +256,14 @@ impl LogPipeline {
                     error = %e,
                     "syslog TCP collector terminated with error"
                 );
+                Self::set_collector_status(
+                    &statuses,
+                    "syslog_tcp",
+                    CollectorStatus::Error(e.to_string()),
+                )
+                .await;
+            } else {
+                Self::set_collector_status(&statuses, "syslog_tcp", CollectorStatus::Stopped).await;
             }
         });
         self.collectors.register("syslog_tcp");
@@ -243,12 +274,14 @@ impl LogPipeline {
     fn spawn_file_collector(&mut self) {
         let tx = self.raw_log_tx.clone();
         let cancel = self.cancel_token.clone();
+        let statuses = Arc::clone(&self.collector_statuses);
         let config = FileCollectorConfig {
             watch_paths: self.config.watch_paths.iter().map(PathBuf::from).collect(),
             ..FileCollectorConfig::default()
         };
 
         let handle = tokio::spawn(async move {
+            Self::set_collector_status(&statuses, "file", CollectorStatus::Running).await;
             let mut collector = FileCollector::new_with_cancel(config, tx, cancel);
             if let Err(e) = collector.run().await {
                 tracing::error!(
@@ -256,6 +289,14 @@ impl LogPipeline {
                     error = %e,
                     "file collector terminated with error"
                 );
+                Self::set_collector_status(
+                    &statuses,
+                    "file",
+                    CollectorStatus::Error(e.to_string()),
+                )
+                .await;
+            } else {
+                Self::set_collector_status(&statuses, "file", CollectorStatus::Stopped).await;
             }
         });
         self.collectors.register("file");
@@ -269,12 +310,20 @@ impl LogPipeline {
     fn spawn_event_receiver(&mut self, packet_rx: mpsc::Receiver<PacketEvent>) {
         let tx = self.raw_log_tx.clone();
         let cancel = self.cancel_token.clone();
+        let statuses = Arc::clone(&self.collector_statuses);
 
         let handle = tokio::spawn(async move {
+            Self::set_collector_status(&statuses, "event_receiver", CollectorStatus::Running).await;
             let receiver = EventReceiver::new(packet_rx, tx);
             match receiver.run(cancel).await {
                 Ok(returned_rx) => {
                     tracing::info!("event receiver stopped gracefully");
+                    Self::set_collector_status(
+                        &statuses,
+                        "event_receiver",
+                        CollectorStatus::Stopped,
+                    )
+                    .await;
                     Some(returned_rx)
                 }
                 Err(e) => {
@@ -283,6 +332,12 @@ impl LogPipeline {
                         error = %e,
                         "event receiver terminated with error"
                     );
+                    Self::set_collector_status(
+                        &statuses,
+                        "event_receiver",
+                        CollectorStatus::Error(e.to_string()),
+                    )
+                    .await;
                     None
                 }
             }
@@ -299,6 +354,8 @@ impl Pipeline for LogPipeline {
         }
 
         tracing::info!("starting log pipeline");
+
+        self.collector_statuses.write().await.clear();
 
         // 1. 규칙 로드
         let rule_count = self
@@ -574,6 +631,7 @@ impl Pipeline for LogPipeline {
         // 6. 수집기 상태 정리
         self.collectors.stop_all();
         self.collectors.clear();
+        self.collector_statuses.write().await.clear();
 
         // 7. 드레인된 로그 처리
         if !remaining.is_empty() {
@@ -600,6 +658,37 @@ impl Pipeline for LogPipeline {
     async fn health_check(&self) -> HealthStatus {
         match self.state {
             PipelineState::Running => {
+                let collector_statuses = self.collector_statuses.read().await;
+                let collector_errors: Vec<String> = collector_statuses
+                    .iter()
+                    .filter_map(|(name, status)| match status {
+                        CollectorStatus::Error(reason) => Some(format!("{name}: {reason}")),
+                        _ => None,
+                    })
+                    .collect();
+
+                if !collector_errors.is_empty() {
+                    return HealthStatus::Unhealthy(format!(
+                        "collector errors: {}",
+                        collector_errors.join(", ")
+                    ));
+                }
+
+                let stopped_collectors: Vec<String> = collector_statuses
+                    .iter()
+                    .filter_map(|(name, status)| match status {
+                        CollectorStatus::Stopped => Some(name.clone()),
+                        _ => None,
+                    })
+                    .collect();
+
+                if !stopped_collectors.is_empty() {
+                    return HealthStatus::Degraded(format!(
+                        "collectors stopped unexpectedly: {}",
+                        stopped_collectors.join(", ")
+                    ));
+                }
+
                 let utilization = self.buffer.lock().await.utilization();
                 if utilization > 0.9 {
                     HealthStatus::Degraded(format!(
@@ -776,6 +865,7 @@ impl LogPipelineBuilder {
             alert_generator,
             buffer,
             collectors: CollectorSet::default(),
+            collector_statuses: Arc::new(RwLock::new(HashMap::new())),
             raw_log_rx: Some(raw_log_rx),
             raw_log_tx,
             alert_tx,
@@ -1040,11 +1130,11 @@ mod tests {
         let temp_dir = std::env::temp_dir().join("ironpost_test_spawn_fail");
         std::fs::create_dir_all(&temp_dir).ok();
 
-        // Using well-known ports that may fail to bind, but pipeline should still start
+        // 파싱 불가능한 주소로 의도적으로 bind 실패를 유도
         let config = PipelineConfig {
             rule_dir: temp_dir.to_string_lossy().to_string(),
             sources: vec!["syslog_udp".to_owned()],
-            syslog_bind: "127.0.0.1:0".to_owned(), // use auto port to avoid conflict
+            syslog_bind: "invalid-bind-address".to_owned(),
             ..Default::default()
         };
 
@@ -1057,6 +1147,14 @@ mod tests {
             "pipeline should start even if collectors fail to bind"
         );
         assert_eq!(pipeline.state_name(), "running");
+
+        // collector runtime 에러가 health에 반영되는지 확인
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let health = Pipeline::health_check(&pipeline).await;
+        assert!(
+            matches!(health, HealthStatus::Unhealthy(_)),
+            "collector bind failure should be visible in health status"
+        );
 
         Pipeline::stop(&mut pipeline).await.unwrap();
     }
@@ -1189,7 +1287,7 @@ mod tests {
         let config = PipelineConfig {
             rule_dir: temp_dir.to_string_lossy().to_string(),
             sources: vec!["syslog_tcp".to_owned()],
-            syslog_tcp_bind: "127.0.0.1:0".to_owned(), // auto port
+            syslog_tcp_bind: "127.0.0.1:0".to_owned(),
             ..Default::default()
         };
 
@@ -1201,18 +1299,17 @@ mod tests {
         // 실제 바인드된 주소를 얻기 위해 잠시 대기
         tokio::time::sleep(Duration::from_millis(100)).await;
 
-        // 여러 TCP 연결 생성 (실제로는 bind된 포트를 알 수 없으므로 간접 테스트)
-        // 여기서는 stop() 호출 시 connection handler들이 cancellation token을 받아
-        // gracefully shutdown 되는지 확인하는 것이 목표
-
         // Stop pipeline (H2 fix: connection handlers should be cleaned up)
-        let stop_result = Pipeline::stop(&mut pipeline).await;
+        let stop_result =
+            tokio::time::timeout(Duration::from_secs(2), Pipeline::stop(&mut pipeline)).await;
         assert!(
-            stop_result.is_ok(),
+            stop_result.is_ok() && stop_result.unwrap().is_ok(),
             "stop should succeed even with active connections"
         );
 
-        // Verify cancellation token was reset
+        // restart 가능 여부도 함께 확인 (socket/task 누수 방지)
+        Pipeline::start(&mut pipeline).await.unwrap();
+        Pipeline::stop(&mut pipeline).await.unwrap();
         assert_eq!(pipeline.state_name(), "stopped");
     }
 }
