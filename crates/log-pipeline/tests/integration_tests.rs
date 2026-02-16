@@ -367,14 +367,28 @@ tags:
     );
     assert_eq!(alert.alert.severity, ironpost_core::types::Severity::High);
 
-    // 10. 통계 확인
+    // 10. 처리 완료 확인 (폴링, 타임아웃 3초)
+    let timeout = Duration::from_secs(3);
+    let start = std::time::Instant::now();
+    loop {
+        let processed = pipeline.processed_count().await;
+        if processed >= 1 {
+            break;
+        }
+        if start.elapsed() > timeout {
+            panic!("timeout waiting for log to be processed");
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    // 11. 통계 확인
     let processed = pipeline.processed_count().await;
     assert_eq!(processed, 1, "expected 1 log to be processed");
 
     let parse_errors = pipeline.parse_error_count().await;
     assert_eq!(parse_errors, 0, "expected no parse errors");
 
-    // 11. 파이프라인 정지
+    // 12. 파이프라인 정지
     pipeline.stop().await.expect("failed to stop pipeline");
 }
 
@@ -623,9 +637,22 @@ async fn test_multiple_log_injection() {
         sender.send(raw_log).await.expect("failed to send log");
     }
 
-    // 4. 모든 로그가 처리될 때까지 대기
-    // flush_interval_secs=1초이므로 충분한 시간 대기 (GitHub workflow 느린 환경 고려)
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    // 4. 모든 로그가 처리될 때까지 폴링 대기 (타임아웃 5초)
+    let timeout = Duration::from_secs(5);
+    let start = std::time::Instant::now();
+    loop {
+        let processed = pipeline.processed_count().await;
+        if processed >= log_count {
+            break;
+        }
+        if start.elapsed() > timeout {
+            panic!(
+                "timeout waiting for logs to be processed: {} / {}",
+                processed, log_count
+            );
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
 
     // 5. 통계 확인
     let processed = pipeline.processed_count().await;
