@@ -158,6 +158,10 @@ impl IronpostConfig {
             &mut self.log_pipeline.syslog_bind,
             "IRONPOST_LOG_PIPELINE_SYSLOG_BIND",
         );
+        override_string(
+            &mut self.log_pipeline.syslog_tcp_bind,
+            "IRONPOST_LOG_PIPELINE_SYSLOG_TCP_BIND",
+        );
         override_csv(
             &mut self.log_pipeline.watch_paths,
             "IRONPOST_LOG_PIPELINE_WATCH_PATHS",
@@ -388,8 +392,10 @@ pub struct LogPipelineConfig {
     pub enabled: bool,
     /// 수집 소스
     pub sources: Vec<String>,
-    /// Syslog 수신 주소
+    /// Syslog UDP 수신 주소
     pub syslog_bind: String,
+    /// Syslog TCP 수신 주소
+    pub syslog_tcp_bind: String,
     /// 파일 감시 경로
     pub watch_paths: Vec<String>,
     /// 배치 크기
@@ -407,6 +413,7 @@ impl Default for LogPipelineConfig {
             enabled: true,
             sources: vec!["syslog".to_owned(), "file".to_owned()],
             syslog_bind: "0.0.0.0:514".to_owned(),
+            syslog_tcp_bind: "0.0.0.0:601".to_owned(),
             watch_paths: vec!["/var/log/syslog".to_owned()],
             batch_size: 100,
             flush_interval_secs: 5,

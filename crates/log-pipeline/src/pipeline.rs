@@ -8,6 +8,8 @@
 //! Collectors -> mpsc -> Buffer -> Parser -> RuleEngine -> AlertGenerator -> mpsc -> downstream
 //! ```
 
+use std::collections::HashSet;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -22,7 +24,12 @@ use ironpost_core::plugin::{Plugin, PluginInfo, PluginState, PluginType};
 
 use crate::alert::AlertGenerator;
 use crate::buffer::LogBuffer;
-use crate::collector::{CollectorSet, RawLog};
+use crate::collector::file::FileCollectorConfig;
+use crate::collector::syslog_tcp::SyslogTcpConfig;
+use crate::collector::syslog_udp::SyslogUdpConfig;
+use crate::collector::{
+    CollectorSet, EventReceiver, FileCollector, RawLog, SyslogTcpCollector, SyslogUdpCollector,
+};
 use crate::config::PipelineConfig;
 use crate::error::LogPipelineError;
 use crate::parser::ParserRouter;
@@ -74,7 +81,6 @@ pub struct LogPipeline {
     /// 로그 버퍼
     buffer: Arc<Mutex<LogBuffer>>,
     /// 수집기 세트
-    #[allow(dead_code)]
     collectors: CollectorSet,
     /// 내부 RawLog 채널 (수집기 -> 파이프라인)
     raw_log_rx: Option<mpsc::Receiver<RawLog>>,
@@ -83,7 +89,6 @@ pub struct LogPipeline {
     /// 알림 전송 채널 (파이프라인 -> downstream)
     alert_tx: mpsc::Sender<AlertEvent>,
     /// PacketEvent 수신 채널 (ebpf-engine -> 파이프라인, daemon에서 연결)
-    #[allow(dead_code)]
     packet_rx: Option<mpsc::Receiver<PacketEvent>>,
     /// 백그라운드 태스크 핸들
     tasks: Vec<tokio::task::JoinHandle<()>>,
@@ -182,6 +187,90 @@ impl LogPipeline {
             }
         }
     }
+
+    /// UDP syslog 수집기를 spawn합니다.
+    fn spawn_syslog_udp(&mut self) {
+        let tx = self.raw_log_tx.clone();
+        let config = SyslogUdpConfig {
+            bind_addr: self.config.syslog_bind.clone(),
+            ..SyslogUdpConfig::default()
+        };
+
+        let handle = tokio::spawn(async move {
+            let mut collector = SyslogUdpCollector::new(config, tx);
+            if let Err(e) = collector.run().await {
+                tracing::error!(
+                    collector = "syslog_udp",
+                    error = %e,
+                    "syslog UDP collector terminated with error"
+                );
+            }
+        });
+        self.collectors.register("syslog_udp");
+        self.tasks.push(handle);
+    }
+
+    /// TCP syslog 수집기를 spawn합니다.
+    fn spawn_syslog_tcp(&mut self) {
+        let tx = self.raw_log_tx.clone();
+        let config = SyslogTcpConfig {
+            bind_addr: self.config.syslog_tcp_bind.clone(),
+            ..SyslogTcpConfig::default()
+        };
+
+        let handle = tokio::spawn(async move {
+            let mut collector = SyslogTcpCollector::new(config, tx);
+            if let Err(e) = collector.run().await {
+                tracing::error!(
+                    collector = "syslog_tcp",
+                    error = %e,
+                    "syslog TCP collector terminated with error"
+                );
+            }
+        });
+        self.collectors.register("syslog_tcp");
+        self.tasks.push(handle);
+    }
+
+    /// 파일 수집기를 spawn합니다.
+    fn spawn_file_collector(&mut self) {
+        let tx = self.raw_log_tx.clone();
+        let config = FileCollectorConfig {
+            watch_paths: self.config.watch_paths.iter().map(PathBuf::from).collect(),
+            ..FileCollectorConfig::default()
+        };
+
+        let handle = tokio::spawn(async move {
+            let mut collector = FileCollector::new(config, tx);
+            if let Err(e) = collector.run().await {
+                tracing::error!(
+                    collector = "file",
+                    error = %e,
+                    "file collector terminated with error"
+                );
+            }
+        });
+        self.collectors.register("file");
+        self.tasks.push(handle);
+    }
+
+    /// eBPF EventReceiver를 spawn합니다.
+    fn spawn_event_receiver(&mut self, packet_rx: mpsc::Receiver<PacketEvent>) {
+        let tx = self.raw_log_tx.clone();
+
+        let handle = tokio::spawn(async move {
+            let mut receiver = EventReceiver::new(packet_rx, tx);
+            if let Err(e) = receiver.run().await {
+                tracing::error!(
+                    collector = "event_receiver",
+                    error = %e,
+                    "event receiver terminated with error"
+                );
+            }
+        });
+        self.collectors.register("event_receiver");
+        self.tasks.push(handle);
+    }
 }
 
 impl Pipeline for LogPipeline {
@@ -203,9 +292,52 @@ impl Pipeline for LogPipeline {
         tracing::info!(rules = rule_count, "loaded detection rules");
 
         // 2. 수집기 태스크 스폰
-        // TODO: spawn collector tasks based on config.sources
-        // Each collector gets a clone of raw_log_tx
-        // This will be implemented when integrating with actual data sources
+        let mut spawned_collectors = HashSet::new();
+        let sources = self.config.sources.clone();
+
+        for source in &sources {
+            match source.as_str() {
+                "syslog" => {
+                    // syslog = syslog_udp + syslog_tcp 동시 활성화
+                    if spawned_collectors.insert("syslog_udp") {
+                        self.spawn_syslog_udp();
+                    }
+                    if spawned_collectors.insert("syslog_tcp") {
+                        self.spawn_syslog_tcp();
+                    }
+                }
+                "syslog_udp" => {
+                    if spawned_collectors.insert("syslog_udp") {
+                        self.spawn_syslog_udp();
+                    }
+                }
+                "syslog_tcp" => {
+                    if spawned_collectors.insert("syslog_tcp") {
+                        self.spawn_syslog_tcp();
+                    }
+                }
+                "file" => {
+                    if spawned_collectors.insert("file") {
+                        self.spawn_file_collector();
+                    }
+                }
+                unknown => {
+                    tracing::warn!(source = unknown, "unknown collector source, skipping");
+                }
+            }
+        }
+
+        // EventReceiver spawn (packet_rx가 있을 때만)
+        if let Some(packet_rx) = self.packet_rx.take() {
+            self.spawn_event_receiver(packet_rx);
+            spawned_collectors.insert("event_receiver");
+        }
+
+        tracing::info!(
+            collectors = ?spawned_collectors,
+            count = spawned_collectors.len(),
+            "spawned collector tasks"
+        );
 
         // 3. 메인 처리 루프 스폰
         let mut raw_log_rx = self.raw_log_rx.take().ok_or(IronpostError::Pipeline(
@@ -386,7 +518,11 @@ impl Pipeline for LogPipeline {
             let _ = task.await;
         }
 
-        // 3. 드레인된 로그 처리
+        // 3. 수집기 상태 정리
+        self.collectors.stop_all();
+        self.collectors.clear();
+
+        // 4. 드레인된 로그 처리
         if !remaining.is_empty() {
             tracing::info!(
                 count = remaining.len(),
@@ -395,7 +531,7 @@ impl Pipeline for LogPipeline {
             self.process_batch(remaining).await;
         }
 
-        // 4. 채널 재생성 (재시작 지원)
+        // 5. 채널 재생성 (재시작 지원)
         let (tx, rx) = mpsc::channel(self.config.buffer_capacity);
         self.raw_log_tx = tx;
         self.raw_log_rx = Some(rx);

@@ -112,6 +112,18 @@ impl CollectorSet {
     pub fn statuses(&self) -> &[(String, CollectorStatus)] {
         &self.collectors
     }
+
+    /// 모든 수집기 상태를 Stopped로 설정합니다.
+    pub fn stop_all(&mut self) {
+        for (_, status) in &mut self.collectors {
+            *status = CollectorStatus::Stopped;
+        }
+    }
+
+    /// 수집기 세트를 초기화합니다 (재시작 지원).
+    pub fn clear(&mut self) {
+        self.collectors.clear();
+    }
 }
 
 impl Default for CollectorSet {
