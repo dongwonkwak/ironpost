@@ -62,13 +62,8 @@ fuzz_target!(|input: FuzzPackageGraph| {
             Package {
                 name: name.clone(),
                 version: version.clone(),
-                ecosystem: eco.clone(),
-                purl: format!(
-                    "pkg:{}/{}@{}",
-                    eco.purl_type(),
-                    name,
-                    version
-                ),
+                ecosystem: eco,
+                purl: format!("pkg:{}/{}@{}", eco.purl_type(), name, version),
                 checksum: p.checksum.clone(),
                 dependencies: Vec::new(),
             }
@@ -89,13 +84,13 @@ fuzz_target!(|input: FuzzPackageGraph| {
     // CycloneDX 생성 + JSON 유효성 검증
     if let Ok(doc) = cyclonedx::generate(&graph) {
         // 생성된 JSON이 파싱 가능해야 한다
-        let _: serde_json::Value = serde_json::from_str(&doc.content)
-            .expect("CycloneDX output must be valid JSON");
+        let _: serde_json::Value =
+            serde_json::from_str(&doc.content).expect("CycloneDX output must be valid JSON");
     }
 
     // SPDX 생성 + JSON 유효성 검증
     if let Ok(doc) = spdx::generate(&graph) {
-        let _: serde_json::Value = serde_json::from_str(&doc.content)
-            .expect("SPDX output must be valid JSON");
+        let _: serde_json::Value =
+            serde_json::from_str(&doc.content).expect("SPDX output must be valid JSON");
     }
 });

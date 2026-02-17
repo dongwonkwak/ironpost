@@ -1,0 +1,96 @@
+name: Fuzzing
+
+on:
+  schedule:
+    # Run nightly at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fuzz:
+    name: Fuzz Testing
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target:
+          - fuzz_syslog_parser
+          - fuzz_json_parser
+          - fuzz_parser_router
+          - fuzz_rule_yaml
+          - fuzz_rule_matcher
+          - fuzz_cargo_lock
+          - fuzz_npm_lock
+          - fuzz_sbom_roundtrip
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-directories: fuzz/target
+
+      # Restore corpus from cache
+      - name: Restore corpus cache
+        uses: actions/cache@v4
+        with:
+          path: fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: |
+            fuzz-corpus-${{ matrix.target }}-
+            fuzz-corpus-
+
+      # Run fuzzer with 5 minute timeout and ASAN disabled (-s none)
+      - name: Run fuzz target ${{ matrix.target }}
+        run: |
+          cd fuzz
+          cargo +nightly fuzz run -s none ${{ matrix.target }} -- -max_total_time=300
+        continue-on-error: true
+
+      # Check for crashes and upload as artifacts
+      - name: Upload crash artifacts for ${{ matrix.target }}
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashes-${{ matrix.target }}
+          path: fuzz/artifacts/${{ matrix.target }}
+          if-no-files-found: ignore
+
+      # Check for lease files (slow inputs)
+      - name: Upload slow inputs for ${{ matrix.target }}
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-slow-inputs-${{ matrix.target }}
+          path: fuzz/target/x86_64-unknown-linux-gnu/release/deps/${{ matrix.target }}-*/slow-inputs
+          if-no-files-found: ignore
+
+  # Fail the job if any crashes were found
+  check-crashes:
+    name: Check for Crashes
+    runs-on: ubuntu-latest
+    needs: fuzz
+    if: always()
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+        continue-on-error: true
+
+      - name: Check for crash files
+        run: |
+          crash_count=$(find artifacts -name "crash-*" 2>/dev/null | wc -l)
+          if [ "$crash_count" -gt 0 ]; then
+            echo "❌ Found $crash_count crash files:"
+            find artifacts -name "crash-*" -exec ls -lh {} \;
+            exit 1
+          else
+            echo "✅ No crashes found in fuzzing"
+          fi

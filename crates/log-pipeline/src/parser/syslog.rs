@@ -361,7 +361,7 @@ impl SyslogParser {
         let mut in_quote = false;
         let mut escaped = false;
 
-        for (idx, ch) in input.chars().enumerate() {
+        for (idx, ch) in input.char_indices() {
             if escaped {
                 sd_part.push(ch);
                 escaped = false;
@@ -386,7 +386,7 @@ impl SyslogParser {
                     depth -= 1;
                     if depth == 0 {
                         // SD 종료, 나머지는 메시지
-                        let remaining = &input[idx + 1..];
+                        let remaining = &input[idx + ch.len_utf8()..];
                         return (sd_part, remaining.trim_start().to_owned());
                     }
                 }
@@ -934,6 +934,64 @@ mod tests {
         let raw = format!("<34>1 2024-01-15T12:00:00Z host app - - {} msg", sd);
         let result = parser.parse(raw.as_bytes());
         assert!(result.is_ok());
+    }
+
+    // === UTF-8 Char Boundary Regression Tests ===
+    // Regression test for crash at syslog.rs:389 due to incorrect UTF-8 char boundary handling
+    // Issue: Using idx+1 instead of idx+ch.len_utf8() when skipping multibyte UTF-8 chars
+    // in split_sd_and_message function caused panic on invalid UTF-8 sequences in SD
+
+    #[test]
+    fn parse_structured_data_with_invalid_utf8_in_sd() {
+        let parser = SyslogParser::new();
+        // Raw bytes with invalid UTF-8 sequence in structured data field
+        // \xff is not a valid UTF-8 start byte
+        let mut raw = Vec::from(&b"<34>1 2024-01-15T12:00:00Z host app - - ["[..]);
+        raw.extend_from_slice(&[0xff, 0xfe]); // Invalid UTF-8 bytes
+        raw.extend_from_slice(b"] msg");
+        let result = parser.parse(&raw);
+        // Should not panic, should handle gracefully (either parse or error)
+        let _ = result;
+    }
+
+    #[test]
+    fn parse_structured_data_with_continuation_byte_as_start() {
+        let parser = SyslogParser::new();
+        // UTF-8 continuation byte (10xxxxxx) used as start of sequence
+        // This would cause panic if boundary detection used idx+1
+        let mut raw = Vec::from(&b"<34>1 2024-01-15T12:00:00Z host app - - [test foo=\""[..]);
+        raw.push(0x80); // Continuation byte (invalid as start)
+        raw.extend_from_slice(b"\"] msg");
+        let result = parser.parse(&raw);
+        // Should not panic
+        let _ = result;
+    }
+
+    #[test]
+    fn parse_structured_data_multibyte_char_at_boundary() {
+        let parser = SyslogParser::new();
+        // Valid multibyte UTF-8 char (emoji) at SD boundary
+        let mut raw = Vec::from(&b"<34>1 2024-01-15T12:00:00Z host app - - [x=\"y\"] "[..]);
+        raw.extend_from_slice(&[0xF0, 0x9F, 0x98, 0x80]); // Emoji 😀
+        raw.extend_from_slice(b" msg");
+        let result = parser.parse(&raw);
+        // Should handle multibyte char at boundary correctly
+        assert!(result.is_ok());
+        if let Ok(entry) = result {
+            assert!(entry.message.contains("😀"));
+        }
+    }
+
+    #[test]
+    fn parse_invalid_utf8_sequence_before_closing_bracket() {
+        let parser = SyslogParser::new();
+        // Invalid UTF-8 byte sequence right before closing bracket
+        let mut raw = Vec::from(&b"<34>1 2024-01-15T12:00:00Z host app - - [test foo=\"bar\""[..]);
+        raw.extend_from_slice(&[0xff, 0xff]); // Invalid UTF-8
+        raw.extend_from_slice(b"] msg");
+        let result = parser.parse(&raw);
+        // Should not panic, just handle gracefully
+        let _ = result;
     }
 
     // Property-based tests using proptest

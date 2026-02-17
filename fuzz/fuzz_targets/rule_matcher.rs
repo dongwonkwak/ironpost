@@ -7,8 +7,7 @@ use std::time::SystemTime;
 use ironpost_core::types::{LogEntry, Severity};
 use ironpost_log_pipeline::rule::matcher::RuleMatcher;
 use ironpost_log_pipeline::rule::types::{
-    ConditionModifier, DetectionCondition, DetectionRule, FieldCondition,
-    RuleStatus,
+    ConditionModifier, DetectionCondition, DetectionRule, FieldCondition, RuleStatus,
 };
 
 /// 퍼저용 구조적 입력
