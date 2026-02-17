@@ -194,6 +194,26 @@ flowchart LR
 
 ## 빠른 시작
 
+### 설치
+
+**GitHub Release에서 다운로드:**
+
+```bash
+# 최신 릴리스 다운로드
+curl -L https://github.com/dongwonkwak/ironpost/releases/latest/download/ironpost-v0.1.0-x86_64-linux.tar.gz | tar xz
+sudo mv ironpost-cli ironpost-daemon /usr/local/bin/
+```
+
+**소스에서 빌드:**
+
+```bash
+git clone https://github.com/dongwonkwak/ironpost.git
+cd ironpost
+cargo build --release -p ironpost-cli -p ironpost-daemon
+```
+
+### 실행
+
 ```bash
 # 저장소 클론
 git clone https://github.com/dongwonkwak/ironpost.git
@@ -290,7 +310,6 @@ eBPF 빌드, 상세 설정, Docker 데모 등은 [시작 가이드](docs/getting
 
 향후 계획:
 - 플러그인 아키텍처 확장 (외부 플러그인, WASM 런타임)
-- GitHub Release 자동화 (cargo-dist)
 - 부하 테스트 및 벤치마크 고도화
 - Kubernetes 배포 (Helm chart)
 
