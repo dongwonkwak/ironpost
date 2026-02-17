@@ -1,0 +1,76 @@
+flowchart TB
+    subgraph CLI["ironpost-cli"]
+        CMD["Commands\nscan · monitor · guard · logs · status"]
+    end
+
+    subgraph DAEMON["ironpost-daemon"]
+        PR[PluginRegistry]
+        MS[MetricsServer]
+        CL[Config Loader]
+    end
+
+    subgraph CORE["crates/core"]
+        EM[Event Model]
+        PT[Pipeline Trait]
+        PL[Plugin Trait]
+        ET[Error Types]
+    end
+
+    subgraph EBPF["ebpf-engine"]
+        XDP[Aya XDP Probes]
+        TM[Traffic Monitor]
+    end
+
+    subgraph LOG["log-pipeline"]
+        COL[Collectors]
+        PAR[Parsers]
+        RE[Rule Engine]
+        AD[Alert Dispatcher]
+    end
+
+    subgraph GUARD["container-guard"]
+        DC[Docker Client]
+        PE[Policy Engine]
+        IM[Isolation Manager]
+    end
+
+    subgraph SBOM["sbom-scanner"]
+        SG[SBOM Generator]
+        LP[Lockfile Parsers]
+        CVE[CVE Scanner]
+    end
+
+    subgraph OBS["Observability"]
+        PROM[Prometheus]
+        subgraph GRAFANA["Grafana"]
+            GD1[Overview Dashboard]
+            GD2[Log Pipeline Dashboard]
+            GD3[Security Dashboard]
+        end
+    end
+
+    CLI -->|제어| DAEMON
+    DAEMON --> PR
+    DAEMON --> MS
+    DAEMON --> CL
+
+    PR --> EBPF
+    PR --> LOG
+    PR --> GUARD
+    PR --> SBOM
+
+    EBPF -.depends on.-> CORE
+    LOG -.depends on.-> CORE
+    GUARD -.depends on.-> CORE
+    SBOM -.depends on.-> CORE
+
+    MS -->|메트릭 노출| PROM
+    PROM --> GRAFANA
+
+    style CORE fill:#e1f5fe
+    style EBPF fill:#fff3e0
+    style LOG fill:#fff3e0
+    style GUARD fill:#fff3e0
+    style SBOM fill:#fff3e0
+    style OBS fill:#f3e5f5
+    style DAEMON fill:#e8f5e9
