@@ -1083,7 +1083,7 @@ mod tests {
         let config = PipelineConfig {
             rule_dir: temp_dir.to_string_lossy().to_string(),
             sources: vec!["file".to_owned()],
-            watch_paths: vec![temp_dir.join("test.log").to_string_lossy().to_string()],
+            watch_paths: vec!["/tmp/ironpost_test_file/test.log".to_owned()],
             ..Default::default()
         };
 
@@ -1252,7 +1252,7 @@ mod tests {
             ],
             syslog_bind: "127.0.0.1:0".to_owned(),
             syslog_tcp_bind: "127.0.0.1:0".to_owned(),
-            watch_paths: vec![temp_dir.join("test.log").to_string_lossy().to_string()],
+            watch_paths: vec!["/tmp/ironpost_test_multi/test.log".to_owned()],
             ..Default::default()
         };
 
