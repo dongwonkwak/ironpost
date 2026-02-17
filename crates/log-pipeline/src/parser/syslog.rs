@@ -994,6 +994,22 @@ mod tests {
         let _ = result;
     }
 
+    #[test]
+    fn parse_multibyte_char_inside_sd_before_closing_bracket() {
+        let parser = SyslogParser::new();
+        let raw = "<34>1 2024-01-15T12:00:00Z host app - - [meta key=\"한\"] message";
+        let result = parser.parse(raw.as_bytes());
+        assert!(result.is_ok());
+        let entry = result.unwrap();
+        assert_eq!(entry.message, "message");
+        assert!(
+            entry
+                .fields
+                .iter()
+                .any(|(k, v)| k == "sd_meta_key" && v == "한")
+        );
+    }
+
     // Property-based tests using proptest
     #[cfg(test)]
     mod proptests {

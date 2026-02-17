@@ -63,7 +63,11 @@ Use the provided helper script to run all fuzzing targets sequentially:
 bash run_fuzz_all.sh
 ```
 
-This will run each target with the parameters specified in `fuzz_all.config`.
+This runs all 8 targets sequentially for 30 seconds each by default.
+To change duration:
+```bash
+bash run_fuzz_all.sh 60
+```
 
 ## Understanding Crashes
 
@@ -99,7 +103,7 @@ When a crash is found, libFuzzer creates a minimized crash file in `artifacts/<t
 6. **Verify the fix**:
    ```bash
    cargo test -p <package>
-   cargo +nightly fuzz run -s none <target> -- artifacts/<target>/crash-<hash>
+   cargo +nightly fuzz run -s none <target> artifacts/<target>/crash-<hash>
    ```
    The target should complete without crashing.
 
@@ -172,11 +176,12 @@ To add a new fuzzing target:
 2. **Implement the fuzz target** in `fuzz/fuzz_targets/fuzz_my_new_parser.rs`:
    ```rust
    #![no_main]
+   use ironpost_core::pipeline::LogParser;
    use libfuzzer_sys::fuzz_target;
-   use ironpost_core::parser::MyParser;
+   use ironpost_log_pipeline::parser::JsonLogParser;
 
    fuzz_target!(|data: &[u8]| {
-       let parser = MyParser::new();
+       let parser = JsonLogParser::default();
        let _ = parser.parse(data);
    });
    ```
@@ -202,7 +207,7 @@ The fuzzing targets use `-s none` flag to disable Address Sanitizer due to LLVM 
 - Fuzzing is resource-intensive and CPU-bound
 - Each target runs for 5 minutes in CI (300 seconds)
 - Local fuzzing should be run for shorter durations (30-60 seconds) for development
-- Consider using `spin-up` mode for faster iteration
+- Consider lowering `-max_total_time` (e.g. 10-30s) for faster iteration
 
 ### Platform Support
 
