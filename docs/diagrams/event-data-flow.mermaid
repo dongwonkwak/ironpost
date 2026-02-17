@@ -1,0 +1,60 @@
+flowchart LR
+    subgraph C1["① Collection"]
+        EC[eBPF Collector\nXDP 패킷]
+        LC[Log Collector\nSyslog · JSON]
+        CW[Container Watcher\nDocker Events]
+        SG[SBOM Generator\nLockfile 탐지]
+    end
+
+    subgraph C2["② Processing"]
+        PR[Parser Router\nauto-detect]
+        EN[Event Normalizer]
+        ENR[Enrichment]
+    end
+
+    subgraph C3["③ Detection"]
+        RE[Rule Engine\nYAML 룰]
+        CM[CVE Matcher]
+        POL[Policy Engine]
+    end
+
+    subgraph C4["④ Response"]
+        ALT[Alert Dispatcher]
+        ISO[Container Isolation\npause · stop · kill]
+        RPT[SBOM Report\nCycloneDX · SPDX]
+        MET["Prometheus Metrics\n(29개)"]
+    end
+
+    subgraph OUT["Output"]
+        WH[Webhook]
+        LF[Log File]
+        CLI[Console / CLI]
+        GR[Grafana Dashboards\n3개]
+    end
+
+    EC --> PR
+    LC --> PR
+    CW --> PR
+    SG --> CM
+
+    PR --> EN
+    EN --> ENR
+    ENR --> RE
+    ENR --> POL
+
+    RE --> ALT
+    CM --> RPT
+    POL --> ISO
+
+    ALT --> WH
+    ALT --> LF
+    ALT --> CLI
+
+    ISO --> CLI
+    RPT --> LF
+
+    MET --> GR
+
+    ENR -.메트릭.-> MET
+    RE -.메트릭.-> MET
+    POL -.메트릭.-> MET
