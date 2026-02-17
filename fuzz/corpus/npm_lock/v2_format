@@ -1,0 +1,13 @@
+{
+  "lockfileVersion": 2,
+  "packages": {
+    "": {
+      "name": "myapp",
+      "version": "1.0.0"
+    },
+    "node_modules/express": {
+      "version": "4.18.2",
+      "resolved": "https://registry.npmjs.org/express/-/express-4.18.2.tgz"
+    }
+  }
+}

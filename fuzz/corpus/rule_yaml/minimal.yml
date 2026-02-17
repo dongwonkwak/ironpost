@@ -1,0 +1,8 @@
+id: test
+title: Test
+severity: Info
+detection:
+  conditions:
+    - field: message
+      modifier: contains
+      value: test

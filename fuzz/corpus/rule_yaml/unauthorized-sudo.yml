@@ -1,0 +1,17 @@
+id: unauthorized_sudo
+title: Unauthorized Sudo Attempt
+description: Detects unauthorized attempts to use sudo for privilege escalation
+severity: High
+status: enabled
+detection:
+  conditions:
+    - field: process
+      modifier: exact
+      value: sudo
+    - field: message
+      modifier: contains
+      value: "unauthorized"
+tags:
+  - privilege_escalation
+  - sudo
+  - access_control

@@ -1,0 +1,61 @@
+[package]
+name = "ironpost-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+ironpost-log-pipeline = { path = "../crates/log-pipeline" }
+ironpost-sbom-scanner = { path = "../crates/sbom-scanner" }
+ironpost-core = { path = "../crates/core" }
+
+# rule_matcher 퍼징에서 LogEntry 구성에 필요
+chrono = "0.4"
+
+# SBOM 라운드트립에서 JSON 검증에 필요
+serde_json = "1"
+
+[[bin]]
+name = "fuzz_syslog_parser"
+path = "fuzz_targets/syslog_parser.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_json_parser"
+path = "fuzz_targets/json_parser.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_parser_router"
+path = "fuzz_targets/parser_router.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_rule_yaml"
+path = "fuzz_targets/rule_yaml.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_rule_matcher"
+path = "fuzz_targets/rule_matcher.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_cargo_lock"
+path = "fuzz_targets/cargo_lock.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_npm_lock"
+path = "fuzz_targets/npm_lock.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_sbom_roundtrip"
+path = "fuzz_targets/sbom_roundtrip.rs"
+doc = false

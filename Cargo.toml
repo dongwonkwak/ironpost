@@ -12,8 +12,10 @@ members = [
     "xtask",
 ]
 # eBPF 프로그램(crates/ebpf-engine/ebpf)은 BPF 타겟 전용이므로 workspace에서 제외
+# fuzz 디렉토리는 독립 크레이트 (cargo-fuzz 전용, nightly toolchain)
 exclude = [
     "crates/ebpf-engine/ebpf",
+    "fuzz",
 ]
 # eBPF 빌드는 `cargo run -p xtask -- build-ebpf`를 통해 별도로 수행
 # macOS에서는 eBPF 관련 크레이트 제외 (Linux 전용)
