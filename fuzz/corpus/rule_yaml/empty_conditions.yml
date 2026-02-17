@@ -1,0 +1,5 @@
+id: empty
+title: Empty Conditions
+severity: Low
+detection:
+  conditions: []

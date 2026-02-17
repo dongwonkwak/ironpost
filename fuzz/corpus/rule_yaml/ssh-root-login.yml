@@ -1,0 +1,17 @@
+id: ssh_root_login
+title: SSH Root Login Attempt
+description: Detects attempts to login as root via SSH
+severity: Medium
+status: enabled
+detection:
+  conditions:
+    - field: process
+      modifier: exact
+      value: sshd
+    - field: message
+      modifier: contains
+      value: "Failed password for root"
+tags:
+  - authentication
+  - ssh
+  - root_access

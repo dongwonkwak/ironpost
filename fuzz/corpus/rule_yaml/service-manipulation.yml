@@ -1,0 +1,17 @@
+id: service_manipulation
+title: Suspicious Service Manipulation
+description: Detects starting or stopping of security-related services
+severity: Medium
+status: enabled
+detection:
+  conditions:
+    - field: process
+      modifier: exact
+      value: systemd
+    - field: message
+      modifier: regex
+      value: "(?i)(firewall|iptables|selinux|apparmor).*(stopped|disabled)"
+tags:
+  - system_integrity
+  - defense_evasion
+  - service_manipulation

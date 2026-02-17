@@ -1,0 +1,9 @@
+id: unicode-test
+title: 유니코드 테스트 🔥
+description: This rule contains unicode characters
+severity: Medium
+detection:
+  conditions:
+    - field: message
+      modifier: contains
+      value: 한글

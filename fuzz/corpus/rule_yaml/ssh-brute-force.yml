@@ -1,0 +1,21 @@
+id: ssh_brute_force_demo
+title: SSH Brute Force Attempt
+description: Detects multiple failed SSH login attempts from the same source IP
+severity: High
+status: enabled
+detection:
+  conditions:
+    - field: process
+      modifier: exact
+      value: sshd
+    - field: message
+      modifier: contains
+      value: "Failed password"
+  threshold:
+    field: sd_meta_source_ip
+    count: 3
+    timeframe_secs: 60
+tags:
+  - authentication
+  - brute_force
+  - ssh
