@@ -1,76 +1,58 @@
-flowchart TB
-    subgraph CLI["ironpost-cli"]
-        CMD["Commands\nscan · monitor · guard · logs · status"]
+flowchart LR
+    subgraph CONTROL["Control Plane"]
+        direction TB
+        CLI["ironpost-cli\nscan · monitor · guard\nlogs · status"]
+        DAEMON["ironpost-daemon"]
+        CONFIG["Config Loader"]
+        REGISTRY["Plugin Registry"]
+        METRICS_SRV["Metrics Server"]
     end
 
-    subgraph DAEMON["ironpost-daemon"]
-        PR[PluginRegistry]
-        MS[MetricsServer]
-        CL[Config Loader]
+    subgraph MODULES["Security Modules"]
+        direction TB
+        EBPF["ebpf-engine\nAya XDP + Traffic Monitor"]
+        LOG["log-pipeline\ncollect · parse · detect · alert"]
+        GUARD["container-guard\ndocker watch · policy · isolate"]
+        SBOM["sbom-scanner\nlockfile parse · sbom · cve"]
     end
 
-    subgraph CORE["crates/core"]
-        EM[Event Model]
-        PT[Pipeline Trait]
-        PL[Plugin Trait]
-        ET[Error Types]
-    end
-
-    subgraph EBPF["ebpf-engine"]
-        XDP[Aya XDP Probes]
-        TM[Traffic Monitor]
-    end
-
-    subgraph LOG["log-pipeline"]
-        COL[Collectors]
-        PAR[Parsers]
-        RE[Rule Engine]
-        AD[Alert Dispatcher]
-    end
-
-    subgraph GUARD["container-guard"]
-        DC[Docker Client]
-        PE[Policy Engine]
-        IM[Isolation Manager]
-    end
-
-    subgraph SBOM["sbom-scanner"]
-        SG[SBOM Generator]
-        LP[Lockfile Parsers]
-        CVE[CVE Scanner]
+    subgraph CORE["Shared Core"]
+        direction TB
+        CORE_NODE["ironpost-core\nevent model · traits · errors"]
+        CHANNELS["tokio::mpsc\nbounded channels"]
     end
 
     subgraph OBS["Observability"]
-        PROM[Prometheus]
-        subgraph GRAFANA["Grafana"]
-            GD1[Overview Dashboard]
-            GD2[Log Pipeline Dashboard]
-            GD3[Security Dashboard]
-        end
+        direction TB
+        PROM["Prometheus"]
+        GRAF["Grafana Dashboards"]
     end
 
-    CLI -->|제어| DAEMON
-    DAEMON --> PR
-    DAEMON --> MS
-    DAEMON --> CL
+    CLI -->|commands| DAEMON
+    DAEMON --> CONFIG
+    DAEMON --> REGISTRY
+    DAEMON --> METRICS_SRV
 
-    PR --> EBPF
-    PR --> LOG
-    PR --> GUARD
-    PR --> SBOM
+    REGISTRY --> EBPF
+    REGISTRY --> LOG
+    REGISTRY --> GUARD
+    REGISTRY --> SBOM
 
-    EBPF -.depends on.-> CORE
-    LOG -.depends on.-> CORE
-    GUARD -.depends on.-> CORE
-    SBOM -.depends on.-> CORE
+    EBPF -.implements shared traits.-> CORE_NODE
+    LOG -.implements shared traits.-> CORE_NODE
+    GUARD -.implements shared traits.-> CORE_NODE
+    SBOM -.implements shared traits.-> CORE_NODE
+    CORE_NODE --> CHANNELS
 
-    MS -->|메트릭 노출| PROM
-    PROM --> GRAFANA
+    METRICS_SRV -->|exports metrics| PROM
+    PROM --> GRAF
 
-    style CORE fill:#e1f5fe
-    style EBPF fill:#fff3e0
-    style LOG fill:#fff3e0
-    style GUARD fill:#fff3e0
-    style SBOM fill:#fff3e0
-    style OBS fill:#f3e5f5
-    style DAEMON fill:#e8f5e9
+    classDef control fill:#e8f5e9,stroke:#2e7d32,stroke-width:1px,color:#1b5e20;
+    classDef module fill:#fff8e1,stroke:#ef6c00,stroke-width:1px,color:#e65100;
+    classDef core fill:#e3f2fd,stroke:#1565c0,stroke-width:1px,color:#0d47a1;
+    classDef obs fill:#f3e5f5,stroke:#6a1b9a,stroke-width:1px,color:#4a148c;
+
+    class CLI,DAEMON,CONFIG,REGISTRY,METRICS_SRV control;
+    class EBPF,LOG,GUARD,SBOM module;
+    class CORE_NODE,CHANNELS core;
+    class PROM,GRAF obs;
