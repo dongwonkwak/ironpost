@@ -1,60 +1,74 @@
-flowchart LR
-    subgraph C1["① Collection"]
-        EC[eBPF Collector\nXDP 패킷]
-        LC[Log Collector\nSyslog · JSON]
-        CW[Container Watcher\nDocker Events]
-        SG[SBOM Generator\nLockfile 탐지]
+flowchart TB
+    subgraph C1["1) Collection"]
+        direction LR
+        PKT["Packet Events\neBPF/XDP"]
+        LOG["Log Events\nSyslog/JSON"]
+        CTR["Container Events\nDocker"]
+        DEP["Dependency Data\nLockfiles"]
     end
 
-    subgraph C2["② Processing"]
-        PR[Parser Router\nauto-detect]
-        EN[Event Normalizer]
-        ENR[Enrichment]
+    subgraph C2["2) Processing"]
+        direction LR
+        ROUTER["Parser Router"]
+        NORMALIZE["Event Normalizer"]
+        ENRICH["Enrichment"]
     end
 
-    subgraph C3["③ Detection"]
-        RE[Rule Engine\nYAML 룰]
-        CM[CVE Matcher]
-        POL[Policy Engine]
+    subgraph C3["3) Detection"]
+        direction LR
+        RULE["Rule Engine\nYAML"]
+        POLICY["Policy Engine"]
+        CVE["CVE Matcher"]
     end
 
-    subgraph C4["④ Response"]
-        ALT[Alert Dispatcher]
-        ISO[Container Isolation\npause · stop · kill]
-        RPT[SBOM Report\nCycloneDX · SPDX]
-        MET["Prometheus Metrics\n(29개)"]
+    subgraph C4["4) Response"]
+        direction LR
+        ALERT["Alert Dispatcher"]
+        ISOLATE["Isolation\npause · stop · kill"]
+        REPORT["SBOM Report\nCycloneDX/SPDX"]
+        METRICS["Metrics"]
     end
 
     subgraph OUT["Output"]
-        WH[Webhook]
-        LF[Log File]
-        CLI[Console / CLI]
-        GR[Grafana Dashboards\n3개]
+        direction LR
+        WEBHOOK["Webhook"]
+        FILE["Log File"]
+        CONSOLE["Console / CLI"]
+        GRAFANA["Grafana"]
     end
 
-    EC --> PR
-    LC --> PR
-    CW --> PR
-    SG --> CM
+    PKT --> ROUTER
+    LOG --> ROUTER
+    CTR --> ROUTER
+    DEP --> CVE
 
-    PR --> EN
-    EN --> ENR
-    ENR --> RE
-    ENR --> POL
+    ROUTER --> NORMALIZE --> ENRICH
+    ENRICH --> RULE
+    ENRICH --> POLICY
 
-    RE --> ALT
-    CM --> RPT
-    POL --> ISO
+    RULE --> ALERT
+    POLICY --> ISOLATE
+    CVE --> REPORT
 
-    ALT --> WH
-    ALT --> LF
-    ALT --> CLI
+    ALERT --> WEBHOOK
+    ALERT --> FILE
+    ALERT --> CONSOLE
+    ISOLATE --> CONSOLE
+    REPORT --> FILE
 
-    ISO --> CLI
-    RPT --> LF
+    ENRICH -.metrics.-> METRICS
+    RULE -.metrics.-> METRICS
+    POLICY -.metrics.-> METRICS
+    METRICS --> GRAFANA
 
-    MET --> GR
+    classDef collect fill:#fff8e1,stroke:#ef6c00,stroke-width:1px,color:#e65100;
+    classDef process fill:#e3f2fd,stroke:#1565c0,stroke-width:1px,color:#0d47a1;
+    classDef detect fill:#e8f5e9,stroke:#2e7d32,stroke-width:1px,color:#1b5e20;
+    classDef respond fill:#f3e5f5,stroke:#6a1b9a,stroke-width:1px,color:#4a148c;
+    classDef output fill:#eceff1,stroke:#455a64,stroke-width:1px,color:#263238;
 
-    ENR -.메트릭.-> MET
-    RE -.메트릭.-> MET
-    POL -.메트릭.-> MET
+    class PKT,LOG,CTR,DEP collect;
+    class ROUTER,NORMALIZE,ENRICH process;
+    class RULE,POLICY,CVE detect;
+    class ALERT,ISOLATE,REPORT,METRICS respond;
+    class WEBHOOK,FILE,CONSOLE,GRAFANA output;

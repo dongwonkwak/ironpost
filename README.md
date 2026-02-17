@@ -15,6 +15,7 @@
 ![Ironpost Demo](docs/demo.gif)
 
 > Docker 환경에서 3분 만에 체험할 수 있습니다. → [데모 가이드](docs/demo.md)
+> 권장 환경: Docker Engine/Docker Desktop 20.10+ (플랫폼별 차이는 데모 가이드 참고)
 
 ---
 
@@ -22,13 +23,13 @@
 
 | 기능 | 설명 |
 |------|------|
-| **eBPF 네트워크 모니터링** | XDP 기반 패킷 필터링, 950+ Mbps 처리량. Linux 5.7+ 전용 |
-| **로그 파이프라인** | Syslog/JSON 파싱(50k msg/s), YAML 룰 엔진으로 위협 탐지 |
+| **eBPF 네트워크 모니터링** | XDP 기반 패킷 필터링 및 실시간 네트워크 이벤트 수집 (Linux 5.7+ 전용) |
+| **로그 파이프라인** | Syslog/JSON 파싱과 YAML 룰 엔진 기반 위협 탐지 |
 | **컨테이너 격리** | 알림 기반 Docker 컨테이너 자동 격리(pause/stop/network disconnect) |
 | **SBOM & CVE 스캐닝** | Cargo.lock/package-lock.json 파싱, CycloneDX/SPDX 생성, 로컬 CVE 스캔 |
-| **Prometheus 메트릭 + Grafana** | 29개 메트릭 노출, 3개 대시보드 (Overview, Log Pipeline, Security) |
+| **Prometheus 메트릭 + Grafana** | Prometheus 메트릭 노출 및 Grafana 대시보드 연동 |
 | **통합 CLI & 데몬** | 단일 ironpost.toml 설정, 핫리로드, 구조화 JSON 로깅 |
-| **퍼징 인프라** | cargo-fuzz 기반 8개 타겟, Nightly CI 자동 실행 |
+| **퍼징 인프라** | cargo-fuzz 기반 퍼징 타겟 운영, Nightly CI 자동 실행 |
 
 ---
 
@@ -37,82 +38,64 @@
 Ironpost는 네 가지 보안 모듈을 하나의 이벤트 기반 플랫폼으로 통합합니다.
 
 ```mermaid
-flowchart TB
-    subgraph CLI["ironpost-cli"]
-        CMD["Commands\nscan · monitor · guard · logs · status"]
+flowchart LR
+    subgraph CONTROL["Control Plane"]
+        direction TB
+        CLI["ironpost-cli\nscan · monitor · guard\nlogs · status"]
+        DAEMON["ironpost-daemon"]
+        CONFIG["Config Loader"]
+        REGISTRY["Plugin Registry"]
+        METRICS_SRV["Metrics Server"]
     end
 
-    subgraph DAEMON["ironpost-daemon"]
-        PR[PluginRegistry]
-        MS[MetricsServer]
-        CL[Config Loader]
+    subgraph MODULES["Security Modules"]
+        direction TB
+        EBPF["ebpf-engine\nAya XDP + Traffic Monitor"]
+        LOG["log-pipeline\ncollect · parse · detect · alert"]
+        GUARD["container-guard\ndocker watch · policy · isolate"]
+        SBOM["sbom-scanner\nlockfile parse · sbom · cve"]
     end
 
-    subgraph CORE["crates/core"]
-        EM[Event Model]
-        PT[Pipeline Trait]
-        PL[Plugin Trait]
-        ET[Error Types]
-    end
-
-    subgraph EBPF["ebpf-engine"]
-        XDP[Aya XDP Probes]
-        TM[Traffic Monitor]
-    end
-
-    subgraph LOG["log-pipeline"]
-        COL[Collectors]
-        PAR[Parsers]
-        RE[Rule Engine]
-        AD[Alert Dispatcher]
-    end
-
-    subgraph GUARD["container-guard"]
-        DC[Docker Client]
-        PE[Policy Engine]
-        IM[Isolation Manager]
-    end
-
-    subgraph SBOM["sbom-scanner"]
-        SG[SBOM Generator]
-        LP[Lockfile Parsers]
-        CVE[CVE Scanner]
+    subgraph CORE["Shared Core"]
+        direction TB
+        CORE_NODE["ironpost-core\nevent model · traits · errors"]
+        CHANNELS["tokio::mpsc\nbounded channels"]
     end
 
     subgraph OBS["Observability"]
-        PROM[Prometheus]
-        subgraph GRAFANA["Grafana"]
-            GD1[Overview Dashboard]
-            GD2[Log Pipeline Dashboard]
-            GD3[Security Dashboard]
-        end
+        direction TB
+        PROM["Prometheus"]
+        GRAF["Grafana Dashboards"]
     end
 
-    CLI -->|제어| DAEMON
-    DAEMON --> PR
-    DAEMON --> MS
-    DAEMON --> CL
+    CLI -->|commands| DAEMON
+    DAEMON --> CONFIG
+    DAEMON --> REGISTRY
+    DAEMON --> METRICS_SRV
 
-    PR --> EBPF
-    PR --> LOG
-    PR --> GUARD
-    PR --> SBOM
+    REGISTRY --> EBPF
+    REGISTRY --> LOG
+    REGISTRY --> GUARD
+    REGISTRY --> SBOM
 
-    EBPF -.depends on.-> CORE
-    LOG -.depends on.-> CORE
-    GUARD -.depends on.-> CORE
-    SBOM -.depends on.-> CORE
+    EBPF -.implements shared traits.-> CORE_NODE
+    LOG -.implements shared traits.-> CORE_NODE
+    GUARD -.implements shared traits.-> CORE_NODE
+    SBOM -.implements shared traits.-> CORE_NODE
+    CORE_NODE --> CHANNELS
 
-    MS -->|메트릭 노출| PROM
-    PROM --> GRAFANA
+    METRICS_SRV -->|exports metrics| PROM
+    PROM --> GRAF
 
-    style CORE fill:#e1f5fe
-    style EBPF fill:#fff3e0
-    style LOG fill:#fff3e0
-    style GUARD fill:#fff3e0
-    style SBOM fill:#fff3e0
-    style OBS fill:#f3e5f5
-    style DAEMON fill:#e8f5e9
+    classDef control fill:#e8f5e9,stroke:#2e7d32,stroke-width:1px,color:#1b5e20;
+    classDef module fill:#fff8e1,stroke:#ef6c00,stroke-width:1px,color:#e65100;
+    classDef core fill:#e3f2fd,stroke:#1565c0,stroke-width:1px,color:#0d47a1;
+    classDef obs fill:#f3e5f5,stroke:#6a1b9a,stroke-width:1px,color:#4a148c;
+
+    class CLI,DAEMON,CONFIG,REGISTRY,METRICS_SRV control;
+    class EBPF,LOG,GUARD,SBOM module;
+    class CORE_NODE,CHANNELS core;
+    class PROM,GRAF obs;
 ```
 
 **이벤트 흐름:**
@@ -128,66 +111,80 @@ flowchart TB
 ### 이벤트 데이터 흐름
 
 ```mermaid
-flowchart LR
-    subgraph C1["① Collection"]
-        EC[eBPF Collector\nXDP 패킷]
-        LC[Log Collector\nSyslog · JSON]
-        CW[Container Watcher\nDocker Events]
-        SG[SBOM Generator\nLockfile 탐지]
+flowchart TB
+    subgraph C1["1) Collection"]
+        direction LR
+        PKT["Packet Events\neBPF/XDP"]
+        LOG["Log Events\nSyslog/JSON"]
+        CTR["Container Events\nDocker"]
+        DEP["Dependency Data\nLockfiles"]
     end
 
-    subgraph C2["② Processing"]
-        PR[Parser Router\nauto-detect]
-        EN[Event Normalizer]
-        ENR[Enrichment]
+    subgraph C2["2) Processing"]
+        direction LR
+        ROUTER["Parser Router"]
+        NORMALIZE["Event Normalizer"]
+        ENRICH["Enrichment"]
     end
 
-    subgraph C3["③ Detection"]
-        RE[Rule Engine\nYAML 룰]
-        CM[CVE Matcher]
-        POL[Policy Engine]
+    subgraph C3["3) Detection"]
+        direction LR
+        RULE["Rule Engine\nYAML"]
+        POLICY["Policy Engine"]
+        CVE["CVE Matcher"]
     end
 
-    subgraph C4["④ Response"]
-        ALT[Alert Dispatcher]
-        ISO[Container Isolation\npause · stop · kill]
-        RPT[SBOM Report\nCycloneDX · SPDX]
-        MET["Prometheus Metrics\n(29개)"]
+    subgraph C4["4) Response"]
+        direction LR
+        ALERT["Alert Dispatcher"]
+        ISOLATE["Isolation\npause · stop · kill"]
+        REPORT["SBOM Report\nCycloneDX/SPDX"]
+        METRICS["Metrics"]
     end
 
     subgraph OUT["Output"]
-        WH[Webhook]
-        LF[Log File]
-        CLIO[Console / CLI]
-        GR[Grafana Dashboards\n3개]
+        direction LR
+        WEBHOOK["Webhook"]
+        FILE["Log File"]
+        CONSOLE["Console / CLI"]
+        GRAFANA["Grafana"]
     end
 
-    EC --> PR
-    LC --> PR
-    CW --> PR
-    SG --> CM
+    PKT --> ROUTER
+    LOG --> ROUTER
+    CTR --> ROUTER
+    DEP --> CVE
 
-    PR --> EN
-    EN --> ENR
-    ENR --> RE
-    ENR --> POL
+    ROUTER --> NORMALIZE --> ENRICH
+    ENRICH --> RULE
+    ENRICH --> POLICY
 
-    RE --> ALT
-    CM --> RPT
-    POL --> ISO
+    RULE --> ALERT
+    POLICY --> ISOLATE
+    CVE --> REPORT
 
-    ALT --> WH
-    ALT --> LF
-    ALT --> CLIO
+    ALERT --> WEBHOOK
+    ALERT --> FILE
+    ALERT --> CONSOLE
+    ISOLATE --> CONSOLE
+    REPORT --> FILE
 
-    ISO --> CLIO
-    RPT --> LF
+    ENRICH -.metrics.-> METRICS
+    RULE -.metrics.-> METRICS
+    POLICY -.metrics.-> METRICS
+    METRICS --> GRAFANA
 
-    MET --> GR
+    classDef collect fill:#fff8e1,stroke:#ef6c00,stroke-width:1px,color:#e65100;
+    classDef process fill:#e3f2fd,stroke:#1565c0,stroke-width:1px,color:#0d47a1;
+    classDef detect fill:#e8f5e9,stroke:#2e7d32,stroke-width:1px,color:#1b5e20;
+    classDef respond fill:#f3e5f5,stroke:#6a1b9a,stroke-width:1px,color:#4a148c;
+    classDef output fill:#eceff1,stroke:#455a64,stroke-width:1px,color:#263238;
 
-    ENR -.메트릭.-> MET
-    RE -.메트릭.-> MET
-    POL -.메트릭.-> MET
+    class PKT,LOG,CTR,DEP collect;
+    class ROUTER,NORMALIZE,ENRICH process;
+    class RULE,POLICY,CVE detect;
+    class ALERT,ISOLATE,REPORT,METRICS respond;
+    class WEBHOOK,FILE,CONSOLE,GRAFANA output;
 ```
 
 ---
@@ -220,7 +217,7 @@ git clone https://github.com/dongwonkwak/ironpost.git
 cd ironpost
 
 # 빌드 (eBPF 제외)
-cargo run -p xtask -- build --release
+cargo build --release
 
 # 설정 복사
 cp ironpost.toml.example ironpost.toml
@@ -232,7 +229,8 @@ sudo ./target/release/ironpost-daemon --config ironpost.toml
 ./target/release/ironpost-cli status
 ```
 
-eBPF 빌드, 상세 설정, Docker 데모 등은 [시작 가이드](docs/getting-started.md)를 참고하세요.
+eBPF 모듈까지 포함해 빌드하려면 Linux 환경에서 `cargo run -p xtask -- build --all --release`를 사용하세요.
+상세 설정, 플랫폼별 제약, Docker 데모는 [시작 가이드](docs/getting-started.md)를 참고하세요.
 
 ---
 
@@ -264,28 +262,29 @@ eBPF 빌드, 상세 설정, Docker 데모 등은 [시작 가이드](docs/getting
 | 로깅 | tracing (구조화 JSON 로깅) |
 | 직렬화 | serde (TOML, JSON, YAML) |
 | 메트릭 | prometheus-client + Grafana |
-| 퍼징 | cargo-fuzz (libFuzzer 기반, 8개 타겟) |
+| 퍼징 | cargo-fuzz (libFuzzer 기반) |
 
 ---
 
 ## 성능 하이라이트
 
-| 컴포넌트 | 측정값 |
-|----------|--------|
-| eBPF XDP 처리량 | 950+ Mbps |
-| Syslog 파싱 | 50k msg/s |
-| 룰 매칭 | 20k msg/s |
-| SBOM 스캔 (10k 패키지) | 3.2s |
-| 전체 메모리 사용량 | ~190 MB |
+| 컴포넌트 | 요약 |
+|----------|------|
+| Log Parser | 고성능 파싱 (RFC5424/RFC3164/JSON) |
+| Rule Engine | exact match 기준 초고속 매칭 경로 제공 |
+| SBOM Scanner | lockfile 파싱부터 CVE 조회까지 선형 확장 |
+| Container Guard | 정책 평가 및 격리 액션을 낮은 오버헤드로 수행 |
+| Event System | `tokio::mpsc` 기반 이벤트 처리 파이프라인 제공 |
 
 벤치마크 상세 결과는 [docs/benchmarks.md](docs/benchmarks.md)를 참고하세요.
+측정 환경과 산식 기준은 [벤치마크 환경](docs/benchmarks.md#벤치마크-환경) 섹션을 기준으로 해석하세요.
 
 ---
 
 ## 테스트 & 품질
 
-- **1,108+ 유닛/통합 테스트**, 46 E2E 테스트, clippy 경고 0건
-- **8개 fuzz 타겟** — 파서, 룰 엔진, lockfile 파서, SBOM 라운드트립 (Nightly CI 자동 실행)
+- 유닛/통합/E2E 테스트를 CI에서 지속적으로 검증
+- fuzz 타겟(파서, 룰 엔진, lockfile, SBOM 라운드트립)을 Nightly CI에서 자동 실행
 - 퍼징으로 발견·수정된 버그: Syslog parser 멀티바이트 UTF-8 char boundary panic
 
 ---
@@ -297,8 +296,8 @@ eBPF 빌드, 상세 설정, Docker 데모 등은 [시작 가이드](docs/getting
 | [시작 가이드](docs/getting-started.md) | 설치, 빌드, 첫 실행 |
 | [아키텍처](docs/architecture.md) | 시스템 설계, 모듈 연동 |
 | [설정 가이드](docs/configuration.md) | ironpost.toml 상세 설정 |
-| [설계 결정](docs/design-decisions.md) | 19개 ADR (기술 선택 근거) |
-| [테스트](docs/testing.md) | 테스트 전략, 1,100+ 테스트 |
+| [설계 결정](docs/design-decisions.md) | ADR 기반 기술 선택 근거 |
+| [테스트](docs/testing.md) | 테스트 전략, 실행 방법, 품질 기준 |
 | [벤치마크](docs/benchmarks.md) | criterion 실측 성능 |
 | [데모](docs/demo.md) | Docker 3분 체험 가이드 |
 | [API 문서](https://dongwonkwak.github.io/ironpost/) | cargo doc (GitHub Pages) |
