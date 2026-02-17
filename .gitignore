@@ -1,11 +1,10 @@
 # Rust / Cargo
-/target/
+**/target/
 **/*.rs.bk
 *.pdb
 Cargo.lock
 
 # eBPF build artifacts
-crates/ebpf-engine/ebpf/target/
 *.o
 *.bpf.o
 

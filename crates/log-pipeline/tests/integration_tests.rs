@@ -780,11 +780,13 @@ async fn test_pipeline_health_check_states() {
     use std::time::Duration;
 
     // 1. 파이프라인 빌드
-    let temp_dir = tempfile::tempdir().expect("failed to create temp dir");
+    let temp_dir = tempfile::Builder::new()
+        .prefix("ironpost_test_health_")
+        .tempdir_in("/tmp")
+        .expect("failed to create temp dir");
     let rules_dir = temp_dir.path().join("rules");
     let log_file = temp_dir.path().join("health.log");
     std::fs::create_dir(&rules_dir).expect("failed to create rules dir");
-    std::fs::write(&log_file, "").expect("failed to create log file");
 
     let config = PipelineConfig {
         rule_dir: rules_dir.to_str().unwrap().to_owned(),
