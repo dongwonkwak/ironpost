@@ -1,5 +1,5 @@
 # Ironpost 태스크 보드
-> 최종 업데이트: 2026-02-13
+> 최종 업데이트: 2026-02-17
 
 ## 진행 요약
 | Phase | 전체 | 완료 | 진행중 | 대기 | 진행률 |
@@ -13,14 +13,26 @@
 | 6-polish | 12 | 9 | 0 | 3 | ✅ T6-14 ironpost-cli 문서화 완료, 다음: T6-3 설정 파일 |
 | 7-e2e | 16 | 16 | 0 | 0 | ✅ (E2E 테스트 + Docker Demo + CI + Codex 리뷰 수정 완료) |
 | 8-release | 9 | 8 | 0 | 1 | ⏳ 최종 리뷰 완료 (C1: cargo fmt 수정 필요), 다음: T8.9 릴리스 태그 |
+| 11-fuzzing | 3 | 3 | 0 | 0 | ✅ (퍼징 인프라 + 크래시 수정 + 최종 리뷰 완료) |
 
 ## 블로커
 - 없음
 
 ## 현재 진행중
-- 없음 (Phase 8 완료, 다음 phase 대기)
+- 없음
 
 ## 최근 완료
+- **[P11] Phase 11 Fuzzing 최종 리뷰 완료** (2026-02-17, reviewer)
+  - ✅ 크래시 수정 안전성 검증 (syslog.rs `idx + ch.len_utf8()` fix 확인)
+  - ✅ 모든 `&input[...]` 슬라이싱 패턴 UTF-8 char boundary 안전 확인
+  - ✅ 회귀 테스트 품질 확인 (5 UTF-8 boundary tests + 4 proptest + edge cases)
+  - ✅ 8개 fuzz target에서 unwrap/expect/panic 없음 확인
+  - ✅ CI 워크플로우 보안 확인 (permissions: contents: read, 시크릿 없음)
+  - ✅ cargo test --workspace: 1146 passed, 0 failed
+  - ✅ cargo clippy --workspace -- -D warnings: 0 warnings
+  - Warning 1건 (W1: depth underflow -- 비차단), Suggestion 2건 (S1/S2)
+  - 결과: **APPROVE**
+  - 산출물: `.reviews/phase11-fuzzing-final.md`
 - **docs/design-decisions.md ADR 추가 작업** (2026-02-14 04:35-04:40, 6분, writer)
   - ✅ 기존 ADR-001~009 유지
   - ✅ ADR-010~019 추가 (10개, 총 19개 ADR)
@@ -298,6 +310,33 @@ T8.1, T8.2, T8.5, T8.6 (병렬) -> T8.3 -> T8.4 -> T8.7 -> T8.8 -> T8.9
 - [x] 최종 릴리스 리뷰 완료 (.reviews/phase-8-release.md)
 - [ ] cargo fmt --all --check 통과 (C1 수정 필요)
 - [ ] v0.1.0 태그 생성
+
+---
+
+## Phase 11: Fuzzing Infrastructure
+
+### 태스크
+| ID | 태스크 | 담당 | 예상 | 상태 | 의존성 |
+|----|--------|------|------|------|--------|
+| T11.1 | 퍼징 인프라 구축 (8 targets) | implementer | 2h | ✅ (2026-02-17 완료) | 없음 |
+| T11.2 | 크래시 수정 + 회귀 테스트 | implementer | 1h | ✅ (2026-02-17 완료) | T11.1 |
+| T11.3 | 최종 리뷰 | reviewer | 1h | ✅ (2026-02-17 완료) | T11.2 |
+
+### T11.3 상세: Phase 11 Fuzzing 최종 리뷰 (2026-02-17)
+
+#### 검증 결과
+- `cargo test --workspace`: 1146 passed, 0 failed, 53 ignored
+- `cargo clippy --workspace -- -D warnings`: PASS (0 warnings)
+
+#### 발견사항
+- Critical: 0건
+- Warning: 1건 (W1: split_sd_and_message depth underflow -- 비차단)
+- Suggestion: 2건 (S1: fuzz edition comment, S2: oom-* file detection in CI)
+
+#### 결과: APPROVE
+
+#### 산출물
+- `.reviews/phase11-fuzzing-final.md`
 
 ---
 
@@ -645,6 +684,8 @@ cargo clippy -p ironpost-daemon -p ironpost-cli -- -D warnings  # clean
 - [x] T5-A19: Core 크레이트 업데이트 (MODULE_SBOM_SCANNER, EVENT_TYPE_SCAN 상수 추가)
 
 ## 최근 완료
+- [P11] Phase 11 Fuzzing 최종 리뷰 완료 (2026-02-17, APPROVE, 0 Critical)
+  - 산출물: `.reviews/phase11-fuzzing-final.md`
 - [P8] 최종 릴리스 리뷰 완료 (2026-02-13, Claude Opus 4.6)
   - ✅ C1: cargo fmt 불일치 발견 (수정 필요)
   - ✅ M1-M5: 5건 Medium 이슈 기록 (차기 릴리스 대응)
