@@ -60,7 +60,7 @@ jobs:
       # Check for crashes and upload as artifacts
       - name: Upload crash artifacts for ${{ matrix.target }}
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: fuzz-crashes-${{ matrix.target }}
           path: fuzz/artifacts/${{ matrix.target }}
@@ -69,7 +69,7 @@ jobs:
       # Check for lease files (slow inputs)
       - name: Upload slow inputs for ${{ matrix.target }}
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: fuzz-slow-inputs-${{ matrix.target }}
           path: fuzz/target/x86_64-unknown-linux-gnu/release/deps/${{ matrix.target }}-*/slow-inputs
